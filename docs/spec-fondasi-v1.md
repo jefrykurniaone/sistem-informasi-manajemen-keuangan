@@ -4,7 +4,7 @@
 |---|---|
 | Item spesifikasi | [#1](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/1) |
 | Run | `komplek-v1` |
-| Peta eksekusi | belum ada; ditautkan saat peta dibuat |
+| Peta eksekusi | [#47](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/47) |
 | Disalin pada | 2026-09-16 |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
