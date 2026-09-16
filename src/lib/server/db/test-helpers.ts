@@ -3,198 +3,197 @@ import path from 'node:path';
 import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { afterAll, beforeAll } from 'vitest';
-import { bacaAlamatBasisData, buatKoneksi, type BasisData, type Koneksi } from './index';
+import { createConnection, readDatabaseUrl, type Connection, type Database } from './index';
 
 /**
- * Perkakas uji basis data: satu skema PostgreSQL bersih per berkas pengujian.
+ * The database test harness: one clean PostgreSQL schema per test file.
  *
- * ## Kontrak
+ * ## Contract
  *
- * `basisDataUji()` dipanggil sekali di puncak sebuah berkas pengujian. Ia mendaftarkan kait
- * `beforeAll` dan `afterAll`, lalu mengembalikan pegangan yang `db`-nya siap dipakai di dalam
- * setiap `it`. Berkas itu mendapat skema PostgreSQL miliknya sendiri, sudah termigrasi dan
- * kosong, dan skema itu dihapus seluruhnya setelah berkasnya selesai.
+ * `testDatabase()` is called once at the top of a test file. It registers `beforeAll` and
+ * `afterAll` hooks and returns a handle whose `db` is ready to use inside every `it`. That file
+ * gets a PostgreSQL schema of its own, already migrated and empty, and the schema is dropped
+ * entirely once the file finishes.
  *
- * ## Mengapa skema per berkas, bukan transaksi yang digulung balik
+ * ## Why a schema per file rather than a rolled-back transaction
  *
- * Membungkus setiap pengujian di dalam satu transaksi lalu menggulungnya balik adalah cara yang
- * paling cepat, dan cara itu **sengaja tidak dipakai**. Spec keuangan menulis ke buku kas yang
- * hanya-tambah, dan aturannya adalah aturan tentang komit: nomor urut yang diambil saat komit,
- * kunci baris yang dipegang sampai komit, pemicu yang menolak pembaruan setelah komit, dan
- * pekerjaan terjadwal yang mengambil kunci untuk satu periode. Semua itu tidak bisa diuji dari
- * dalam sebuah transaksi yang tidak pernah komit — pengujiannya akan lulus terhadap perilaku
- * yang tidak pernah terjadi di produksi. Di dalam skema sendiri, pengujian komit sungguhan,
- * membaca kembali apa yang dikomitnya, dan tetap tidak terlihat oleh berkas lain.
+ * Wrapping each test in a transaction and rolling it back is the fastest approach, and it is
+ * **deliberately not used**. The financial specs write to an append-only cash book, and the rules
+ * there are rules about committing: the sequence number taken at commit, the row lock held until
+ * commit, the trigger refusing an update after commit, and the scheduled job taking a lock for
+ * one period. None of that can be tested from inside a transaction that never commits — the test
+ * would pass against behaviour that never happens in production. Inside its own schema a test
+ * commits for real, reads back what it committed, and still stays invisible to other files.
  *
- * Membersihkan dengan `truncate` di antara pengujian juga ditolak: ia berbagi satu ruang nama,
- * jadi dua berkas yang berjalan bersamaan — dan Vitest memang menjalankan berkas secara paralel —
- * akan saling menghapus barisnya. Skema per berkas memberi isolasi yang sama tanpa memaksa
- * pengujian berjalan berurutan.
+ * Cleaning with `truncate` between tests is rejected too: it shares one namespace, so two files
+ * running at the same time — and Vitest does run files in parallel — would delete each other's
+ * rows. A schema per file gives the same isolation without forcing tests to run serially.
  *
- * Harganya: migrasi dijalankan ulang untuk setiap berkas pengujian. Selama migrasinya masih
- * puluhan berkas SQL, biayanya di bawah satu detik per berkas. Kalau suatu saat terasa, langkah
- * berikutnya adalah menyiapkan satu skema contoh sekali lalu menyalinnya, bukan kembali ke
- * penggulungan balik.
+ * The price: migrations are re-run for every test file. While the migrations are still tens of
+ * SQL files, that costs under a second per file. If it ever becomes noticeable, the next step is
+ * to prepare one template schema once and copy it, not to go back to rolling back.
  *
- * ## Basis data mana
+ * ## Which database
  *
- * `TEST_DATABASE_URL`, yang wajib berbeda dari `DATABASE_URL`. Perkakas ini menghapus skema dan
- * membuat basis data; menunjuknya ke basis data yang sama dengan server pengembangan adalah
- * kesalahan yang mahal, jadi ia ditolak di sini alih-alih dibiarkan berjalan. Basis data uji
- * dibuat otomatis kalau belum ada, sehingga `docker compose up db` lalu `bun run test` cukup
- * tanpa langkah pasang tangan.
+ * `TEST_DATABASE_URL`, which must differ from `DATABASE_URL`. This harness drops schemas and
+ * creates databases; pointing it at the same database as the development server is an expensive
+ * mistake, so it is rejected here rather than allowed to run. The test database is created
+ * automatically when it does not exist, so `docker compose up db` followed by `bun run test` is
+ * enough without a manual setup step.
  */
 
-/** Nama tabel jurnal migrasi di dalam skema uji. Ikut terhapus bersama skemanya. */
-const TABEL_MIGRASI = '__migrasi__';
+/** The name of the migration journal table inside the test schema. It is dropped with the schema. */
+const MIGRATIONS_TABLE = '__migrations__';
 
-/** Kode galat PostgreSQL untuk basis data yang tidak ada. */
-const BASIS_DATA_TIDAK_ADA = '3D000';
+/** The PostgreSQL error code for a database that does not exist. */
+const DATABASE_DOES_NOT_EXIST = '3D000';
 
 /**
- * Kode galat PostgreSQL yang berarti "basis datanya sudah ada" ketika dua berkas pengujian yang
- * berjalan paralel berlomba membuatnya. `42P04` datang dari pemeriksaan nama, `23505` dari indeks
- * unik `pg_database_datname_index` ketika lomba itu kalah tipis; keduanya sama-sama berarti
- * pekerjaannya sudah dikerjakan berkas lain.
+ * The PostgreSQL error codes meaning "the database already exists" when two test files running in
+ * parallel race to create it. `42P04` comes from the name check, `23505` from the
+ * `pg_database_datname_index` unique index when that race is lost by a hair; both mean another
+ * file has already done the work.
  */
-const BASIS_DATA_SUDAH_ADA = ['42P04', '23505'];
+const DATABASE_ALREADY_EXISTS = ['42P04', '23505'];
 
-/** Pegangan yang dikembalikan `basisDataUji()`. */
-export interface BasisDataUji {
-	/** Basis data berkas ini. Baru tersedia setelah `beforeAll` berjalan. */
-	readonly db: BasisData;
-	/** Nama skema PostgreSQL milik berkas ini, berguna saat membaca pesan galat. */
-	readonly skema: string;
+/** The handle returned by `testDatabase()`. */
+export interface TestDatabase {
+	/** This file's database. Only available once `beforeAll` has run. */
+	readonly db: Database;
+	/** The name of this file's PostgreSQL schema, useful when reading error messages. */
+	readonly schemaName: string;
 }
 
 /**
- * Menyiapkan skema PostgreSQL bersih untuk berkas pengujian yang memanggilnya.
+ * Prepares a clean PostgreSQL schema for the test file that calls it.
  *
  * ```ts
- * const basis = basisDataUji();
+ * const testDb = testDatabase();
  *
- * it('menyimpan baris', async () => {
- *   await basis.db.insert(percobaanRangka).values({ keterangan: 'satu', nilai: rupiah(1) });
+ * it('stores a row', async () => {
+ *   await testDb.db.insert(scaffoldProbe).values({ description: 'one', amount: rupiah(1) });
  * });
  * ```
  */
-export function basisDataUji(): BasisDataUji {
-	const skema = `uji_${randomUUID().replaceAll('-', '')}`.slice(0, 40);
-	let koneksi: Koneksi | undefined;
+export function testDatabase(): TestDatabase {
+	const schemaName = `test_${randomUUID().replaceAll('-', '')}`.slice(0, 40);
+	let connection: Connection | undefined;
 
 	beforeAll(async () => {
-		const alamat = alamatUji();
-		await pastikanBasisDataAda(alamat);
-		koneksi = buatKoneksi(alamat, { options: `-c search_path=${skema}` });
-		await siapkanSkema(koneksi.db, skema);
+		const url = testDatabaseUrl();
+		await ensureDatabaseExists(url);
+		connection = createConnection(url, { options: `-c search_path=${schemaName}` });
+		await prepareSchema(connection.db, schemaName);
 	});
 
 	afterAll(async () => {
-		if (!koneksi) {
+		if (!connection) {
 			return;
 		}
-		await koneksi.db.execute(sql.raw(`drop schema if exists "${skema}" cascade`));
-		await koneksi.tutup();
+		await connection.db.execute(sql.raw(`drop schema if exists "${schemaName}" cascade`));
+		await connection.close();
 	});
 
 	return {
-		skema,
+		schemaName,
 		get db() {
-			if (!koneksi) {
+			if (!connection) {
 				throw new Error(
-					'Basis data uji belum siap. basisDataUji() harus dipanggil di puncak berkas pengujian, dan db-nya hanya boleh dipakai di dalam it() atau beforeEach, bukan di ruang lingkup modul.'
+					'The test database is not ready. testDatabase() must be called at the top of a test file, and its db may only be used inside it() or beforeEach, not at module scope.'
 				);
 			}
-			return koneksi.db;
+			return connection.db;
 		}
 	};
 }
 
-/** Membaca `TEST_DATABASE_URL` dan menolak kalau ia menunjuk ke basis data server pengembangan. */
-function alamatUji(): string {
-	const alamat = bacaAlamatBasisData('TEST_DATABASE_URL');
-	if (alamat === process.env.DATABASE_URL?.trim()) {
+/** Reads `TEST_DATABASE_URL` and refuses it when it points at the development server's database. */
+function testDatabaseUrl(): string {
+	const url = readDatabaseUrl('TEST_DATABASE_URL');
+	if (url === process.env.DATABASE_URL?.trim()) {
 		throw new Error(
-			'TEST_DATABASE_URL sama persis dengan DATABASE_URL. Perkakas uji membuat dan menghapus skema, jadi ia menolak berjalan di atas basis data server pengembangan. Isi TEST_DATABASE_URL dengan basis data tersendiri, misalnya komplek_test.'
+			'TEST_DATABASE_URL is identical to DATABASE_URL. The test harness creates and drops schemas, so it refuses to run against the development server database. Set TEST_DATABASE_URL to a database of its own, for example komplek_test.'
 		);
 	}
-	return alamat;
+	return url;
 }
 
-/** Membuat skema berkas ini, memastikan `search_path` benar-benar menunjuk ke sana, lalu migrasi. */
-async function siapkanSkema(db: BasisData, skema: string): Promise<void> {
-	await db.execute(sql.raw(`create schema if not exists "${skema}"`));
+/** Creates this file's schema, proves `search_path` really points at it, then migrates. */
+async function prepareSchema(db: Database, schemaName: string): Promise<void> {
+	await db.execute(sql.raw(`create schema if not exists "${schemaName}"`));
 
-	// `search_path` disetel saat koneksi dibuka, ketika skemanya belum ada. Pemeriksaan ini
-	// membuktikan ia benar-benar berlaku sekarang; tanpanya, sebuah kesalahan setelan akan
-	// menaruh tabel di `public` dan isolasi antar berkas hilang tanpa satu pun pengujian gagal.
-	const hasil = await db.execute<{ skema: string | null }>(sql`select current_schema() as skema`);
-	if (hasil.rows[0]?.skema !== skema) {
+	// `search_path` is set when the connection is opened, at which point the schema does not exist
+	// yet. This check proves it really applies now; without it a misconfiguration would put the
+	// tables in `public` and cross-file isolation would be lost without a single test failing.
+	const result = await db.execute<{ schemaName: string | null }>(
+		sql`select current_schema() as "schemaName"`
+	);
+	if (result.rows[0]?.schemaName !== schemaName) {
 		throw new Error(
-			`search_path tidak menunjuk ke skema uji: current_schema() adalah ${hasil.rows[0]?.skema}, seharusnya ${skema}.`
+			`search_path does not point at the test schema: current_schema() is ${result.rows[0]?.schemaName}, expected ${schemaName}.`
 		);
 	}
 
 	await migrate(db, {
 		migrationsFolder: path.resolve(process.cwd(), 'drizzle'),
-		migrationsSchema: skema,
-		migrationsTable: TABEL_MIGRASI
+		migrationsSchema: schemaName,
+		migrationsTable: MIGRATIONS_TABLE
 	});
 }
 
 /**
- * Membuat basis data uji kalau ia belum ada, dengan menyambung ke basis data pemeliharaan
- * `postgres` pada peladen yang sama. Jalur normal tidak membayar apa pun: pembuatan hanya dicoba
- * setelah sambungan pertama ditolak dengan `3D000`.
+ * Creates the test database when it does not exist yet, by connecting to the `postgres`
+ * maintenance database on the same server. The normal path pays nothing: creation is only
+ * attempted after the first connection is refused with `3D000`.
  */
-async function pastikanBasisDataAda(alamat: string): Promise<void> {
-	const koneksi = buatKoneksi(alamat);
+async function ensureDatabaseExists(url: string): Promise<void> {
+	const connection = createConnection(url);
 	try {
-		await koneksi.db.execute(sql`select 1`);
+		await connection.db.execute(sql`select 1`);
 		return;
-	} catch (galat) {
-		if (kodeGalat(galat) !== BASIS_DATA_TIDAK_ADA) {
-			throw galat;
+	} catch (error) {
+		if (errorCode(error) !== DATABASE_DOES_NOT_EXIST) {
+			throw error;
 		}
 	} finally {
-		await koneksi.tutup();
+		await connection.close();
 	}
-	await buatBasisData(alamat);
+	await createDatabase(url);
 }
 
-/** Menjalankan `create database` lewat basis data pemeliharaan `postgres`. */
-async function buatBasisData(alamat: string): Promise<void> {
-	const tujuan = new URL(alamat);
-	const nama = decodeURIComponent(tujuan.pathname.slice(1));
-	tujuan.pathname = '/postgres';
+/** Runs `create database` through the `postgres` maintenance database. */
+async function createDatabase(url: string): Promise<void> {
+	const target = new URL(url);
+	const name = decodeURIComponent(target.pathname.slice(1));
+	target.pathname = '/postgres';
 
-	const koneksi = buatKoneksi(tujuan.toString());
+	const connection = createConnection(target.toString());
 	try {
-		await koneksi.db.execute(sql.raw(`create database "${nama.replaceAll('"', '""')}"`));
-	} catch (galat) {
-		// Dua berkas pengujian yang berjalan paralel bisa sama-sama sampai di sini.
-		const kode = kodeGalat(galat);
-		if (!kode || !BASIS_DATA_SUDAH_ADA.includes(kode)) {
-			throw galat;
+		await connection.db.execute(sql.raw(`create database "${name.replaceAll('"', '""')}"`));
+	} catch (error) {
+		// Two test files running in parallel can both reach this point.
+		const code = errorCode(error);
+		if (!code || !DATABASE_ALREADY_EXISTS.includes(code)) {
+			throw error;
 		}
 	} finally {
-		await koneksi.tutup();
+		await connection.close();
 	}
 }
 
 /**
- * Mengambil `code` dari galat PostgreSQL, atau `undefined` kalau bentuknya bukan itu.
+ * Takes `code` off a PostgreSQL error, or `undefined` when the error does not have that shape.
  *
- * Drizzle membungkus galat driver di dalam galatnya sendiri, jadi kodenya ada di rantai `cause`,
- * bukan di galat paling luar.
+ * Drizzle wraps driver errors inside its own, so the code is on the `cause` chain rather than on
+ * the outermost error.
  */
-function kodeGalat(galat: unknown): string | undefined {
-	let sekarang: unknown = galat;
-	while (sekarang instanceof Error) {
-		if ('code' in sekarang && typeof sekarang.code === 'string') {
-			return sekarang.code;
+function errorCode(error: unknown): string | undefined {
+	let current: unknown = error;
+	while (current instanceof Error) {
+		if ('code' in current && typeof current.code === 'string') {
+			return current.code;
 		}
-		sekarang = sekarang.cause;
+		current = current.cause;
 	}
 	return undefined;
 }

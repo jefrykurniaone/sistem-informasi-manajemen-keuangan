@@ -2,38 +2,40 @@ import { bigint, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import type { Rupiah } from '$lib/money';
 
 /**
- * Skema basis data. Setiap tabel aplikasi diekspor dari berkas ini, dan `drizzle-kit`
- * membacanya lewat `schema` di `drizzle.config.ts`.
+ * The database schema. Every application table is exported from this file, and `drizzle-kit`
+ * reads it through `schema` in `drizzle.config.ts`.
  *
- * Konvensi yang ditetapkan di sini dan diikuti setiap tabel berikutnya:
+ * Conventions settled here and followed by every later table:
  *
- * - **Nama kolom tidak ditulis dua kali.** `casing: 'snake_case'` mengubah nama properti
- *   TypeScript menjadi nama kolom SQL (`dibuatPada` menjadi `dibuat_pada`). Setelan itu harus
- *   ada di dua tempat sekaligus — `drizzle.config.ts` untuk pembuatan migrasi dan panggilan
- *   `drizzle()` di `src/lib/server/db/index.ts` untuk kueri saat berjalan. Kalau hanya satu yang
- *   punya, kueri akan menyebut kolom yang tidak ada di basis data.
- * - **Nama tabel ditulis apa adanya** dalam bentuk `snake_case` Indonesia, karena nama tabel
- *   muncul di berkas migrasi dan di psql, bukan hanya di TypeScript.
- * - **Kunci primer adalah `uuid`**, bukan urutan bilangan bulat: nomor tagihan dan nomor
- *   pembayaran tidak boleh bisa ditebak dari alamat halaman tetangga.
- * - **Nilai uang adalah `bigint` dengan `mode: 'number'`**, bukan `integer`. Batas `integer`
- *   (`int4`) adalah 2.147.483.647 rupiah; akumulasi buku kas satu komplek selama belasan tahun
- *   bisa melewatinya, dan sebuah kolom yang meluap lebih mahal daripada delapan bita per baris.
- *   `mode: 'number'` membuat driver mengembalikan `number`, bukan `string`, dan `.$type<Rupiah>()`
- *   membuat tipe uang di `src/lib/money.ts` ikut sampai ke hasil kueri.
- * - **Cap waktu selalu `withTimezone`**, supaya tidak ada baris yang maknanya bergantung pada
- *   zona waktu proses yang kebetulan menulisnya.
+ * - **Identifiers are English, table and column names included.** The domain glossary in
+ *   `CONTEXT.md` is written in Indonesian and stays that way; its "Code names" section maps each
+ *   term to the one English identifier that represents it. A table introducing a term that has
+ *   no entry there is inventing a concept and has to stop.
+ * - **A column name is never written twice.** `casing: 'snake_case'` turns a TypeScript property
+ *   name into a SQL column name (`createdAt` becomes `created_at`). That setting has to be in
+ *   two places at once — `drizzle.config.ts` for migration generation and the `drizzle()` call in
+ *   `src/lib/server/db/index.ts` for queries at run time. If only one of them has it, queries
+ *   will name columns that do not exist in the database.
+ * - **Primary keys are `uuid`**, not an integer sequence: an invoice number or a payment number
+ *   must not be guessable from the address of a neighbour's page.
+ * - **Money values are `bigint` with `mode: 'number'`**, not `integer`. The `integer` (`int4`)
+ *   ceiling is 2,147,483,647 rupiah; one complex's cash book can pass it over a decade or two,
+ *   and an overflowing column costs more than eight bytes per row. `mode: 'number'` makes the
+ *   driver return a `number` rather than a string, and `.$type<Rupiah>()` carries the money type
+ *   from `src/lib/money.ts` through to query results.
+ * - **Timestamps are always `withTimezone`**, so that no row's meaning depends on the time zone
+ *   of whichever process happened to write it.
  */
 
 /**
- * Tabel percobaan milik tiket rangka basis data. Ia tidak punya arti domain: tugasnya hanya
- * membuktikan bahwa migrasi benar-benar berjalan dan sebuah baris bisa ditulis lalu dibaca
- * kembali lewat perkakas uji. Tiket yang memasang tabel domain pertama boleh menghapusnya
- * beserta migrasi penghapusnya.
+ * The probe table belonging to the database scaffolding ticket. It has no domain meaning: its
+ * only job is to prove that migrations really run and that a row can be written and read back
+ * through the test harness. It is also what the cross-file isolation guard in
+ * `tests/unit/db-harness-second.test.ts` writes to, so it outlives the first domain table.
  */
-export const percobaanRangka = pgTable('percobaan_rangka', {
+export const scaffoldProbe = pgTable('scaffold_probe', {
 	id: uuid().primaryKey().defaultRandom(),
-	keterangan: text().notNull(),
-	nilai: bigint({ mode: 'number' }).$type<Rupiah>().notNull(),
-	dibuatPada: timestamp({ withTimezone: true }).notNull().defaultNow()
+	description: text().notNull(),
+	amount: bigint({ mode: 'number' }).$type<Rupiah>().notNull(),
+	createdAt: timestamp({ withTimezone: true }).notNull().defaultNow()
 });

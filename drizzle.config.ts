@@ -1,21 +1,21 @@
 import { defineConfig } from 'drizzle-kit';
 
 /**
- * Setelan `drizzle-kit`, dipakai oleh `bun run db:generate` dan `bun run db:migrate`.
+ * The `drizzle-kit` settings, used by `bun run db:generate` and `bun run db:migrate`.
  *
- * Alamat dibaca dari `DATABASE_URL`. Pemeriksaan ini diulang di sini alih-alih diimpor dari
- * `src/lib/server/db/index.ts` karena `drizzle-kit` membundel berkas ini sendiri, dan mengimpor
- * modul itu akan ikut menarik `pg` dan seluruh Drizzle ke dalam bundel setelan hanya untuk
- * membaca satu variabel.
+ * The URL is read from `DATABASE_URL`. That check is repeated here rather than imported from
+ * `src/lib/server/db/index.ts` because `drizzle-kit` bundles this file on its own, and importing
+ * that module would pull `pg` and the whole of Drizzle into the settings bundle just to read one
+ * variable.
  *
- * `DATABASE_URL` di `.env` memakai nama host `localhost`, yaitu pandangan dari mesin host tempat
- * `drizzle-kit` dijalankan. Container `app` tidak memakainya: `docker-compose.yml` menyusun
- * alamatnya sendiri dengan nama host `db`.
+ * `DATABASE_URL` in `.env` uses the host name `localhost`, which is the view from the host
+ * machine where `drizzle-kit` runs. The `app` container does not use it: `docker-compose.yml`
+ * builds its own URL with the host name `db`.
  */
-const alamat = process.env.DATABASE_URL?.trim();
-if (!alamat) {
+const url = process.env.DATABASE_URL?.trim();
+if (!url) {
 	throw new Error(
-		'Variabel lingkungan DATABASE_URL tidak diisi. Salin .env.example menjadi .env, lalu isi DATABASE_URL dengan alamat PostgreSQL, misalnya postgres://pengguna:kata-sandi@localhost:5432/komplek.'
+		'Environment variable DATABASE_URL is not set. Copy .env.example to .env, then set DATABASE_URL to a PostgreSQL URL, for example postgres://user:password@localhost:5432/komplek.'
 	);
 }
 
@@ -23,10 +23,10 @@ export default defineConfig({
 	dialect: 'postgresql',
 	schema: './src/lib/server/db/schema/index.ts',
 	out: './drizzle',
-	// Harus sama dengan `casing` pada panggilan `drizzle()` di src/lib/server/db/index.ts.
+	// Has to match the `casing` on the `drizzle()` call in src/lib/server/db/index.ts.
 	casing: 'snake_case',
-	dbCredentials: { url: alamat },
-	// Minta konfirmasi sebelum menjalankan pernyataan yang bisa menghapus data.
+	dbCredentials: { url },
+	// Ask for confirmation before running a statement that could drop data.
 	strict: true,
 	verbose: true
 });

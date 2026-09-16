@@ -1,11 +1,11 @@
 {
-	"id": "d0355ac4-25a4-4c0d-a104-342541bff4fe",
+	"id": "aa3edfe9-f25f-40c8-af2b-37ec3d6143ca",
 	"prevId": "00000000-0000-0000-0000-000000000000",
 	"version": "7",
 	"dialect": "postgresql",
 	"tables": {
-		"public.percobaan_rangka": {
-			"name": "percobaan_rangka",
+		"public.scaffold_probe": {
+			"name": "scaffold_probe",
 			"schema": "",
 			"columns": {
 				"id": {
@@ -15,20 +15,20 @@
 					"notNull": true,
 					"default": "gen_random_uuid()"
 				},
-				"keterangan": {
-					"name": "keterangan",
+				"description": {
+					"name": "description",
 					"type": "text",
 					"primaryKey": false,
 					"notNull": true
 				},
-				"nilai": {
-					"name": "nilai",
+				"amount": {
+					"name": "amount",
 					"type": "bigint",
 					"primaryKey": false,
 					"notNull": true
 				},
-				"dibuat_pada": {
-					"name": "dibuat_pada",
+				"created_at": {
+					"name": "created_at",
 					"type": "timestamp with time zone",
 					"primaryKey": false,
 					"notNull": true,

@@ -1,4 +1,4 @@
-name: Gerbang mutu
+name: Quality gate
 
 on:
   pull_request:
@@ -9,18 +9,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: gerbang-mutu-${{ github.workflow }}-${{ github.ref }}
+  group: quality-gate-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  gerbang:
+  gate:
     name: check, lint, test, build
     runs-on: ubuntu-latest
 
-    # Layanan PostgreSQL untuk langkah `test`. Kredensial di bawah ini adalah nilai sekali pakai
-    # untuk container ini saja: dibuat dan dihapus di dalam job yang sama, tidak terjangkau dari
-    # luar runner, dan bukan rujukan ke secret repositori. Ini bukan temuan kredensial-hardcode —
-    # tidak ada rahasia sungguhan di sini untuk dilindungi — jadi jangan diganti jadi secret.
+    # The PostgreSQL service for the `test` step. The credentials below are single-use values for
+    # this container only: created and destroyed inside the same job, unreachable from outside the
+    # runner, and not a reference to a repository secret. This is not a hardcoded-credential
+    # finding — there is no real secret here to protect — so do not turn it into a secret.
     services:
       postgres:
         image: postgres:18-alpine
@@ -55,14 +55,14 @@ jobs:
       - name: test
         run: bun run test
         env:
-          # localhost, bukan nama layanan `postgres`: langkah ini berjalan langsung di runner,
-          # bukan di dalam container lain, jadi nama layanan itu tidak bisa diselesaikan di sini.
-          # Hanya langkah ini yang menyentuh basis data, jadi variabelnya ditaruh di sini saja,
-          # bukan di tingkat job.
+          # localhost, not the service name `postgres`: this step runs directly on the runner
+          # rather than inside another container, so that service name cannot be resolved here.
+          # Only this step touches the database, so the variables live here rather than at job
+          # level.
           DATABASE_URL: postgres://komplek_ci:kata-sandi-ci-sekali-pakai@localhost:5432/komplek_ci
-          # Basis data lain pada peladen yang sama. Perkakas uji menolak berjalan kalau nilai ini
-          # sama persis dengan DATABASE_URL, dan ia membuat basis data ini sendiri pada koneksi
-          # pertama, jadi tidak perlu didaftarkan lewat POSTGRES_DB di atas.
+          # A different database on the same server. The test harness refuses to run when this
+          # value is identical to DATABASE_URL, and it creates this database itself on the first
+          # connection, so it does not need to be declared through POSTGRES_DB above.
           TEST_DATABASE_URL: postgres://komplek_ci:kata-sandi-ci-sekali-pakai@localhost:5432/komplek_ci_test
 
       - name: build

@@ -1,128 +1,122 @@
 import { count, eq, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { rupiah } from '$lib/money';
-import { bacaAlamatBasisData, buatKoneksi } from '$lib/server/db';
-import { percobaanRangka } from '$lib/server/db/schema';
-import { basisDataUji } from '$lib/server/db/test-helpers';
+import { createConnection, readDatabaseUrl } from '$lib/server/db';
+import { scaffoldProbe } from '$lib/server/db/schema';
+import { testDatabase } from '$lib/server/db/test-helpers';
 
-const basis = basisDataUji();
+const testDb = testDatabase();
 
 /**
- * Penanda yang juga ditulis berkas pengujian lain yang memakai perkakas ini. Pemeriksaannya
- * di bawah — tepat satu baris, bukan dua — adalah yang gagal kalau skema per berkas bocor.
+ * A marker that the other test file using this harness writes as well. The check below — exactly
+ * one row, not two — is what fails when the per-file schema leaks.
  */
-const PENANDA_BERSAMA = 'penanda-isolasi-antar-berkas';
+const SHARED_MARKER = 'cross-file-isolation-marker';
 
-describe('koneksi basis data', () => {
-	it('menolak alamat yang kosong dengan pesan yang menyebut nama variabelnya', () => {
-		expect(() => bacaAlamatBasisData('DATABASE_URL', {})).toThrow(/DATABASE_URL tidak diisi/);
+describe('database connection', () => {
+	it('rejects an empty URL with a message naming its variable', () => {
+		expect(() => readDatabaseUrl('DATABASE_URL', {})).toThrow(/DATABASE_URL is not set/);
 	});
 
-	it('menolak alamat yang hanya berisi spasi', () => {
-		expect(() => bacaAlamatBasisData('TEST_DATABASE_URL', { TEST_DATABASE_URL: '   ' })).toThrow(
-			/TEST_DATABASE_URL tidak diisi/
+	it('rejects a URL that is only whitespace', () => {
+		expect(() => readDatabaseUrl('TEST_DATABASE_URL', { TEST_DATABASE_URL: '   ' })).toThrow(
+			/TEST_DATABASE_URL is not set/
 		);
 	});
 });
 
-describe('perkakas uji basis data', () => {
-	it('memakai nama skema yang dibangkitkan acak, sehingga tidak ada dua berkas yang berbagi', () => {
-		expect(basis.skema).toMatch(/^uji_[0-9a-f]{32}$/);
+describe('database test harness', () => {
+	it('uses a randomly generated schema name, so that no two files share one', () => {
+		expect(testDb.schemaName).toMatch(/^test_[0-9a-f]{32}$/);
 	});
 
-	it('memberi berkas ini skemanya sendiri, bukan public', async () => {
-		const hasil = await basis.db.execute<{ skema: string }>(sql`select current_schema() as skema`);
-		expect(hasil.rows[0]?.skema).toBe(basis.skema);
-	});
-
-	it('menjalankan migrasi, sehingga tabelnya ada di skema itu', async () => {
-		const hasil = await basis.db.execute<{ jumlah: string }>(
-			sql`select count(*) as jumlah from information_schema.tables
-			    where table_schema = ${basis.skema} and table_name = 'percobaan_rangka'`
+	it('gives this file its own schema rather than public', async () => {
+		const result = await testDb.db.execute<{ schemaName: string }>(
+			sql`select current_schema() as "schemaName"`
 		);
-		expect(hasil.rows[0]?.jumlah).toBe('1');
+		expect(result.rows[0]?.schemaName).toBe(testDb.schemaName);
 	});
 
-	it('mulai dengan tabel kosong', async () => {
-		const [hasil] = await basis.db.select({ jumlah: count() }).from(percobaanRangka);
-		expect(hasil.jumlah).toBe(0);
+	it('runs the migrations, so the table exists in that schema', async () => {
+		const result = await testDb.db.execute<{ total: string }>(
+			sql`select count(*) as total from information_schema.tables
+			    where table_schema = ${testDb.schemaName} and table_name = 'scaffold_probe'`
+		);
+		expect(result.rows[0]?.total).toBe('1');
 	});
 
-	it('menulis sebuah baris dan membacanya kembali', async () => {
-		const [baris] = await basis.db
-			.insert(percobaanRangka)
-			.values({ keterangan: 'iuran sebulan', nilai: rupiah(150_000) })
+	it('starts with an empty table', async () => {
+		const [result] = await testDb.db.select({ total: count() }).from(scaffoldProbe);
+		expect(result.total).toBe(0);
+	});
+
+	it('writes a row and reads it back', async () => {
+		const [row] = await testDb.db
+			.insert(scaffoldProbe)
+			.values({ description: 'one month of dues', amount: rupiah(150_000) })
 			.returning();
 
-		const dibaca = await basis.db
-			.select()
-			.from(percobaanRangka)
-			.where(eq(percobaanRangka.id, baris.id));
+		const read = await testDb.db.select().from(scaffoldProbe).where(eq(scaffoldProbe.id, row.id));
 
-		expect(dibaca).toEqual([
+		expect(read).toEqual([
 			{
-				id: baris.id,
-				keterangan: 'iuran sebulan',
-				nilai: 150_000,
-				dibuatPada: baris.dibuatPada
+				id: row.id,
+				description: 'one month of dues',
+				amount: 150_000,
+				createdAt: row.createdAt
 			}
 		]);
 	});
 
-	it('mengembalikan nilai uang sebagai number bulat, bukan string, dari kolom bigint', async () => {
-		// Kesalahan yang dicegah: `bigint` tanpa `mode: 'number'` sampai ke kode sebagai string,
-		// dan "150000" + "150000" adalah "150000150000".
-		const besar = 987_654_321_098;
-		const [baris] = await basis.db
-			.insert(percobaanRangka)
-			.values({ keterangan: 'nilai besar', nilai: rupiah(besar) })
+	it('returns a money value as a whole number rather than a string from a bigint column', async () => {
+		// The mistake prevented: `bigint` without `mode: 'number'` reaches the code as a string,
+		// and "150000" + "150000" is "150000150000".
+		const large = 987_654_321_098;
+		const [row] = await testDb.db
+			.insert(scaffoldProbe)
+			.values({ description: 'a large value', amount: rupiah(large) })
 			.returning();
 
-		expect(baris.nilai).toBe(besar);
+		expect(row.amount).toBe(large);
 	});
 
-	it('benar-benar mengomit, sehingga koneksi lain melihat barisnya', async () => {
-		// Ini yang membuat perkakas ini memakai skema per berkas, bukan transaksi yang digulung
-		// balik: aturan buku kas yang hanya-tambah adalah aturan tentang komit, dan tidak bisa
-		// diuji dari dalam transaksi yang tidak pernah komit.
-		const [baris] = await basis.db
-			.insert(percobaanRangka)
-			.values({ keterangan: 'bukti komit', nilai: rupiah(1) })
+	it('really commits, so another connection sees the row', async () => {
+		// This is why the harness uses a schema per file rather than a rolled-back transaction:
+		// the append-only cash book rules are rules about committing, and cannot be tested from
+		// inside a transaction that never commits.
+		const [row] = await testDb.db
+			.insert(scaffoldProbe)
+			.values({ description: 'proof of commit', amount: rupiah(1) })
 			.returning();
 
-		const lain = buatKoneksi(bacaAlamatBasisData('TEST_DATABASE_URL'), {
-			options: `-c search_path=${basis.skema}`
+		const other = createConnection(readDatabaseUrl('TEST_DATABASE_URL'), {
+			options: `-c search_path=${testDb.schemaName}`
 		});
 		try {
-			const dibaca = await lain.db
-				.select()
-				.from(percobaanRangka)
-				.where(eq(percobaanRangka.id, baris.id));
-			expect(dibaca).toHaveLength(1);
+			const read = await other.db.select().from(scaffoldProbe).where(eq(scaffoldProbe.id, row.id));
+			expect(read).toHaveLength(1);
 		} finally {
-			await lain.tutup();
+			await other.close();
 		}
 	});
 
-	it('tidak meninggalkan apa pun di skema public', async () => {
-		// Kalau search_path salah, migrasi akan mendarat di public dan setiap berkas pengujian
-		// akan berbagi satu tabel. Pemeriksaan ini gagal seketika kalau itu terjadi.
-		const hasil = await basis.db.execute<{ jumlah: string }>(
-			sql`select count(*) as jumlah from information_schema.tables where table_schema = 'public'`
+	it('leaves nothing behind in the public schema', async () => {
+		// If search_path is wrong, the migrations land in public and every test file shares one
+		// table. This check fails immediately when that happens.
+		const result = await testDb.db.execute<{ total: string }>(
+			sql`select count(*) as total from information_schema.tables where table_schema = 'public'`
 		);
-		expect(hasil.rows[0]?.jumlah).toBe('0');
+		expect(result.rows[0]?.total).toBe('0');
 	});
 
-	it('menulis penanda bersama tepat sekali, meski berkas lain menulis penanda yang sama', async () => {
-		await basis.db
-			.insert(percobaanRangka)
-			.values({ keterangan: PENANDA_BERSAMA, nilai: rupiah(1) });
+	it('writes the shared marker exactly once, even though another file writes the same marker', async () => {
+		await testDb.db.insert(scaffoldProbe).values({ description: SHARED_MARKER, amount: rupiah(1) });
 
-		const [hasil] = await basis.db
-			.select({ jumlah: count() })
-			.from(percobaanRangka)
-			.where(eq(percobaanRangka.keterangan, PENANDA_BERSAMA));
+		const [result] = await testDb.db
+			.select({ total: count() })
+			.from(scaffoldProbe)
+			.where(eq(scaffoldProbe.description, SHARED_MARKER));
 
-		expect(hasil.jumlah).toBe(1);
+		expect(result.total).toBe(1);
 	});
 });
