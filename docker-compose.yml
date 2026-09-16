@@ -37,7 +37,12 @@ services:
     ports:
       - '${POSTGRES_PORT:-5432}:5432'
     volumes:
-      - db-data:/var/lib/postgresql/data
+      # Mount the parent directory, not `/var/lib/postgresql/data`. From PostgreSQL 18 the official
+      # images store data in a major-version-specific subdirectory (`/var/lib/postgresql/18/docker`)
+      # so that `pg_upgrade --link` does not cross a mount point boundary. A volume on the old
+      # `/data` path makes the container refuse to start: "there appears to be PostgreSQL data in
+      # /var/lib/postgresql/data (unused mount/volume)". Do not move this back.
+      - db-data:/var/lib/postgresql
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-komplek} -d ${POSTGRES_DB:-komplek}']
       interval: 5s
