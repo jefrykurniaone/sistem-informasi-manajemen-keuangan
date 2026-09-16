@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Komplek">
+	<style>
+		.bg {
+			fill: #fafafa;
+		}
+		.fg {
+			fill: #171717;
+		}
+		@media (prefers-color-scheme: dark) {
+			.bg {
+				fill: #0a0a0a;
+			}
+			.fg {
+				fill: #fafafa;
+			}
+		}
+	</style>
+	<rect class="bg" x="1" y="1" width="30" height="30" rx="7" />
+	<path class="fg" d="M16 5 L28 15 L24 15 L24 27 L8 27 L8 15 L4 15 Z" />
+	<rect class="bg" x="13" y="19" width="6" height="8" />
+</svg>
