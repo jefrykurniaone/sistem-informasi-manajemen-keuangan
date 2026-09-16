@@ -1,0 +1,65 @@
+name: komplek
+
+services:
+  app:
+    build:
+      context: .
+      target: dev
+    environment:
+      NODE_ENV: development
+      ORIGIN: ${ORIGIN:-http://localhost:5173}
+      VITE_USE_POLLING: ${VITE_USE_POLLING:-false}
+      DATABASE_URL: postgres://${POSTGRES_USER:-komplek}:${POSTGRES_PASSWORD:-kata-sandi-lokal-ganti-saya}@db:5432/${POSTGRES_DB:-komplek}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      EMAIL_FROM: ${EMAIL_FROM:-no-reply@komplek.local}
+    ports:
+      - '${APP_PORT:-5173}:5173'
+    volumes:
+      # The working tree is mounted so edits on the host reach the dev server. The two anonymous
+      # volumes keep the container's own node_modules and .svelte-kit, which must never be
+      # overwritten by the host copy.
+      - .:/app
+      - /app/node_modules
+      - /app/.svelte-kit
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-komplek}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kata-sandi-lokal-ganti-saya}
+      POSTGRES_DB: ${POSTGRES_DB:-komplek}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      # Mount the parent directory, not `/var/lib/postgresql/data`. From PostgreSQL 18 the official
+      # images store data in a major-version-specific subdirectory (`/var/lib/postgresql/18/docker`)
+      # so that `pg_upgrade --link` does not cross a mount point boundary. A volume on the old
+      # `/data` path makes the container refuse to start: "there appears to be PostgreSQL data in
+      # /var/lib/postgresql/data (unused mount/volume)". Do not move this back.
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-komplek} -d ${POSTGRES_DB:-komplek}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:v1.31
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    ports:
+      # Web interface, opened at http://localhost:8025
+      - '${MAILPIT_WEB_PORT:-8025}:8025'
+      # SMTP
+      - '${MAILPIT_SMTP_PORT:-1025}:1025'
+
+volumes:
+  db-data:
