@@ -17,7 +17,7 @@
 		"test:e2e": "playwright install chromium && playwright test",
 		"db:generate": "drizzle-kit generate && prettier --write drizzle",
 		"db:migrate": "drizzle-kit migrate",
-		"db:push-percobaan-lokal": "drizzle-kit push"
+		"db:push-local-experiment": "drizzle-kit push"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",

@@ -1,110 +1,109 @@
 /**
- * Nilai uang untuk seluruh aplikasi: bilangan bulat rupiah, tanpa satuan pecahan.
+ * The money value used across the whole application: whole rupiah, with no fractional unit.
  *
- * Keputusan yang ditetapkan di sini dan dipakai setiap spec berikutnya:
+ * Decisions settled here and followed by every later spec:
  *
- * 1. **Bilangan bulat rupiah, bukan sen.** Rupiah tidak punya satuan pecahan yang dipakai di
- *    dunia nyata, jadi tidak ada faktor 100 di mana pun. Sebuah `/ 100` atau `* 100` yang
- *    muncul di kode keuangan adalah tanda kesalahan, bukan konversi satuan.
- * 2. **`number`, bukan `bigint`.** Nilai terbesar yang bisa ditampung `number` tanpa kehilangan
- *    presisi adalah `Number.MAX_SAFE_INTEGER` (9.007.199.254.740.991 rupiah, sekitar sembilan
- *    kuadriliun). Kas satu komplek tidak akan mendekatinya dalam hitungan abad. `bigint` menukar
- *    kenyamanan yang besar (literal, `JSON.stringify`, aritmetika campuran, serialisasi form
- *    SvelteKit) dengan margin yang tidak akan terpakai. Batas aman tetap dijaga di `rupiah()`,
- *    sehingga nilai yang melewatinya ditolak, bukan dibulatkan diam-diam.
- * 3. **Tipe bermerek.** `Rupiah` adalah `number` yang diberi merek, sehingga sebuah `number`
- *    biasa tidak bisa masuk ke parameter bernilai uang tanpa melewati `rupiah()`. Hasil
- *    aritmetika (`a + b`) kembali menjadi `number` biasa dan harus dibungkus ulang dengan
- *    `rupiah(a + b)` — itu disengaja: pembungkusan ulang adalah tempat pemeriksaan bilangan
- *    bulat dan batas aman terjadi.
- * 4. **Masukan pecahan ditolak, tidak dibulatkan.** `rupiah(150.5)` dan `uraiRupiah('150,50')`
- *    melempar galat. Pembulatan diam-diam adalah cara uang hilang tanpa jejak; menolak masukan
- *    memaksa pemanggil memutuskan sendiri apa yang dimaksudnya.
+ * 1. **Whole rupiah, not cents.** The rupiah has no fractional unit in real-world use, so there
+ *    is no factor of 100 anywhere. A `/ 100` or `* 100` appearing in financial code is a sign of
+ *    a mistake, not a unit conversion.
+ * 2. **`number`, not `bigint`.** The largest value `number` holds without losing precision is
+ *    `Number.MAX_SAFE_INTEGER` (9,007,199,254,740,991 rupiah, roughly nine quadrillion). One
+ *    housing complex's cash book will not approach that in centuries. `bigint` would trade a
+ *    great deal of convenience (literals, `JSON.stringify`, mixed arithmetic, SvelteKit form
+ *    serialisation) for headroom that will never be used. The safe bound is still enforced in
+ *    `rupiah()`, so a value past it is rejected rather than silently rounded.
+ * 3. **A branded type.** `Rupiah` is a branded `number`, so a plain `number` cannot reach a
+ *    money-valued parameter without passing through `rupiah()`. The result of arithmetic
+ *    (`a + b`) decays back to a plain `number` and has to be re-wrapped with `rupiah(a + b)` —
+ *    that is deliberate: the re-wrap is where the integer check and the safe bound run again.
+ * 4. **Fractional input is rejected, not rounded.** `rupiah(150.5)` and `parseRupiah('150,50')`
+ *    throw. Silent rounding is how money disappears without a trace; rejecting the input forces
+ *    the caller to decide what it actually meant.
  *
- * Di basis data nilai ini disimpan sebagai `bigint` (`int8`), bukan `integer` (`int4`): batas
- * `int4` adalah 2.147.483.647 rupiah, dan akumulasi buku kas satu komplek selama belasan tahun
- * bisa melewatinya. Lihat `src/lib/server/db/schema/index.ts`.
+ * In the database this value is stored as `bigint` (`int8`), not `integer` (`int4`): the `int4`
+ * ceiling is 2,147,483,647 rupiah, and one complex's cash book can pass it over a decade or two.
+ * See `src/lib/server/db/schema/index.ts`.
  */
 
-declare const merekRupiah: unique symbol;
+declare const rupiahBrand: unique symbol;
 
-/** Nilai uang dalam rupiah penuh. Selalu bilangan bulat dalam rentang aman `number`. */
-export type Rupiah = number & { readonly [merekRupiah]: 'Rupiah' };
+/** A money value in whole rupiah. Always an integer inside the safe `number` range. */
+export type Rupiah = number & { readonly [rupiahBrand]: 'Rupiah' };
 
-/** Awalan mata uang yang dipakai `formatRupiah` dan diterima `uraiRupiah`. */
-const AWALAN = 'Rp';
+/** The currency prefix `formatRupiah` writes and `parseRupiah` accepts. */
+const CURRENCY_PREFIX = 'Rp';
 
-/** Pemisah ribuan Indonesia. Koma adalah pemisah desimal dan karena itu selalu ditolak. */
-const PEMISAH_RIBUAN = '.';
+/** The Indonesian thousands separator. The comma is the decimal separator and is always rejected. */
+const THOUSANDS_SEPARATOR = '.';
 
 /**
- * Bentuk teks yang diterima `uraiRupiah`:
- * tanda minus opsional, awalan `Rp` opsional, lalu digit polos (`150000`) atau digit yang
- * dikelompokkan dengan benar per tiga (`150.000`, `1.234.567`). Koma, titik desimal, dan
- * pengelompokan yang salah (`1234.567`) tidak cocok dan karena itu ditolak.
+ * The text shapes `parseRupiah` accepts:
+ * an optional minus sign, an optional `Rp` prefix, then either bare digits (`150000`) or digits
+ * correctly grouped in threes (`150.000`, `1.234.567`). Commas, decimal points and incorrect
+ * grouping (`1234.567`) do not match and are therefore rejected.
  */
-const POLA_RUPIAH = /^(-?)(?:Rp\s*)?(\d{1,3}(?:\.\d{3})+|\d+)$/;
+const RUPIAH_PATTERN = /^(-?)(?:Rp\s*)?(\d{1,3}(?:\.\d{3})+|\d+)$/;
 
 /**
- * Membungkus sebuah `number` menjadi `Rupiah`.
+ * Wraps a `number` into a `Rupiah`.
  *
- * @throws {TypeError} kalau nilainya bukan bilangan bulat berhingga — termasuk setiap pecahan,
- *   yang ditolak dan tidak pernah dibulatkan.
- * @throws {RangeError} kalau nilainya bilangan bulat tetapi di luar rentang aman `number`,
- *   sehingga aritmetika berikutnya akan kehilangan presisi.
+ * @throws {TypeError} when the value is not a finite integer — including any fraction, which is
+ *   rejected and never rounded.
+ * @throws {RangeError} when the value is an integer but outside the safe `number` range, so that
+ *   later arithmetic on it would lose precision.
  */
-export function rupiah(nilai: number): Rupiah {
-	if (!Number.isInteger(nilai)) {
+export function rupiah(value: number): Rupiah {
+	if (!Number.isInteger(value)) {
 		throw new TypeError(
-			`Nilai rupiah harus bilangan bulat, bukan ${nilai}. Rupiah tidak punya satuan pecahan, dan pembulatan tidak dilakukan diam-diam.`
+			`A rupiah value must be a whole number, not ${value}. The rupiah has no fractional unit, and rounding is never applied silently.`
 		);
 	}
-	if (!Number.isSafeInteger(nilai)) {
+	if (!Number.isSafeInteger(value)) {
 		throw new RangeError(
-			`Nilai rupiah ${nilai} di luar rentang aman ${Number.MAX_SAFE_INTEGER}; aritmetika di atasnya akan kehilangan presisi.`
+			`The rupiah value ${value} is outside the safe range ${Number.MAX_SAFE_INTEGER}; arithmetic on it would lose precision.`
 		);
 	}
-	return nilai as Rupiah;
+	return value as Rupiah;
 }
 
 /**
- * Memformat nilai uang menjadi teks Indonesia, misalnya `Rp 1.500.000` dan `-Rp 25.000`.
+ * Formats a money value as Indonesian text, for example `Rp 1.500.000` and `-Rp 25.000`.
  *
- * Pengelompokan dikerjakan sendiri, bukan lewat `Intl.NumberFormat`, supaya hasilnya tidak
- * bergantung pada versi data ICU yang kebetulan terpasang di Node, Bun, atau container — mereka
- * berbeda dalam hal spasi biasa versus spasi tanpa putus setelah `Rp`, dan pengujian yang
- * membandingkan teks persis akan ikut berbeda.
+ * The grouping is done here rather than through `Intl.NumberFormat` so that the result does not
+ * depend on whichever ICU data version happens to be installed in Node, Bun or the container —
+ * they disagree about a plain space versus a non-breaking space after `Rp`, and tests comparing
+ * exact text would disagree with them.
  */
-export function formatRupiah(nilai: Rupiah): string {
-	const tanda = nilai < 0 ? '-' : '';
-	return `${tanda}${AWALAN} ${kelompokkanRibuan(Math.abs(nilai))}`;
+export function formatRupiah(value: Rupiah): string {
+	const sign = value < 0 ? '-' : '';
+	return `${sign}${CURRENCY_PREFIX} ${groupThousands(Math.abs(value))}`;
 }
 
 /**
- * Mengurai teks menjadi `Rupiah`. Menerima keluaran `formatRupiah` dan digit polos.
+ * Parses text into a `Rupiah`. Accepts the output of `formatRupiah` and bare digits.
  *
- * @throws {TypeError} kalau teksnya tidak berbentuk rupiah bulat — termasuk setiap bentuk
- *   pecahan seperti `150,50`, yang ditolak dan tidak pernah dibulatkan.
- * @throws {RangeError} kalau nilainya di luar rentang aman `number`.
+ * @throws {TypeError} when the text is not a whole-rupiah shape — including any fractional form
+ *   such as `150,50`, which is rejected and never rounded.
+ * @throws {RangeError} when the value is outside the safe `number` range.
  */
-export function uraiRupiah(teks: string): Rupiah {
-	const cocok = POLA_RUPIAH.exec(teks.trim());
-	if (!cocok) {
+export function parseRupiah(text: string): Rupiah {
+	const match = RUPIAH_PATTERN.exec(text.trim());
+	if (!match) {
 		throw new TypeError(
-			`"${teks}" bukan nilai rupiah yang sah. Bentuk yang diterima: "150000", "150.000", "${AWALAN} 150.000", "-${AWALAN} 150.000". Pecahan tidak diterima.`
+			`"${text}" is not a valid rupiah value. Accepted shapes: "150000", "150.000", "${CURRENCY_PREFIX} 150.000", "-${CURRENCY_PREFIX} 150.000". Fractions are not accepted.`
 		);
 	}
-	const [, tanda, angka] = cocok;
-	return rupiah(Number(`${tanda}${angka.replaceAll(PEMISAH_RIBUAN, '')}`));
+	const [, sign, digits] = match;
+	return rupiah(Number(`${sign}${digits.replaceAll(THOUSANDS_SEPARATOR, '')}`));
 }
 
-/** Menyisipkan pemisah ribuan ke dalam digit sebuah bilangan bulat tak bertanda. */
-function kelompokkanRibuan(nilai: number): string {
-	const digit = String(nilai);
-	let hasil = '';
-	for (let akhir = digit.length; akhir > 0; akhir -= 3) {
-		const potongan = digit.slice(Math.max(0, akhir - 3), akhir);
-		hasil = hasil === '' ? potongan : `${potongan}${PEMISAH_RIBUAN}${hasil}`;
+/** Inserts thousands separators into the digits of an unsigned integer. */
+function groupThousands(value: number): string {
+	const digits = String(value);
+	let result = '';
+	for (let end = digits.length; end > 0; end -= 3) {
+		const chunk = digits.slice(Math.max(0, end - 3), end);
+		result = result === '' ? chunk : `${chunk}${THOUSANDS_SEPARATOR}${result}`;
 	}
-	return hasil;
+	return result;
 }

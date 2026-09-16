@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button/index.js';
 
-	const rangka = [
+	const scaffoldItems = [
 		'SvelteKit di atas Bun, mode runes Svelte 5',
 		'Tailwind CSS v4 lewat plugin Vite',
 		'shadcn-svelte, komponen disalin ke dalam repositori',
@@ -9,7 +9,7 @@
 		'Docker Compose: aplikasi, PostgreSQL, dan Mailpit'
 	];
 
-	let terbuka = $state(false);
+	let expanded = $state(false);
 </script>
 
 <svelte:head>
@@ -31,17 +31,17 @@
 	<main class="flex flex-col items-start gap-4">
 		<Button
 			variant="default"
-			aria-expanded={terbuka}
-			aria-controls="isi-rangka"
-			onclick={() => (terbuka = !terbuka)}
+			aria-expanded={expanded}
+			aria-controls="scaffold-contents"
+			onclick={() => (expanded = !expanded)}
 		>
-			{terbuka ? 'Sembunyikan isi rangka' : 'Lihat isi rangka'}
+			{expanded ? 'Sembunyikan isi rangka' : 'Lihat isi rangka'}
 		</Button>
 
-		{#if terbuka}
-			<ul id="isi-rangka" class="w-full rounded-lg border border-border">
-				{#each rangka as baris (baris)}
-					<li class="border-b border-border px-4 py-3 text-sm last:border-b-0">{baris}</li>
+		{#if expanded}
+			<ul id="scaffold-contents" class="w-full rounded-lg border border-border">
+				{#each scaffoldItems as item (item)}
+					<li class="border-b border-border px-4 py-3 text-sm last:border-b-0">{item}</li>
 				{/each}
 			</ul>
 		{/if}

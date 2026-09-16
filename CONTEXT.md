@@ -4,6 +4,13 @@ Konteks tunggal untuk satu komplek perumahan: rumah dan penghuninya, iuran dan k
 keluhan warga. Berkas ini adalah glosarium — bahasa kanonik yang dipakai di kode, antarmuka, dan
 percakapan. Ia bukan spesifikasi dan tidak memuat keputusan implementasi.
 
+Istilah di bawah adalah bahasa Indonesia, dan itu adalah bahasa antarmuka, spesifikasi, dan
+percakapan. **Kode ditulis dalam bahasa Inggris** — nama variabel, fungsi, tipe, tabel, kolom, dan
+berkas. Bagian [Nama di kode](#nama-di-kode) di akhir berkas ini memetakan setiap istilah ke satu
+nama Inggris, dan pemetaan itu mengikat: sebuah tiket yang memakai nama Inggris di luar tabel itu
+sedang menciptakan konsep baru dan harus berhenti. Daftar _Hindari_ pada tiap istilah berlaku untuk
+prosa Indonesia dan teks antarmuka, bukan untuk nama di kode.
+
 ## Rumah dan orang
 
 **Unit**:
@@ -123,3 +130,56 @@ _Hindari_: subscribe, preferensi
 **Audit Log**:
 Catatan yang tidak bisa dihapus tentang siapa melakukan apa, kapan, dan nilai apa yang berubah.
 _Hindari_: riwayat, log aktivitas
+
+## Nama di kode
+
+Satu istilah, satu nama Inggris. Kolom **Tipe** adalah nama tipe dan model Drizzle dalam
+`PascalCase`; kolom **Tabel** adalah nama tabelnya dalam `snake_case` — Drizzle menurunkan nama
+kolom dari nama properti lewat `casing: 'snake_case'`, jadi nama kolom tidak ditulis dua kali.
+
+| Istilah | Tipe | Tabel |
+| --- | --- | --- |
+| Unit | `Unit` | `units` |
+| Warga | `Resident` | `residents` |
+| Masa Huni | `Occupancy` | `occupancies` |
+| Penanggung Jawab | `PrimaryOccupant` | penanda pada `occupancies` |
+| Undangan | `Invitation` | `invitations` |
+| Tarif | `DuesRate` | `dues_rates` |
+| Tagihan | `Invoice` | `invoices` |
+| Pembayaran | `Payment` | `payments` |
+| Alokasi | `Allocation` | `allocations` |
+| Saldo Titipan | `CreditBalance` | `credit_balances` |
+| Pembebasan | `Exemption` | `exemptions` |
+| Transaksi Kas | `CashTransaction` | `cash_transactions` |
+| Kategori Kas | `CashCategory` | `cash_categories` |
+| Koreksi | `Correction` | penanda pada `cash_transactions` |
+| Periode | `Period` | `periods` |
+| Laporan Bulanan | `MonthlyReport` | `monthly_reports` |
+| Post | `Post` | `posts` |
+| Keluhan | `Complaint` | `complaints` |
+| Tanggapan | `ComplaintReply` | `complaint_replies` |
+| Langganan | `Subscription` | `subscriptions` |
+| Audit Log | `AuditEntry` | `audit_log` |
+
+Kata yang bukan benda dan tidak punya tabel:
+
+| Istilah | Nama di kode |
+| --- | --- |
+| iuran (konsepnya, bukan dokumennya) | `dues` |
+| menunggak | `overdue` |
+| komplek | `complex` |
+| peran Warga, Admin, Superuser | `resident`, `admin`, `superuser` |
+
+**`Rupiah` tidak diterjemahkan.** Ia satuan mata uang sungguhan, bukan istilah domain lokal, dan
+menamainya `Money` menghapus fakta bahwa ia bilangan bulat tanpa satuan pecahan. Lihat
+`src/lib/money.ts`.
+
+Dua catatan supaya pemetaan ini tidak dibaca terbalik:
+
+- **`Invoice` untuk Tagihan**, meski daftar _Hindari_ pada Tagihan menyebut "invoice". Larangan itu
+  ditulis untuk prosa Indonesia, tempat "invoice" bersaing dengan "tagihan" dan "iuran" sekaligus.
+  Di kode berbahasa Inggris `Invoice` justru kata yang tepat untuk dokumen yang membekukan satu
+  besaran untuk satu Unit pada satu Periode. Hal yang sama berlaku untuk `CreditBalance` terhadap
+  "deposit" dan `Complaint` terhadap "tiket".
+- **Nama tabel berbentuk jamak, nama tipe berbentuk tunggal.** `residents` menampung banyak
+  `Resident`.
