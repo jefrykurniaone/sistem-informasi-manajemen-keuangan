@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { PermissionDeniedError, LastSuperuserError } from '$lib/errors';
 import { rolesOf } from '$lib/server/authz';
 import { auditEntriesFor } from '$lib/server/audit';
+import { createConnection, readDatabaseUrl } from '$lib/server/db';
 import { user } from '$lib/server/db/schema/auth';
 import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
 import { testDatabase } from '$lib/server/db/test-helpers';
@@ -47,6 +49,24 @@ async function insertSuperuser(name: string): Promise<string> {
 		.insert(userRoles)
 		.values({ userId: id, role: ROLE.superuser, createdAt: new Date(START) });
 	return id;
+}
+
+/**
+ * A second, independent connection into this file's own schema — a stand-in for a concurrent
+ * request, with its own client and its own transaction, never sharing one with `testDb.db`.
+ */
+async function connectToSchema(): Promise<{ client: PoolClient; release: () => Promise<void> }> {
+	const connection = createConnection(readDatabaseUrl('TEST_DATABASE_URL'), {
+		options: `-c search_path=${testDb.schemaName}`
+	});
+	const client = await connection.pool.connect();
+	return {
+		client,
+		release: async () => {
+			client.release();
+			await connection.close();
+		}
+	};
 }
 
 describe('listUsersWithRoles', () => {
@@ -190,6 +210,65 @@ describe('revokeRole', () => {
 
 		expect(await rolesOf(testDb.db, onlySuperuserId)).toContain(ROLE.superuser);
 		expect(await auditEntriesFor(testDb.db, onlySuperuserId)).toHaveLength(0);
+	});
+
+	it('blocks a concurrent revoke behind its lock, rather than letting it act on a stale read', async () => {
+		// This is the shape of the race the last-superuser rule has to survive: two superusers,
+		// `firstId` and `secondId`, each about to be revoked by a call that only looks at whether
+		// the *other* one is still there. A plain, unlocked `SELECT` lets both calls see the other
+		// superuser as still present — under READ COMMITTED, a reader never blocks on another
+		// transaction's uncommitted row lock, it just reads the latest *committed* row — so both
+		// would proceed and the system would end up with none.
+		//
+		// The stand-in connection below plays the part of "the other concurrent revoke": it takes
+		// the same lock `assertNotLastSuperuser` takes, deletes `firstId`'s row, and holds the
+		// transaction open before committing — the exact window in which an unlocked check would
+		// already have read its stale answer. `revokeRole(secondId)` is the real function under
+		// test, not a stand-in.
+		await testDb.db.delete(userRoles).where(eq(userRoles.role, ROLE.superuser));
+		const firstId = await insertSuperuser('Pengurus Kunci Satu');
+		const secondId = await insertSuperuser('Pengurus Kunci Dua');
+
+		const other = await connectToSchema();
+		try {
+			await other.client.query('BEGIN');
+			await other.client.query('select user_id from user_roles where role = $1 for update', [
+				ROLE.superuser
+			]);
+
+			const revoke = revokeRole(testDb.db, new FakeClock(START), {
+				actorId: secondId,
+				targetUserId: secondId,
+				role: ROLE.superuser
+			});
+			let settled = false;
+			revoke.then(
+				() => (settled = true),
+				() => (settled = true)
+			);
+
+			// `revokeRole(secondId)` is trying to take the same lock `other` already holds. If it is
+			// still unsettled after a wait this long, it is genuinely blocked, not merely slow — a
+			// local query that is not waiting on a lock finishes in well under a millisecond.
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			expect(settled).toBe(false);
+
+			// `other` now does what the concurrent revoke of `firstId` it stands in for would do,
+			// and commits — leaving `secondId` as the system's only superuser.
+			await other.client.query('delete from user_roles where user_id = $1 and role = $2', [
+				firstId,
+				ROLE.superuser
+			]);
+			await other.client.query('COMMIT');
+
+			// Unblocked, `revokeRole(secondId)` re-reads and sees `firstId` really is gone now —
+			// which is exactly the point: it decides from the current committed state, not from
+			// whatever it might have read before `other`'s lock was released.
+			await expect(revoke).rejects.toThrow(LastSuperuserError);
+			expect(await rolesOf(testDb.db, secondId)).toContain(ROLE.superuser);
+		} finally {
+			await other.release();
+		}
 	});
 
 	it('allows removing a superuser role when another superuser remains', async () => {

@@ -69,9 +69,9 @@ export async function grantRole(
 	clock: Clock,
 	request: RoleChangeRequest
 ): Promise<void> {
-	await requirePermission(db, request.actorId, ACTION.manageRoles);
-
 	await db.transaction(async (transaction) => {
+		await requirePermission(transaction, request.actorId, ACTION.manageRoles);
+
 		const before = await rolesOf(transaction, request.targetUserId);
 		if (before.has(request.role)) {
 			return;
@@ -102,9 +102,9 @@ export async function revokeRole(
 	clock: Clock,
 	request: RoleChangeRequest
 ): Promise<void> {
-	await requirePermission(db, request.actorId, ACTION.manageRoles);
-
 	await db.transaction(async (transaction) => {
+		await requirePermission(transaction, request.actorId, ACTION.manageRoles);
+
 		const before = await rolesOf(transaction, request.targetUserId);
 		if (!before.has(request.role)) {
 			return;
@@ -131,8 +131,21 @@ export async function revokeRole(
 
 /**
  * Refuses to let `targetUserId`'s `superuser` role be the one that gets revoked when nobody else
- * holds it. Reads inside the caller's transaction, so it sees the same committed state the delete
- * that follows will act on.
+ * holds it.
+ *
+ * **Being inside the caller's transaction is not what makes this safe — the `.for('update')` row
+ * lock is.** `db.transaction` runs at PostgreSQL's default READ COMMITTED, where a plain `SELECT`
+ * never blocks on another transaction's uncommitted row lock; it just reads the latest *committed*
+ * row. Without the lock, two concurrent revokes of two different superusers each read "the other
+ * one is still here", each pass this check, and each commit — leaving none, a state nothing in
+ * this application can recover from, since `ACTION.manageRoles` is superuser-only. The
+ * `.for('update')` below locks every `superuser` row before deciding, so a second concurrent call
+ * blocks here until the first one's transaction ends, then re-reads — seeing the first call's
+ * committed delete rather than the stale row it started with — and only then decides.
+ *
+ * Locking every `superuser` row rather than only `targetUserId`'s is deliberate: two concurrent
+ * revokes of two *different* superusers must still contend for an overlapping lock, or neither
+ * would ever wait for the other.
  */
 async function assertNotLastSuperuser(
 	transaction: Transaction,
@@ -141,7 +154,8 @@ async function assertNotLastSuperuser(
 	const superusers = await transaction
 		.select({ userId: userRoles.userId })
 		.from(userRoles)
-		.where(eq(userRoles.role, ROLE.superuser));
+		.where(eq(userRoles.role, ROLE.superuser))
+		.for('update');
 
 	const remaining = superusers.filter((row) => row.userId !== targetUserId);
 	if (remaining.length === 0) {
