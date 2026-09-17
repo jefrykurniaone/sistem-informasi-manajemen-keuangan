@@ -2,6 +2,8 @@ import { bigint, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import type { Rupiah } from '$lib/money';
 
 export * from './auth';
+export * from './audit';
+export * from './authz';
 export * from './email';
 
 /**
