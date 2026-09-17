@@ -8,6 +8,10 @@ node_modules
 /dist
 /.output
 
+# Paraglide's compiled runtime and message functions, regenerated from messages/*.json and
+# project.inlang/settings.json by the Vite plugin in vite.config.ts on every build and dev start.
+/src/lib/paraglide/
+
 .claude/worktrees
 .claude/scratch
 .scratch

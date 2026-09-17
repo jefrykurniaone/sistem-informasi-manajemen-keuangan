@@ -1,0 +1,13 @@
+{
+	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"appShell_brand": "Komplek",
+	"appShell_navLabel": "Main navigation",
+	"appShell_navHome": "Home",
+	"appShell_navLogin": "Log in",
+	"appShell_navRegister": "Register",
+	"appShell_navManageRoles": "Manage Roles",
+	"appShell_navLogout": "Log out",
+	"appShell_languageLabel": "Language",
+	"appShell_languageId": "Indonesian",
+	"appShell_languageEn": "English"
+}

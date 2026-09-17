@@ -3,6 +3,7 @@ import { defineConfig } from 'vitest/config';
 import { loadEnv } from 'vite';
 import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { paraglideVitePlugin } from '@inlang/paraglide-js';
 
 export default defineConfig(({ mode }) => {
 	// Every variable out of the .env files and out of the real environment. Vite exposes only
@@ -36,6 +37,17 @@ export default defineConfig(({ mode }) => {
 						filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 				},
 				adapter: adapter()
+			}),
+			// Compiles messages/{locale}.json into src/lib/paraglide (gitignored, regenerated on every
+			// build and dev start). `strategy` deliberately excludes `url`: this application picks a
+			// locale from a cookie and never prefixes an address with a language code, so there is no
+			// redirect and no de-localization for the middleware in src/hooks.server.ts to perform —
+			// see spec-fondasi-v1.md's "i18n" section.
+			paraglideVitePlugin({
+				project: './project.inlang',
+				outdir: './src/lib/paraglide',
+				strategy: ['cookie', 'baseLocale'],
+				emitTsDeclarations: true
 			})
 		],
 		server: {
