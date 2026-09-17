@@ -52,6 +52,7 @@
 		"vitest": "^4.1.8"
 	},
 	"dependencies": {
+		"better-auth": "1.7.5",
 		"drizzle-orm": "0.45.2",
 		"nodemailer": "^10.0.10",
 		"pg": "8.23.0"

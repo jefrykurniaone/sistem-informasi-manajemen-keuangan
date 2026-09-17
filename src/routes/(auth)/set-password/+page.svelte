@@ -1,0 +1,73 @@
+<script lang="ts">
+	import { resolve } from '$app/paths';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import type { PageProps } from './$types';
+
+	let { data, form }: PageProps = $props();
+</script>
+
+<svelte:head>
+	<title>Atur kata sandi baru — Komplek</title>
+</svelte:head>
+
+<main class="flex flex-col gap-6">
+	<h1 class="text-2xl font-bold tracking-tight">Atur kata sandi baru</h1>
+
+	{#if form}
+		<p class="rounded-md border border-destructive px-3 py-2 text-sm text-destructive" role="alert">
+			{form.message}
+		</p>
+	{/if}
+
+	{#if data.token === ''}
+		<p class="text-sm">
+			Halaman ini hanya bisa dibuka lewat tautan pada email pemulihan kata sandi. Minta tautannya di <a
+				class="underline underline-offset-4"
+				href={resolve('/forgot-password')}
+			>
+				halaman lupa kata sandi
+			</a>.
+		</p>
+	{:else}
+		<p class="text-sm text-muted-foreground">
+			Setelah kata sandi Anda diganti, semua perangkat yang masih masuk ke akun ini akan
+			dikeluarkan.
+		</p>
+
+		<form method="POST" class="flex flex-col gap-4">
+			<input name="token" type="hidden" value={data.token} />
+
+			<div class="flex flex-col gap-1.5">
+				<label class="text-sm font-medium" for="password">Kata sandi baru</label>
+				<input
+					class="h-9 rounded-md border border-border bg-background px-3 text-sm"
+					id="password"
+					name="password"
+					type="password"
+					autocomplete="new-password"
+					minlength={data.minimumPasswordLength}
+					aria-describedby="password-hint"
+					required
+				/>
+				<p class="text-xs text-muted-foreground" id="password-hint">
+					Sedikitnya {data.minimumPasswordLength} karakter.
+				</p>
+			</div>
+
+			<div class="flex flex-col gap-1.5">
+				<label class="text-sm font-medium" for="passwordAgain">Ulangi kata sandi baru</label>
+				<input
+					class="h-9 rounded-md border border-border bg-background px-3 text-sm"
+					id="passwordAgain"
+					name="passwordAgain"
+					type="password"
+					autocomplete="new-password"
+					minlength={data.minimumPasswordLength}
+					required
+				/>
+			</div>
+
+			<Button type="submit">Simpan kata sandi</Button>
+		</form>
+	{/if}
+</main>
