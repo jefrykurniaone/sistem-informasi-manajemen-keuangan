@@ -5,7 +5,13 @@ export * from './auth';
 export * from './audit';
 export * from './authz';
 export * from './email';
+export * from './invitation';
+export * from './occupancy';
+export * from './registration';
+export * from './resident';
 export * from './scheduler';
+export * from './subscription';
+export * from './unit';
 
 /**
  * The database schema. Every application table is exported from this file, and `drizzle-kit`
