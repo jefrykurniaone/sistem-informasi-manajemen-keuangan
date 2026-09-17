@@ -54,8 +54,10 @@
 		"vitest": "^4.1.8"
 	},
 	"dependencies": {
+		"@sinclair/typebox": "^0.34.15",
 		"better-auth": "1.7.5",
 		"drizzle-orm": "0.45.2",
+		"elysia": "^1.4.30",
 		"nodemailer": "^10.0.10",
 		"pg": "8.23.0"
 	}
