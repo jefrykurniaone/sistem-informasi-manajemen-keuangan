@@ -12,6 +12,16 @@ node_modules
 # project.inlang/settings.json by the Vite plugin in vite.config.ts on every build and dev start.
 /src/lib/paraglide/
 
+# Everything inlang itself writes into project.inlang/ the moment settings.json is read by the
+# compiler or the Vite plugin — a cache, a .lix working directory, a README, its own nested
+# .gitignore — none of it hand-written, all of it regenerated, and not always in a shape Prettier's
+# formatter would have produced. `project.inlang/.gitignore` (which inlang writes for itself) makes
+# git ignore all of this already; the entry here is so `prettier --check .` — which reads this file
+# by default and does not follow a nested .gitignore the way git does — skips it too, the same way
+# it already skips /src/lib/paraglide/ above.
+project.inlang/*
+!project.inlang/settings.json
+
 .claude/worktrees
 .claude/scratch
 .scratch
