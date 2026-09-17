@@ -1,11 +1,19 @@
 import { bigint, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import type { Rupiah } from '$lib/money';
 
+export * from './email';
+
 /**
  * The database schema. Every application table is exported from this file, and `drizzle-kit`
  * reads it through `schema` in `drizzle.config.ts`.
  *
  * Conventions settled here and followed by every later table:
+ *
+ * - **A table reaches a migration only by being re-exported here.** Tables live in a module of
+ *   their own once there is more than one of them — `./email.ts` holds the email queue — and this
+ *   file re-exports each of those modules. `drizzle-kit` follows nothing else: a table that is
+ *   defined but not re-exported here generates no SQL and fails at run time against a database
+ *   that never grew it.
  *
  * - **Identifiers are English, table and column names included.** The domain glossary in
  *   `CONTEXT.md` is written in Indonesian and stays that way; its "Code names" section maps each
