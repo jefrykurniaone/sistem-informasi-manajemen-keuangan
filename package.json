@@ -53,6 +53,7 @@
 	},
 	"dependencies": {
 		"drizzle-orm": "0.45.2",
+		"nodemailer": "^10.0.10",
 		"pg": "8.23.0"
 	}
 }

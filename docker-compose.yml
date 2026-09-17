@@ -10,9 +10,20 @@ services:
       ORIGIN: ${ORIGIN:-http://localhost:5173}
       VITE_USE_POLLING: ${VITE_USE_POLLING:-false}
       DATABASE_URL: postgres://${POSTGRES_USER:-komplek}:${POSTGRES_PASSWORD:-kata-sandi-lokal-ganti-saya}@db:5432/${POSTGRES_DB:-komplek}
-      SMTP_HOST: ${SMTP_HOST:-mailpit}
-      SMTP_PORT: ${SMTP_PORT:-1025}
+      # Written here rather than forwarded from .env, for the same reason as DATABASE_URL above:
+      # one value cannot describe two network viewpoints. Inside this network the mail server is
+      # `mailpit` on the port it really listens on; from a process on the host machine it is
+      # `localhost` on the published MAILPIT_SMTP_PORT, which is what .env carries. Forwarding
+      # SMTP_HOST made one of the two wrong whichever value was chosen.
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
       EMAIL_FROM: ${EMAIL_FROM:-no-reply@komplek.local}
+      # These two mean the same thing on both sides of the network boundary, so they are forwarded.
+      # An empty secret is not defaulted to a working one here: a store that signs download links
+      # with a value published in a tracked file signs nothing. It fails when it is first used,
+      # with a message naming the variable.
+      FILE_STORE_ROOT: ${FILE_STORE_ROOT:-storage}
+      FILE_STORE_SECRET: ${FILE_STORE_SECRET}
     ports:
       - '${APP_PORT:-5173}:5173'
     volumes:
