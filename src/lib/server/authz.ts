@@ -12,10 +12,11 @@ import { ROLE, userRoles, type Role } from './db/schema/authz';
  *
  * An action is permitted to a *set* of roles, not to a rank on a single scale: `PERMISSIONS` below
  * maps each known action to every role that may perform it, and a caller is let through the moment
- * any one role they hold appears in that set. There is currently exactly one action,
- * `ACTION.manageRoles`, because this ticket is the first thing in the run that needs a decision at
- * all — every later spec adds its own actions to `ACTION` and `PERMISSIONS` in this same file,
- * rather than inventing a second place a permission could be decided.
+ * any one role they hold appears in that set. `ACTION.manageRoles` was the first, because the
+ * ticket that wrote this file was the first thing in the run that needed a decision at all — every
+ * later spec adds its own actions to `ACTION` and `PERMISSIONS` in this same file, rather than
+ * inventing a second place a permission could be decided. `ACTION.manageJobs` is the first of
+ * those.
  *
  * ## Where a caller's roles come from
  *
@@ -35,7 +36,15 @@ export type DatabaseWriter = Database | Transaction;
 /** Every action this application currently knows how to permit. */
 export const ACTION = {
 	/** Granting or revoking a role. See `src/lib/server/services/user/roles.ts`. */
-	manageRoles: 'manageRoles'
+	manageRoles: 'manageRoles',
+	/**
+	 * Seeing the scheduled jobs and running one by hand. See `src/lib/server/scheduler/index.ts`.
+	 * One action covers both halves because they are one screen: the list is only useful to whoever
+	 * may press the button on it, and the button issues real work — a month's invoices, a batch of
+	 * emails — so it is held to the same role as anything else that changes what has already
+	 * happened.
+	 */
+	manageJobs: 'manageJobs'
 } as const;
 
 /** One of the actions above. */
@@ -48,7 +57,8 @@ export type Action = (typeof ACTION)[keyof typeof ACTION];
  * somewhere closer to that feature, is "the one place" `spec-fondasi-v1.md` asks for.
  */
 const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
-	[ACTION.manageRoles]: new Set([ROLE.superuser])
+	[ACTION.manageRoles]: new Set([ROLE.superuser]),
+	[ACTION.manageJobs]: new Set([ROLE.superuser])
 };
 
 /**
