@@ -3,6 +3,10 @@ import type { Handle } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
 import { auth } from '$lib/server/auth';
+import { database } from '$lib/server/db';
+import { registerEmailJobs } from '$lib/server/email/jobs';
+import { systemClock } from '$lib/server/ports/clock';
+import { applicationJobs, isSchedulerProcess, startJobScheduler } from '$lib/server/scheduler';
 import { paraglideMiddleware } from '$lib/paraglide/server.js';
 import { getTextDirection } from '$lib/paraglide/runtime.js';
 
@@ -44,7 +48,33 @@ import { getTextDirection } from '$lib/paraglide/runtime.js';
  * a locale and wraps the response with `transformPageChunk`, which is a no-op on a JSON response
  * that carries no `%lang%`/`%dir%` text. `svelteKitHandler` already ran inside `authHandle` by the
  * time `localeHandle` sees the request.
+ *
+ * ## The composition root — added by ticket #67
+ *
+ * Two things happen at module scope below, and this module is where they happen because it is the
+ * only one SvelteKit evaluates once per server process under both `@sveltejs/adapter-node` and
+ * `vite dev`, with no request needed to reach it. A route module would be too late and would run
+ * per route; `src/lib/server/scheduler/index.ts` doing it on import would run inside every test file
+ * and every `vite build` that so much as mentions the scheduler.
+ *
+ * 1. **`registerEmailJobs()` — unconditional.** It builds a `JobDefinition` and puts it in
+ *    `applicationJobs`. No environment is read, no connection is opened, nothing is started, so it
+ *    is safe while `building`; and doing it unconditionally is what makes `/admin/jobs` list the
+ *    job on any process that serves that page. The page itself needed no change — it already walks
+ *    `applicationJobs` through `listJobsWithLastRun`.
+ * 2. **`startJobScheduler(…)` — only when `isSchedulerProcess` says so.** That predicate is `false`
+ *    while `building` and `false` under Vitest; see the periodic-trigger section in
+ *    `src/lib/server/scheduler/index.ts` for what each exclusion is for and for why the handle is
+ *    kept where a `vite dev` reload cannot lose it. `database()` is only called inside the guard,
+ *    so a build never so much as reads `DATABASE_URL` — and even at runtime `pg.Pool` connects on
+ *    its first query rather than when it is constructed.
  */
+
+registerEmailJobs();
+
+if (isSchedulerProcess({ building })) {
+	startJobScheduler({ db: database(), clock: systemClock, registry: applicationJobs });
+}
 
 const authHandle: Handle = async ({ event, resolve }) => {
 	if (building) {
