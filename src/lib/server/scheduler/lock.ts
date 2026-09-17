@@ -1,4 +1,4 @@
-import { and, desc, eq, lte } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, lte, notInArray } from 'drizzle-orm';
 import type { Database } from '../db';
 import { jobRuns, JOB_RUN_STATUS, type JobRun } from '../db/schema/scheduler';
 import type { Clock } from '../ports/clock';
@@ -50,6 +50,15 @@ import type { Clock } from '../ports/clock';
  *   — would release the lock on a crash for free, and was rejected for the reason the email queue
  *   gives in `src/lib/server/email/queue.ts`: it puts work of unbounded length inside a database
  *   transaction, which is how a connection pool runs out on the day that work gets slow.
+ *
+ * ## Why deleting history is a lock decision, not a housekeeping one
+ *
+ * Because the row *is* the lock, `pruneJobRuns` at the bottom of this file is not free to delete
+ * whatever it likes: removing a `succeeded` row hands its `(job_name, period)` pair back, and the
+ * job runs for that period again. That is why the pruning policy lives here, next to the index it
+ * has to respect, rather than in whatever job happens to call it — and why its retention window is
+ * derived from the longest period a schedule can produce rather than chosen for how much disk it
+ * saves.
  */
 
 /**
@@ -67,6 +76,45 @@ export const DEFAULT_LEASE_MILLISECONDS = 15 * 60 * 1000;
 /** What `error` says on a run that was taken over because its lease had passed. */
 export const ABANDONED_RUN_ERROR =
 	'The process running this job stopped without recording an outcome, and its lease expired.';
+
+/** How many days of finished history are kept. See `JOB_RUN_RETENTION_MILLISECONDS`. */
+export const JOB_RUN_RETENTION_DAYS = 90;
+
+/**
+ * How long a finished run is kept before `pruneJobRuns` may remove it: ninety days.
+ *
+ * The number is derived, not chosen for taste. **Deleting a `succeeded` row releases the lock on
+ * its period**, so the window has to comfortably outlast the longest period any schedule in
+ * `../scheduler/registry.ts` can produce. That is a calendar month — at most thirty-one days — so a
+ * window shorter than that would free a period that is still the current one and let its job run a
+ * second time, which is the single thing this whole module exists to prevent. Ninety days is
+ * nearly three times the longest period, which leaves the margin an operator needs to change a
+ * schedule without having to think about this constant at all.
+ *
+ * What it costs is bounded, which is the point of having a policy: one row per job per window means
+ * a job running every minute writes 1,440 rows a day and about half a million a year. Ninety days
+ * of that is roughly 130,000 rows, and it stops growing there instead of accumulating for the life
+ * of the installation.
+ */
+export const JOB_RUN_RETENTION_MILLISECONDS = JOB_RUN_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * How many rows one prune removes at most.
+ *
+ * A prune is itself a scheduled job, and a job whose one statement deletes an unbounded number of
+ * rows is a job that takes a long write lock the first time it meets a table nobody has pruned yet.
+ * A daily prune bounded here drains any backlog over a few days and never takes long enough to
+ * matter; a per-minute job only produces 1,440 rows a day, so the bound is never reached in a
+ * steady state.
+ */
+export const MAXIMUM_PRUNED_PER_RUN = 10_000;
+
+/**
+ * The statuses a run may be pruned from. `running` is deliberately absent: such a row is a live
+ * claim whose lease is what lets an abandoned run be taken over, and deleting it would hand the
+ * period to a second runner while the first is still working.
+ */
+const PRUNABLE_STATUSES = [JOB_RUN_STATUS.succeeded, JOB_RUN_STATUS.failed];
 
 /** A claim that was granted: the run row this caller now owns. */
 export interface JobClaim {
@@ -163,6 +211,90 @@ export async function latestJobRun(db: Database, jobName: string): Promise<JobRu
 		.orderBy(desc(jobRuns.startedAt), desc(jobRuns.finishedAt))
 		.limit(1);
 	return row;
+}
+
+/** What one prune is allowed to remove. */
+export interface PruneJobRunsRequest {
+	/** How long a finished run is kept. Defaults to `JOB_RUN_RETENTION_MILLISECONDS`. */
+	readonly retentionMilliseconds?: number;
+	/** How many rows to remove at most. Defaults to `MAXIMUM_PRUNED_PER_RUN`. */
+	readonly limit?: number;
+}
+
+/**
+ * Removes old `job_runs` rows and answers how many it removed.
+ *
+ * Three kinds of row are never removed, and each is a rule rather than a preference:
+ *
+ * 1. **A `running` row, whatever its age.** It is a live claim — see `PRUNABLE_STATUSES`.
+ * 2. **A row younger than the retention window.** Deleting a `succeeded` row releases the lock on
+ *    its period, so the window has to outlast the longest period a schedule produces — see
+ *    `JOB_RUN_RETENTION_MILLISECONDS`, which is where the ninety days comes from.
+ * 3. **The most recent run of each job name, however old.** It is exactly what `latestJobRun`
+ *    answers and therefore what `/admin/jobs` shows, so pruning it would make a job that last ran a
+ *    year ago read as one that has never run at all — and a screen that has lost the only evidence
+ *    a job was ever wired up is worse than a screen showing an old date.
+ *
+ * @param clock the run's clock, so that a test decides what "ninety days ago" means without
+ *   waiting for it or writing rows with a system timestamp.
+ */
+export async function pruneJobRuns(
+	db: Database,
+	clock: Clock,
+	request: PruneJobRunsRequest = {}
+): Promise<number> {
+	const keptIds = await latestRunIdPerJobName(db);
+	if (keptIds.length === 0) {
+		// No job name appears in the table at all, so there is nothing to prune — and `notInArray`
+		// below has no list to be given.
+		return 0;
+	}
+
+	const cutoff = new Date(
+		clock.now().getTime() - (request.retentionMilliseconds ?? JOB_RUN_RETENTION_MILLISECONDS)
+	);
+	const doomed = await db
+		.select({ id: jobRuns.id })
+		.from(jobRuns)
+		.where(
+			and(
+				inArray(jobRuns.status, PRUNABLE_STATUSES),
+				lt(jobRuns.startedAt, cutoff),
+				notInArray(jobRuns.id, keptIds)
+			)
+		)
+		.limit(request.limit ?? MAXIMUM_PRUNED_PER_RUN);
+
+	if (doomed.length === 0) {
+		return 0;
+	}
+	await db.delete(jobRuns).where(
+		inArray(
+			jobRuns.id,
+			doomed.map((row) => row.id)
+		)
+	);
+	return doomed.length;
+}
+
+/**
+ * The id of the most recent run of every job name that appears in the table — including names no
+ * job is registered under any more, because a job that was removed still has history worth one row.
+ *
+ * One query per name, the same shape and for the same reason as `listJobsWithLastRun` in
+ * `./index.ts`: the table holds a handful of names rather than a table's worth, and going through
+ * `latestJobRun` is what guarantees the row kept here is precisely the row the screen shows.
+ */
+async function latestRunIdPerJobName(db: Database): Promise<string[]> {
+	const names = await db.selectDistinct({ jobName: jobRuns.jobName }).from(jobRuns);
+	const ids: string[] = [];
+	for (const { jobName } of names) {
+		const latest = await latestJobRun(db, jobName);
+		if (latest) {
+			ids.push(latest.id);
+		}
+	}
+	return ids;
 }
 
 /** The one statement the whole guarantee rests on. Returns nothing when the pair is already held. */

@@ -1,10 +1,11 @@
+import { clearInterval, setInterval } from 'node:timers';
 import { recordAuditEntry } from '../audit';
 import { ACTION, requirePermission } from '../authz';
 import type { Database } from '../db';
 import type { JobRun } from '../db/schema/scheduler';
 import type { Clock } from '../ports/clock';
-import { claimJobRun, completeJobRun, failJobRun, latestJobRun } from './lock';
-import { JobRegistry, type JobDefinition } from './registry';
+import { claimJobRun, completeJobRun, failJobRun, latestJobRun, pruneJobRuns } from './lock';
+import { everyMinutesSchedule, JobRegistry, type JobDefinition } from './registry';
 
 /**
  * The scheduler: what actually runs a registered job, having first taken the lock that makes sure
@@ -13,12 +14,14 @@ import { JobRegistry, type JobDefinition } from './registry';
  *
  * Decisions settled here:
  *
- * 1. **There is no timer, and no process is started by importing this module.** `runDueJobs` is one
- *    tick: it asks each registered job which period the current instant falls in and tries to claim
- *    it. Whoever owns a loop — a later ticket's worker process, a cron entry, or a superuser
- *    pressing a button — decides how often that happens, and the lock makes ticking too often
- *    harmless rather than dangerous. A module that started an interval on import would run inside
- *    every `vite build`, every test file and every CLI command that happens to import it.
+ * 1. **Importing this module still starts nothing.** `runDueJobs` is one tick: it asks each
+ *    registered job which period the current instant falls in and tries to claim it, and the lock
+ *    makes ticking too often harmless rather than dangerous. A module that started an interval on
+ *    import would run inside every `vite build`, every test file and every CLI command that happens
+ *    to import it, so what ticks periodically is `startJobScheduler` — a function a composition
+ *    root **calls**, handing in the database, the clock and the registry. `src/hooks.server.ts` is
+ *    the one caller, and `isSchedulerProcess` below is the guard it asks first. See the section on
+ *    the periodic trigger further down.
  * 2. **A manual trigger takes the same lock as a scheduled run.** "Run it now" means "try to run it
  *    for the period it is in now", so a job that has already succeeded for this period answers
  *    `skipped` and the screen says so. A trigger that bypassed the lock would be a button that
@@ -30,14 +33,36 @@ import { JobRegistry, type JobDefinition } from './registry';
  *    the same rule `src/lib/server/email/worker.ts` follows for one failing email. What *does*
  *    propagate is a database failure while writing the outcome, because at that point nothing can
  *    be trusted to have been recorded at all.
- * 4. **`applicationJobs` starts empty, and the email queue drain is deliberately not in it.**
- *    `processEmailQueue` in `src/lib/server/email/worker.ts` is the queue's drainer and the
- *    scheduler is its only intended caller, but registering it here would mean choosing, in this
- *    module, which templates the production worker knows and which mail server it talks to — the
- *    wiring belongs to whoever owns the outgoing-email composition, not to the scheduler. It would
- *    also be the first job frequent enough to make the history worth pruning: one `job_runs` row
- *    per window is right for a monthly job and is half a million rows a year for a minutely one.
- *    The registry is the mechanism; a spec with a job registers it.
+ * 4. **`applicationJobs` holds the scheduler's own housekeeping and nothing else.** The one job
+ *    registered here is `jobRunPruneJob`, which trims `job_runs`: that table is this module's, the
+ *    rule for what may be deleted from it is a rule about the lock, and no other owner exists to
+ *    put it with. Every other job is registered by whoever owns the work — the email queue drain
+ *    lives in `src/lib/server/email/jobs.ts`, because registering it here would mean choosing, in
+ *    this module, which templates the production worker knows and which mail server it talks to.
+ *    The registry is the mechanism; a spec with a job registers its own.
+ *
+ * ## The periodic trigger
+ *
+ * `startJobScheduler` is the timer that makes a registered job run without anyone pressing
+ * anything. It is a function rather than a side effect of importing this module, because the
+ * composition root is the only place that knows whether this process should be ticking at all:
+ *
+ * - **Not while `building`.** SvelteKit evaluates `src/hooks.server.ts` during `vite build` to
+ *   prerender, and a timer started there would tick against a database that is not running.
+ * - **Not under Vitest.** A test file that happens to import the hooks module would otherwise get a
+ *   background timer writing rows into its schema for the rest of the run. `isSchedulerProcess`
+ *   below is the predicate that answers both, so that it can be asserted in a test rather than
+ *   only read.
+ * - **At most one per process, whatever re-evaluates the caller.** `vite dev` re-executes a server
+ *   module when it or an importer changes, so a timer kept in a module-scope variable would leak
+ *   one interval per edit — each of them still ticking against the database. The handle is kept on
+ *   `globalThis` under a `Symbol.for` key, which is the one slot that survives a module being
+ *   evaluated a second time, and starting a scheduler stops whichever one was there before.
+ *
+ * The interval is not the schedule. A tick asks every job which period *the current instant* falls
+ * in, and a period nobody ticked during is never revisited — so the interval has to be shorter than
+ * the shortest registered schedule's period, and ticking more often than that costs one refused
+ * insert per job. See `DEFAULT_TICK_INTERVAL_MILLISECONDS`.
  */
 
 /** How much of a failure's message is kept on the run. Matches the email worker's own limit. */
@@ -228,9 +253,11 @@ export async function triggerJob(options: TriggerJobOptions): Promise<JobOutcome
 }
 
 /**
- * The jobs this application runs. Empty until a spec registers one — see decision 4 above.
+ * The jobs this application runs — see decision 4 above for what belongs in here and what does not.
  *
- * A later spec registers its job at module scope, next to the function that does the work:
+ * A spec registers its job next to the function that does the work, and the module that does so has
+ * to be reached by the running server for the job to exist at all. `src/hooks.server.ts` is where
+ * that happens:
  *
  * ```ts
  * applicationJobs.register({
@@ -241,6 +268,175 @@ export async function triggerJob(options: TriggerJobOptions): Promise<JobOutcome
  * ```
  */
 export const applicationJobs = new JobRegistry();
+
+/** The name `job_runs` trimming is registered and locked under. */
+export const JOB_RUN_PRUNE_JOB_NAME = 'job-run-history-prune';
+
+/**
+ * How often the history is trimmed: once a day.
+ *
+ * Counted from the epoch rather than from midnight in some zone — `everyMinutesSchedule` takes no
+ * time zone — because there is no civil date in this: trimming is housekeeping, nobody reads a
+ * report of it, and a zone would be a decision about a complex that this module has no business
+ * making. Daily rather than hourly because the thing being bounded is a year of growth, and once a
+ * day is already twenty-four times more often than it needs to be to keep up with a per-minute job.
+ */
+const PRUNE_INTERVAL_MINUTES = 24 * 60;
+
+/**
+ * Trimming `job_runs`, as a registered job like any other: it takes the same lock, it is visible on
+ * `/admin/jobs`, and a superuser can press it. The policy — what is kept, what is never touched and
+ * why ninety days — is in `./lock.ts`, next to the index it has to respect.
+ */
+export const jobRunPruneJob: JobDefinition = {
+	name: JOB_RUN_PRUNE_JOB_NAME,
+	schedule: everyMinutesSchedule(PRUNE_INTERVAL_MINUTES),
+	run: async ({ db, clock }) => {
+		await pruneJobRuns(db, clock);
+	}
+};
+
+applicationJobs.register(jobRunPruneJob);
+
+/**
+ * How often `startJobScheduler` ticks by default: every thirty seconds.
+ *
+ * It is half the shortest period any job registered in this application has — the email queue drain
+ * runs in one-minute windows — and that ratio is the rule rather than the number. A tick asks each
+ * job which period *now* falls in, so a window that no tick lands in is not run late, it is not run
+ * at all; ticking at exactly the period length would lose a window to any drift or to one slow
+ * tick. Ticking more often than necessary costs one refused insert per job per tick, which is what
+ * the lock is for.
+ */
+export const DEFAULT_TICK_INTERVAL_MILLISECONDS = 30 * 1000;
+
+/** Everything the periodic trigger needs. */
+export interface StartJobSchedulerOptions {
+	readonly db: Database;
+	readonly clock: Clock;
+	readonly registry: JobRegistry;
+	/** Defaults to `DEFAULT_TICK_INTERVAL_MILLISECONDS`. */
+	readonly intervalMilliseconds?: number;
+	/**
+	 * Where a tick that could not be completed at all is reported. A job that merely threw never
+	 * reaches here — `runJob` records that on the run — so anything arriving is a database failure
+	 * while writing an outcome, which is worth a line in the server log. Defaults to
+	 * `console.error`; a test passes its own so that a deliberate failure is not printed.
+	 */
+	readonly onTickError?: (error: unknown) => void;
+}
+
+/** A running periodic trigger. */
+export interface JobSchedulerHandle {
+	/** Stops the timer. Doing it twice, or after `stopJobScheduler`, does nothing further. */
+	stop(): void;
+}
+
+/**
+ * The slot the one running trigger is kept in.
+ *
+ * `globalThis` with a `Symbol.for` key rather than a module-scope variable: under `vite dev` a
+ * server module is re-executed when it changes, and each fresh evaluation would otherwise get a
+ * fresh `undefined` and start a second interval that nothing can reach to stop. This key is the
+ * same one in every evaluation of every copy of this module.
+ */
+const RUNNING_SCHEDULER: unique symbol = Symbol.for('komplek.scheduler.running');
+
+/** `globalThis`, seen as the one property this module puts on it. */
+interface SchedulerHost {
+	[RUNNING_SCHEDULER]?: JobSchedulerHandle;
+}
+
+/** The slot, typed. `globalThis` shares no declared property with it, hence the trip through `unknown`. */
+function schedulerHost(): SchedulerHost {
+	return globalThis as unknown as SchedulerHost;
+}
+
+/**
+ * Whether this process is one that should be ticking.
+ *
+ * @param building SvelteKit's `$app/environment` flag, passed in because `$lib/server` code cannot
+ *   import `$app/*` — that alias only resolves inside the SvelteKit build, and this module is also
+ *   loaded by Vitest and by command-line tooling.
+ * @param environment defaults to `process.env`. Vitest sets `VITEST` in every worker it runs, which
+ *   is what keeps a background timer out of a test run that happens to import the hooks module.
+ */
+export function isSchedulerProcess(options: {
+	readonly building: boolean;
+	readonly environment?: NodeJS.ProcessEnv;
+}): boolean {
+	if (options.building) {
+		return false;
+	}
+	return (options.environment ?? process.env).VITEST === undefined;
+}
+
+/**
+ * Starts ticking `runDueJobs`, and answers a handle that stops it again.
+ *
+ * Stops whichever trigger was already running in this process first, so that however many times a
+ * module reload calls this, exactly one timer is live. The timer is `unref`ed: it is the HTTP
+ * server that decides a server process stays up, and a stray import must not be able to keep a
+ * command-line process alive on its own.
+ *
+ * One tick runs immediately, so that an email queued just before a restart is not waiting out a
+ * whole interval. Ticks never overlap: a tick that is still going when the next one is due is left
+ * to finish, because the lock would make the second one skip anyway and a pile-up of them would
+ * cost connections from the pool for nothing.
+ */
+export function startJobScheduler(options: StartJobSchedulerOptions): JobSchedulerHandle {
+	stopJobScheduler();
+
+	const report = options.onTickError ?? reportTickFailure;
+	let ticking = false;
+	const tick = async (): Promise<void> => {
+		if (ticking) {
+			return;
+		}
+		ticking = true;
+		try {
+			await runDueJobs({ db: options.db, clock: options.clock, registry: options.registry });
+		} catch (error) {
+			report(error);
+		} finally {
+			ticking = false;
+		}
+	};
+
+	const timer = setInterval(
+		() => void tick(),
+		options.intervalMilliseconds ?? DEFAULT_TICK_INTERVAL_MILLISECONDS
+	);
+	timer.unref();
+
+	const handle: JobSchedulerHandle = {
+		stop: () => {
+			clearInterval(timer);
+			if (schedulerHost()[RUNNING_SCHEDULER] === handle) {
+				schedulerHost()[RUNNING_SCHEDULER] = undefined;
+			}
+		}
+	};
+	schedulerHost()[RUNNING_SCHEDULER] = handle;
+	void tick();
+	return handle;
+}
+
+/** Stops the periodic trigger running in this process, if there is one. */
+export function stopJobScheduler(): void {
+	const running = schedulerHost()[RUNNING_SCHEDULER];
+	schedulerHost()[RUNNING_SCHEDULER] = undefined;
+	running?.stop();
+}
+
+/**
+ * Where a tick that failed outright goes by default. There is no logger in this application yet,
+ * and a tick nobody hears about is a queue that quietly stops draining, so the console the server
+ * already writes its errors to is the honest place for it.
+ */
+function reportTickFailure(error: unknown): void {
+	console.error('A scheduler tick could not be completed.', error);
+}
 
 /** The part of a failure worth keeping on the run: its message, shortened. */
 function describeFailure(thrown: unknown): string {
