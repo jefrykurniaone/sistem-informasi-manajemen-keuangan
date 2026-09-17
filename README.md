@@ -53,7 +53,10 @@ server pengembangan Vite, sehingga perubahan berkas langsung terlihat tanpa memb
 Kalau perubahan berkas tidak terdeteksi di dalam container, isi `VITE_USE_POLLING=true` di `.env`.
 
 Untuk bekerja tanpa Docker, jalankan `bun install` lalu `bun run dev`; PostgreSQL dan Mailpit tetap
-bisa dinyalakan sendiri dengan `docker compose up db mailpit`.
+bisa dinyalakan sendiri dengan `docker compose up db mailpit`. Perintah itu menjalankan `vite dev` di
+bawah Node, yang tidak mewarisi muatan `.env` milik proses Bun, jadi `vite.config.ts` yang menyalin
+isi `.env` ke `process.env` — variabel yang sudah ada di lingkungan sungguhan tetap menang atas nilai
+di berkas itu.
 
 ## Gerbang mutu
 
