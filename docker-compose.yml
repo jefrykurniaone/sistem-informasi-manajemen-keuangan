@@ -24,6 +24,11 @@ services:
       # with a message naming the variable.
       FILE_STORE_ROOT: ${FILE_STORE_ROOT:-storage}
       FILE_STORE_SECRET: ${FILE_STORE_SECRET}
+      # Same reasoning as FILE_STORE_SECRET just above: an empty secret is not defaulted to a
+      # working one here, so signing sessions with a value published in a tracked file signs
+      # nothing. It fails on the first request that touches authentication, with a message
+      # naming the variable.
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
     ports:
       - '${APP_PORT:-5173}:5173'
     volumes:
