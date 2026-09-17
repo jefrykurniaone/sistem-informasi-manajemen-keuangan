@@ -1,6 +1,5 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getCookies } from 'better-auth/cookies';
 import {
 	createAuth,
 	isSecureOrigin,
@@ -43,7 +42,14 @@ const testDb = testDatabase();
 /** The origin the instance under test answers on. Plain http, as a laptop serves it. */
 const TEST_ORIGIN = 'http://localhost:5173';
 
-/** A secret of the length the real reader insists on. It signs nothing outside this file. */
+/**
+ * A secret of the length the real reader insists on. It signs nothing outside this file.
+ *
+ * This constant and the passwords below are literal values in a test, not credentials: they are
+ * invented here, used by this file only, and protect nothing. Turning them into environment
+ * variables or repository secrets would hide what the tests are doing without protecting anything,
+ * so do not.
+ */
 const TEST_SECRET = 'a-test-secret-that-is-long-enough-to-pass';
 
 /** A password that clears the minimum length, used wherever the password itself does not matter. */
@@ -140,6 +146,27 @@ async function signInAndKeepCookies(
 		.join('; ');
 }
 
+/**
+ * The `Set-Cookie` line one instance writes for its session cookie, split into its parts.
+ *
+ * Read off the wire rather than out of the configuration on purpose: an assertion against
+ * `getCookies(options)` is an assertion about the same object the configuration was merged into,
+ * and it stays green even when the configuration is deleted.
+ */
+async function sessionCookieParts(instance: Auth, email: string): Promise<string[]> {
+	const { headers } = await instance.api.signInEmail({
+		body: { email, password: GOOD_PASSWORD },
+		returnHeaders: true
+	});
+	const line = headers.getSetCookie().find((candidate) => candidate.includes('session_token='));
+	if (line === undefined) {
+		throw new TypeError(
+			`Signing in wrote no session cookie: ${headers.getSetCookie().join(' | ')}`
+		);
+	}
+	return line.split(';').map((part) => part.trim());
+}
+
 /** The error code better-auth answered a refused call with. */
 async function refusalCode(call: Promise<unknown>): Promise<string | undefined> {
 	try {
@@ -183,19 +210,17 @@ describe('registering', () => {
 
 		await register(email);
 
+		// Untried and unsent: the row is the whole of what registering does about email. Nothing in
+		// the sign-up path is handed an `EmailSender` at all — `createAuth` takes none — so there is
+		// no mail server for a registration to be failed by.
 		const rows = await allQueued(email, VERIFY_EMAIL_KIND);
 		expect(rows).toHaveLength(1);
-		expect(rows[0]).toMatchObject({ status: 'pending', attempts: 0 });
-	});
-
-	it('sends nothing from inside the call, so a dead mail server cannot fail a registration', async () => {
-		// The queue row is the whole of what registering does about email. Proven by the row being
-		// pending and untried: a sender that had been reached would have moved it.
-		const email = 'register-not-sent@komplek.local';
-
-		await register(email);
-
-		expect((await queued(email, VERIFY_EMAIL_KIND))?.sentAt).toBeNull();
+		expect(rows[0]).toMatchObject({
+			status: 'pending',
+			attempts: 0,
+			sentAt: null,
+			lastError: null
+		});
 	});
 
 	it('answers a second registration of the same address without saying it is taken', async () => {
@@ -274,21 +299,24 @@ describe('the verification email', () => {
 		expect(await refused).toBe('INVALID_TOKEN');
 	});
 
-	it('can be asked for again without the answer saying whether the address exists', async () => {
+	it('can be asked for again without the answer saying which of the three cases it is', async () => {
+		// The three an address can be in, and they have to be indistinguishable from outside.
 		const unknown = 'verify-resend-unknown@komplek.local';
-		const known = 'verify-resend-known@komplek.local';
-		await register(known);
+		const waiting = 'verify-resend-waiting@komplek.local';
+		const already = 'verify-resend-already@komplek.local';
+		await register(waiting);
+		await registerAndVerify(already);
 
-		await expect(
-			authentication().api.sendVerificationEmail({ body: { email: unknown } })
-		).resolves.toMatchObject({ status: true });
-		await expect(
-			authentication().api.sendVerificationEmail({ body: { email: known } })
-		).resolves.toMatchObject({ status: true });
+		const answers = [];
+		for (const email of [unknown, waiting, already]) {
+			answers.push(await authentication().api.sendVerificationEmail({ body: { email } }));
+		}
 
-		// The answers are identical; only the queue knows the difference.
+		// One answer, three times over. Only the queue knows the difference.
+		expect(answers).toEqual([{ status: true }, { status: true }, { status: true }]);
 		expect(await allQueued(unknown, VERIFY_EMAIL_KIND)).toHaveLength(0);
-		expect(await allQueued(known, VERIFY_EMAIL_KIND)).toHaveLength(2);
+		expect(await allQueued(waiting, VERIFY_EMAIL_KIND)).toHaveLength(2);
+		expect(await allQueued(already, VERIFY_EMAIL_KIND)).toHaveLength(1);
 	});
 });
 
@@ -389,12 +417,19 @@ describe('recovering a forgotten password', () => {
 
 	it('answers an address nobody registered exactly as it answers one that is', async () => {
 		const unknown = 'reset-unknown@komplek.local';
+		const known = 'reset-known@komplek.local';
+		await registerAndVerify(known);
 
-		await expect(
-			authentication().api.requestPasswordReset({ body: { email: unknown } })
-		).resolves.toMatchObject({ status: true });
+		const forUnknown = await authentication().api.requestPasswordReset({
+			body: { email: unknown }
+		});
+		const forKnown = await authentication().api.requestPasswordReset({ body: { email: known } });
 
+		// Not "both look successful" — the same object, key for key. A field that only one of them
+		// carried would be enough to sort registered addresses from unregistered ones.
+		expect(forUnknown).toEqual(forKnown);
 		expect(await allQueued(unknown, PASSWORD_RESET_KIND)).toHaveLength(0);
+		expect(await allQueued(known, PASSWORD_RESET_KIND)).toHaveLength(1);
 	});
 
 	it('sets the new password and stops the old one working', async () => {
@@ -553,26 +588,35 @@ describe('the password itself', () => {
 		await refusalCode(noisy.api.signInEmail({ body: { email, password } }));
 		await refusalCode(noisy.api.signInEmail({ body: { email, password: 'yang salah' } }));
 
+		// The positive control, and the reason this test means anything: better-auth really did
+		// write to the channel being watched. Without it, a renamed option or a logger that stopped
+		// being called would leave an empty array and a green test that proves nothing.
+		expect(lines.join('\n')).toContain('Invalid password');
 		expect(lines.join('\n')).not.toContain(password);
 	});
 });
 
 describe('the session cookie', () => {
 	it('is unreadable to script, is withheld from cross-site posts, and outlives the browser', async () => {
-		const { sessionToken } = getCookies(authentication().options);
+		const email = 'cookie-attributes@komplek.local';
+		await registerAndVerify(email);
 
-		expect(sessionToken.attributes).toMatchObject({
-			httpOnly: true,
-			sameSite: 'lax',
-			path: '/',
-			secure: false
-		});
+		const parts = await sessionCookieParts(authentication(), email);
+
+		expect(parts[0].startsWith('better-auth.session_token=')).toBe(true);
+		expect(parts).toContain('HttpOnly');
+		expect(parts).toContain('SameSite=Lax');
+		expect(parts).toContain('Path=/');
 		// Thirty days, which is what makes the session survive closing and reopening the browser:
 		// a cookie with no max-age would be gone the moment the browser is.
-		expect(sessionToken.attributes.maxAge).toBe(30 * 24 * 60 * 60);
+		expect(parts).toContain(`Max-Age=${30 * 24 * 60 * 60}`);
+		// Not `Secure` on plain http, where a browser would refuse to store it at all.
+		expect(parts).not.toContain('Secure');
 	});
 
-	it('is marked Secure and prefixed when the application answers on https', () => {
+	it('is marked Secure and prefixed when the application answers on https', async () => {
+		const email = 'cookie-secure@komplek.local';
+		await registerAndVerify(email);
 		const overHttps = createAuth({
 			db: testDb.db,
 			clock,
@@ -580,12 +624,12 @@ describe('the session cookie', () => {
 			secret: TEST_SECRET
 		});
 
-		const { sessionToken } = getCookies(overHttps.options);
+		const parts = await sessionCookieParts(overHttps, email);
 
-		expect(sessionToken.attributes.secure).toBe(true);
+		expect(parts).toContain('Secure');
 		// The `__Secure-` prefix is a browser rule, not a hint: a page served over plain http
 		// cannot set or overwrite a cookie whose name starts with it.
-		expect(sessionToken.name.startsWith('__Secure-')).toBe(true);
+		expect(parts[0].startsWith('__Secure-better-auth.session_token=')).toBe(true);
 	});
 
 	it.each([

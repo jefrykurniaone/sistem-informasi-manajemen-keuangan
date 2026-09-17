@@ -34,8 +34,17 @@ const QUEUE_WAIT_MILLISECONDS = 10_000;
 /** How long to wait between two looks. */
 const QUEUE_POLL_MILLISECONDS = 200;
 
-/** A password that clears the minimum length the application asks for. */
+/**
+ * A password that clears the minimum length the application asks for. Invented here, used by this
+ * file only, and protecting nothing — a literal in a test rather than a credential.
+ */
 const PASSWORD = 'kata sandi ujung ke ujung';
+
+/** The label on every address field in the flow. */
+const EMAIL_FIELD = 'Alamat email';
+
+/** The sign-in page. */
+const LOGIN_PATH = '/login';
 
 const pool = new Pool({ connectionString: DATABASE_URL });
 
@@ -72,7 +81,7 @@ async function tokenFromQueuedEmail(recipient: string, kind: string): Promise<st
 async function register(page: Page, email: string, password = PASSWORD): Promise<void> {
 	await page.goto('/register');
 	await page.getByLabel('Nama').fill('Warga Uji');
-	await page.getByLabel('Alamat email').fill(email);
+	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Kata sandi', { exact: true }).fill(password);
 	await page.getByLabel('Ulangi kata sandi').fill(password);
 	await page.getByRole('button', { name: 'Daftar' }).click();
@@ -80,8 +89,8 @@ async function register(page: Page, email: string, password = PASSWORD): Promise
 
 /** Fills in the sign-in form and submits it. */
 async function signIn(page: Page, email: string, password = PASSWORD): Promise<void> {
-	await page.goto('/login');
-	await page.getByLabel('Alamat email').fill(email);
+	await page.goto(LOGIN_PATH);
+	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Kata sandi').fill(password);
 	await page.getByRole('button', { name: 'Masuk' }).click();
 }
@@ -118,12 +127,12 @@ test('a new resident registers, verifies, signs in, and signs out', async ({
 	expect(cookie?.expires).toBeGreaterThan(Date.now() / 1000);
 
 	// Being signed in is visible from the sign-in page, which sends a signed-in visitor home.
-	await page.goto('/login');
+	await page.goto(LOGIN_PATH);
 	await expect(page).toHaveURL(`${baseURL}/`);
 
 	await page.request.post('/logout', { form: {}, headers: { origin: String(baseURL) } });
 	expect(await sessionCookie(context)).toBeUndefined();
-	await page.goto('/login');
+	await page.goto(LOGIN_PATH);
 	await expect(page.getByRole('button', { name: 'Masuk' })).toBeVisible();
 });
 
@@ -152,7 +161,7 @@ test('a forgotten password is recovered through the emailed link, which works on
 	await page.goto(`/verify?token=${encodeURIComponent(verifyToken)}`);
 
 	await page.goto('/forgot-password');
-	await page.getByLabel('Alamat email').fill(email);
+	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByRole('button', { name: 'Kirim tautan' }).click();
 	await expect(page.getByRole('status')).toContainText('hanya bisa dipakai sekali');
 
@@ -170,6 +179,10 @@ test('a forgotten password is recovered through the emailed link, which works on
 	await page.getByLabel('Ulangi kata sandi baru').fill(newPassword);
 	await page.getByRole('button', { name: 'Simpan kata sandi' }).click();
 	await expect(page.getByRole('alert')).toContainText('sudah tidak berlaku');
+
+	// The old password is gone, not merely joined by a new one.
+	await signIn(page, email);
+	await expect(page.getByRole('alert')).toContainText('Email atau kata sandi salah');
 
 	await signIn(page, email, newPassword);
 	await expect(page).toHaveURL(`${baseURL}/`);

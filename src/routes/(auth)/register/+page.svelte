@@ -13,8 +13,8 @@
 <main class="flex flex-col gap-6">
 	<h1 class="text-2xl font-bold tracking-tight">Daftar</h1>
 	<p class="text-sm text-muted-foreground">
-		Setelah mendaftar, kami mengirim satu email verifikasi. Akun baru bisa dipakai setelah tautan di
-		dalam email itu Anda buka.
+		Kalau alamat email yang Anda isi belum terdaftar, kami mengirim satu email verifikasi ke sana.
+		Akun baru bisa dipakai setelah tautan di dalam email itu Anda buka.
 	</p>
 
 	{#if form}

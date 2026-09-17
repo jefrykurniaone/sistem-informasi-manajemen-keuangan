@@ -15,7 +15,10 @@ import { createAuthClient } from 'better-auth/svelte';
  * in the browser, which is what the navigation in a later ticket will want.
  *
  * No `baseURL` is set. The client calls the origin the page was served from, which is the only
- * origin that holds the session cookie.
+ * origin that holds the session cookie. That origin has to be the one `ORIGIN` names: better-auth
+ * only answers `/api/auth/*` for requests whose origin matches its `baseURL`, so an application
+ * served on a port `ORIGIN` does not name leaves everything below with nothing to call. See
+ * `$lib/server/auth.ts`.
  */
 export const authClient = createAuthClient();
 

@@ -32,7 +32,12 @@ import { systemClock, type Clock } from './ports/clock';
  *    for a unit test must not have it. `auth()` adds it; `createAuth()` on its own does not.
  * 3. **Email is queued, never sent.** Both callbacks below do one `insert` through
  *    `enqueueEmail`. Nothing here awaits `processEmailQueue`, and nothing here talks to a mail
- *    server: an unreachable SMTP host must not be able to fail a registration.
+ *    server: an unreachable SMTP host must not be able to fail a registration. The one part of
+ *    `../email/queue.ts`'s contract that cannot be honoured here is the transaction: better-auth
+ *    hands its callbacks no transaction handle, so the writer passed below is the pool. In 1.7.5
+ *    the callback runs after the sign-up has already committed, so nothing can roll back under
+ *    it — and the dependency is pinned to that exact version rather than a range, because a minor
+ *    release that moved the callback inside the transaction would change that silently.
  * 4. **The links in those emails point at this application's own pages**, not at better-auth's
  *    endpoints. better-auth offers a `url` built from its own `/verify-email` and
  *    `/reset-password/:token` routes; it is ignored in favour of `/verify?token=` and
@@ -58,9 +63,11 @@ import { systemClock, type Clock } from './ports/clock';
  * better-auth writes one cookie holding an opaque session token — never the user, never a role,
  * never anything a browser could edit into a different answer. Its attributes:
  *
- * - `httpOnly` is on, so script on the page cannot read it. Set below as well as by default,
- *   because it is the single attribute whose loss turns any cross-site scripting bug into account
- *   theft, and a default is easier to change by accident than a line that says so.
+ * - `httpOnly` is on, so script on the page cannot read it. `defaultCookieAttributes` below repeats
+ *   it, and `sameSite`, as a statement of intent rather than as a pin: better-auth applies that
+ *   object in the same literal as its own identical defaults, so removing the line would change
+ *   nothing today. What holds the guarantee is the assertion in `tests/unit/auth.test.ts`, which
+ *   reads the attributes off a real `Set-Cookie` header rather than off the configuration.
  * - `sameSite` is `lax`. `strict` was considered and rejected: the verification and reset links
  *   arrive from a mail client, which makes the first navigation into this application a
  *   cross-site one, and under `strict` that request carries no cookie at all. `lax` sends the
@@ -78,6 +85,22 @@ import { systemClock, type Clock } from './ports/clock';
  * Session data is not cached in a cookie (`session.cookieCache` stays off): every request reads
  * the session row, so revoking a session takes effect on the next request rather than up to five
  * minutes later.
+ *
+ * ## Two things the next ticket has to know
+ *
+ * **`auth()` may only be called while a request is in flight.** The SvelteKit cookie plugin baked
+ * into the singleton calls `getRequestEvent()` on every endpoint, and that throws outside a
+ * request. A scheduled job, a seed script or a command-line tool that needs better-auth builds its
+ * own instance with `createAuth()` and no plugins.
+ *
+ * **`ORIGIN` is not decoration.** It is handed to better-auth as `baseURL`, and
+ * `svelteKitHandler` only answers `/api/auth/*` when the request's origin matches it exactly —
+ * otherwise those addresses fall through to SvelteKit and 404. That is the same requirement
+ * SvelteKit's own Node adapter already has for form posts, so there is one variable rather than
+ * two that can disagree; but it does mean that serving the application on a port `ORIGIN` does
+ * not name leaves `$lib/auth-client.ts` with nothing to call. The pages in this ticket are
+ * unaffected: they use form actions and `auth().api.*` directly, neither of which goes through
+ * that router.
  */
 
 /** Where each page of the sign-in flow lives, so that a link and its route cannot drift apart. */
@@ -197,9 +220,17 @@ export function createAuth(settings: AuthSettings) {
 			expiresIn: SESSION_LIFETIME_SECONDS,
 			updateAge: SESSION_REFRESH_SECONDS
 		},
-		// On for every environment, not only production. It guards the `/api/auth/*` endpoints,
-		// where the defaults allow three sign-in attempts per ten seconds and three password reset
-		// requests per minute. Memory storage is enough because this application is one process.
+		// On for every environment, not only production, with the defaults: three sign-in attempts
+		// per ten seconds and three password reset requests per minute. Memory storage is enough
+		// because this application is one process.
+		//
+		// Read this before relying on it: the limiter is middleware on better-auth's own HTTP
+		// router, so it covers `/api/auth/*` and nothing else. The pages in this ticket call
+		// `auth().api.*` directly — the pattern better-auth documents for SvelteKit form actions —
+		// and a direct call never reaches that middleware. `POST /login`, `POST /forgot-password`
+		// and `POST /verify?/resend` are therefore not throttled by this setting. Closing that gap
+		// needs a limiter that sits in front of form actions, which is a decision for the whole
+		// application rather than for this module.
 		rateLimit: { enabled: true, storage: 'memory' },
 		advanced: {
 			useSecureCookies: isSecureOrigin(baseURL),

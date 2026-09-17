@@ -33,8 +33,8 @@
 		</p>
 	{:else if data.state === 'invalid'}
 		<p class="rounded-md border border-destructive px-3 py-2 text-sm text-destructive" role="alert">
-			Tautan verifikasi ini tidak bisa dipakai. Mungkin tautannya terpotong saat disalin, atau sudah
-			diganti oleh email verifikasi yang lebih baru. Minta email yang baru di bawah ini.
+			Tautan verifikasi ini tidak bisa dipakai. Biasanya tautannya terpotong saat disalin dari
+			email. Minta email yang baru di bawah ini.
 		</p>
 	{:else}
 		<p class="text-sm">

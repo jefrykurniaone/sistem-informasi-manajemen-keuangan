@@ -21,6 +21,13 @@ import type { Actions, PageServerLoad } from './$types';
  *
  * Verifying does not sign anyone in — see the reasoning in `$lib/server/auth`. The page sends the
  * person to the sign-in form afterwards.
+ *
+ * **The `load` below changes something, on a GET.** That is what an emailed link is: the token in
+ * the address is the whole of the authority, and the only thing the request can do with it is mark
+ * one address proven. It is idempotent — a second visit finds the address already verified and
+ * says the same thing — so a link scanner, a prefetch or the browser's back button replaying it
+ * costs nothing. A verification token is a signed JWT rather than a stored row, so it stays usable
+ * until it expires; nothing here can revoke one early, and the page must not claim otherwise.
  */
 
 /** What this page is saying. The wording lives in the component; this is the situation. */
