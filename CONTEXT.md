@@ -175,6 +175,8 @@ Kata yang bukan benda dan tidak punya tabel:
 | menunggak | `overdue` |
 | komplek | `complex` |
 | peran Warga, Admin, Superuser | `resident`, `admin`, `superuser` |
+| tipe Post kegiatan dan pengumuman | `event`, `announcement` |
+| status Post draf, terbit, dan arsip | `draft`, `published`, `archived` |
 
 **`Rupiah` tidak diterjemahkan.** Ia satuan mata uang sungguhan, bukan istilah domain lokal, dan
 menamainya `Money` menghapus fakta bahwa ia bilangan bulat tanpa satuan pecahan. Lihat

@@ -7,6 +7,7 @@ export * from './authz';
 export * from './email';
 export * from './invitation';
 export * from './occupancy';
+export * from './post';
 export * from './registration';
 export * from './resident';
 export * from './scheduler';
