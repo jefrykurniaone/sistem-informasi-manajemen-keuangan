@@ -4,9 +4,9 @@ node_modules
 !.env.example
 
 .svelte-kit
-build
-dist
-.output
+/build
+/dist
+/.output
 
 .claude/worktrees
 .claude/scratch
@@ -16,7 +16,7 @@ dist
 .DS_Store
 Thumbs.db
 
-storage/
-coverage/
-test-results/
-playwright-report/
+/storage/
+/coverage/
+/test-results/
+/playwright-report/
