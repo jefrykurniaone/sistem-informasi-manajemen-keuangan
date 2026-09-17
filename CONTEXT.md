@@ -35,6 +35,11 @@ Tautan berbatas waktu dan sekali pakai yang memungkinkan seorang Warga menetapka
 sendiri dan mulai memakai aplikasi.
 _Hindari_: token, invite
 
+**Pendaftaran**:
+Permintaan seseorang yang belum terdaftar untuk masuk, menyebut nama, email, serta blok dan nomor
+rumah yang diklaimnya, dan menunggu persetujuan Superuser sebelum memberi akses apa pun.
+_Hindari_: registrasi, sign-up, permohonan
+
 ## Iuran
 
 **Tarif**:
@@ -144,6 +149,7 @@ kolom dari nama properti lewat `casing: 'snake_case'`, jadi nama kolom tidak dit
 | Masa Huni | `Occupancy` | `occupancies` |
 | Penanggung Jawab | `PrimaryOccupant` | penanda pada `occupancies` |
 | Undangan | `Invitation` | `invitations` |
+| Pendaftaran | `Registration` | `registrations` |
 | Tarif | `DuesRate` | `dues_rates` |
 | Tagihan | `Invoice` | `invoices` |
 | Pembayaran | `Payment` | `payments` |
