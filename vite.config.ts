@@ -3,6 +3,7 @@ import { defineConfig } from 'vitest/config';
 import { loadEnv } from 'vite';
 import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { paraglideVitePlugin } from '@inlang/paraglide-js';
 
 export default defineConfig(({ mode }) => {
 	// Every variable out of the .env files and out of the real environment. Vite exposes only
@@ -36,6 +37,24 @@ export default defineConfig(({ mode }) => {
 						filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 				},
 				adapter: adapter()
+			}),
+			// Compiles messages/{locale}.json into src/lib/paraglide (gitignored, regenerated on every
+			// build and dev start). `strategy` deliberately excludes `url`: this application picks a
+			// locale from a cookie and never prefixes an address with a language code, so there is no
+			// redirect and no de-localization for the middleware in src/hooks.server.ts to perform —
+			// see spec-fondasi-v1.md's "i18n" section.
+			//
+			// This plugin is the only thing that regenerates that directory for `vite build` and
+			// `vite dev`. `svelte-check`, `eslint`/`prettier` and `vitest` never touch Vite, so `bun run
+			// check`, `bun run lint` and `bun run test` in package.json each run the `paraglide:compile`
+			// script first — the same `project`/`outdir`/`strategy` as here, kept in sync by hand — or a
+			// clean checkout fails every one of those with "Cannot find module '$lib/paraglide/...'"
+			// before this plugin ever gets a chance to run.
+			paraglideVitePlugin({
+				project: './project.inlang',
+				outdir: './src/lib/paraglide',
+				strategy: ['cookie', 'baseLocale'],
+				emitTsDeclarations: true
 			})
 		],
 		server: {
