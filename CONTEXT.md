@@ -112,6 +112,16 @@ _Hindari_: tiket, isu, aduan, komplain
 Pesan pada sebuah Keluhan, dari pelapor atau dari pengurus.
 _Hindari_: komentar, balasan
 
+**Lampiran**:
+Berkas gambar yang disertakan pada sebuah Keluhan, dibuka lewat tautan bertanda tangan berumur
+pendek. Paling banyak tiga per Keluhan.
+_Hindari_: attachment, foto
+
+**Riwayat Status**:
+Catatan setiap perpindahan status sebuah Keluhan, berisi status lama, status baru, pelaku, waktu,
+dan catatan.
+_Hindari_: log keluhan, timeline
+
 ## Peran dan pemberitahuan
 
 **Warga** *(peran)*:
@@ -164,6 +174,8 @@ kolom dari nama properti lewat `casing: 'snake_case'`, jadi nama kolom tidak dit
 | Post | `Post` | `posts` |
 | Keluhan | `Complaint` | `complaints` |
 | Tanggapan | `ComplaintReply` | `complaint_replies` |
+| Lampiran | `ComplaintAttachment` | `complaint_attachments` |
+| Riwayat Status | `ComplaintStatusChange` | `complaint_status_changes` |
 | Langganan | `Subscription` | `subscriptions` |
 | Audit Log | `AuditEntry` | `audit_log` |
 
@@ -177,6 +189,8 @@ Kata yang bukan benda dan tidak punya tabel:
 | peran Warga, Admin, Superuser | `resident`, `admin`, `superuser` |
 | tipe Post kegiatan dan pengumuman | `event`, `announcement` |
 | status Post draf, terbit, dan arsip | `draft`, `published`, `archived` |
+| status Keluhan baru, ditinjau, dikerjakan, selesai, ditolak, dan ditarik | `new`, `reviewing`, `working`, `resolved`, `rejected`, `withdrawn` |
+| visibilitas Keluhan pribadi dan umum | `private`, `public` |
 
 **`Rupiah` tidak diterjemahkan.** Ia satuan mata uang sungguhan, bukan istilah domain lokal, dan
 menamainya `Money` menghapus fakta bahwa ia bilangan bulat tanpa satuan pecahan. Lihat
