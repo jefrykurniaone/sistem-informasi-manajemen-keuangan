@@ -102,7 +102,16 @@ export const ACTION = {
 	 * `manageJobs` records: a list is only useful to whoever may act on it. That reasoning does not
 	 * survive here, because this spec asks for two different sets of people. See `PERMISSIONS`.
 	 */
-	readAllComplaints: 'readAllComplaints'
+	readAllComplaints: 'readAllComplaints',
+	/**
+	 * Seeing the admin list of Undangan, sending one, and sending one again. See
+	 * `src/lib/server/services/invitation/index.ts`. One action for the read and the writes, the same
+	 * reasoning as `manageJobs`: the list is only useful to whoever may act on it, and sending an
+	 * invitation is what lets a stranger become a Warga of a named house — "mengubah siapa boleh
+	 * apa", which `CONTEXT.md` puts on Superuser. Accepting an invitation is deliberately not covered
+	 * here: the acceptor has no session yet, so that path is guarded by the token itself.
+	 */
+	manageInvitations: 'manageInvitations'
 } as const;
 
 /** One of the actions above. */
@@ -165,7 +174,8 @@ const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.manageOccupancies]: new Set([ROLE.superuser]),
 	[ACTION.managePosts]: new Set([ROLE.admin]),
 	[ACTION.handleComplaints]: new Set([ROLE.admin]),
-	[ACTION.readAllComplaints]: new Set([ROLE.admin, ROLE.superuser])
+	[ACTION.readAllComplaints]: new Set([ROLE.admin, ROLE.superuser]),
+	[ACTION.manageInvitations]: new Set([ROLE.superuser])
 };
 
 /**

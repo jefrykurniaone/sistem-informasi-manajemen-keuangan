@@ -9,6 +9,7 @@ import {
 	type JobDefinition,
 	type JobRegistry
 } from '../scheduler';
+import { invitationTemplates } from './templates/invitation';
 import { passwordResetTemplates } from './templates/password-reset';
 import { verifyEmailTemplates } from './templates/verify-email';
 import { processEmailQueue } from './worker';
@@ -66,7 +67,8 @@ export const EMAIL_QUEUE_DRAIN_MINUTES = 1;
  */
 export const applicationEmailTemplates: EmailTemplates = {
 	...verifyEmailTemplates,
-	...passwordResetTemplates
+	...passwordResetTemplates,
+	...invitationTemplates
 };
 
 /** What a drain job may have handed to it instead of the production wiring. */
