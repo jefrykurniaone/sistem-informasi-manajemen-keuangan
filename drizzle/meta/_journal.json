@@ -64,6 +64,13 @@
 			"when": 1789737057516,
 			"tag": "0008_dues",
 			"breakpoints": true
+		},
+		{
+			"idx": 9,
+			"version": "7",
+			"when": 1789741476157,
+			"tag": "0009_cash_report",
+			"breakpoints": true
 		}
 	]
 }
