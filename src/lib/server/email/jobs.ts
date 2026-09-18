@@ -11,6 +11,7 @@ import {
 } from '../scheduler';
 import { invitationTemplates } from './templates/invitation';
 import { passwordResetTemplates } from './templates/password-reset';
+import { registrationApprovedTemplates } from './templates/registration-approved';
 import { verifyEmailTemplates } from './templates/verify-email';
 import { processEmailQueue } from './worker';
 
@@ -68,7 +69,8 @@ export const EMAIL_QUEUE_DRAIN_MINUTES = 1;
 export const applicationEmailTemplates: EmailTemplates = {
 	...verifyEmailTemplates,
 	...passwordResetTemplates,
-	...invitationTemplates
+	...invitationTemplates,
+	...registrationApprovedTemplates
 };
 
 /** What a drain job may have handed to it instead of the production wiring. */

@@ -171,7 +171,20 @@ export const ACTION = {
 	 * to `admin`, which `CONTEXT.md` would allow for daily master data, silently hands every admin
 	 * the opening balance too.
 	 */
-	recordOpeningBalance: 'recordOpeningBalance'
+	recordOpeningBalance: 'recordOpeningBalance',
+	/**
+	 * Seeing the Pendaftaran still waiting to be decided, approving one onto a Unit, and turning one
+	 * down with a reason. See `src/lib/server/services/registration/index.ts`. One action for the read
+	 * and the two writes, the same reasoning as `manageJobs`: the queue is only useful to whoever may
+	 * decide the rows on it.
+	 *
+	 * It is `superuser`'s by the same reading that put `manageInvitations` there — approving a
+	 * registration is what turns a stranger who claimed a house into a Warga of one, which is
+	 * "mengubah siapa boleh apa" in `CONTEXT.md`'s description of Superuser. Submitting a registration
+	 * is deliberately not covered here and has no action at all: the registrant holds no rights yet,
+	 * and their own submission is guarded by being an ordinary form about their own address.
+	 */
+	manageRegistrations: 'manageRegistrations'
 } as const;
 
 /** One of the actions above. */
@@ -239,7 +252,8 @@ const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.manageInvitations]: new Set([ROLE.superuser]),
 	[ACTION.manageDuesRates]: new Set([ROLE.superuser]),
 	[ACTION.manageCashCategories]: new Set([ROLE.superuser]),
-	[ACTION.recordOpeningBalance]: new Set([ROLE.superuser])
+	[ACTION.recordOpeningBalance]: new Set([ROLE.superuser]),
+	[ACTION.manageRegistrations]: new Set([ROLE.superuser])
 };
 
 /**

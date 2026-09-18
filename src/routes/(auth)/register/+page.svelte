@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -16,6 +17,7 @@
 		Kalau alamat email yang Anda isi belum terdaftar, kami mengirim satu email verifikasi ke sana.
 		Akun baru bisa dipakai setelah tautan di dalam email itu Anda buka.
 	</p>
+	<p class="text-sm text-muted-foreground">{m.register_reviewNotice()}</p>
 
 	{#if form}
 		<p class="rounded-md border border-destructive px-3 py-2 text-sm text-destructive" role="alert">
@@ -49,6 +51,37 @@
 				required
 			/>
 		</div>
+
+		<fieldset class="flex flex-col gap-1.5">
+			<legend class="text-sm font-medium">{m.register_claimLegend()}</legend>
+			<div class="flex flex-col gap-3 sm:flex-row">
+				<div class="flex flex-1 flex-col gap-1.5">
+					<label class="text-sm font-medium" for="claimedBlock">{m.register_blockLabel()}</label>
+					<input
+						class="h-9 rounded-md border border-border bg-background px-3 text-sm"
+						id="claimedBlock"
+						name="claimedBlock"
+						type="text"
+						aria-describedby="claim-hint"
+						value={form?.claimedBlock ?? ''}
+						required
+					/>
+				</div>
+				<div class="flex flex-1 flex-col gap-1.5">
+					<label class="text-sm font-medium" for="claimedNumber">{m.register_numberLabel()}</label>
+					<input
+						class="h-9 rounded-md border border-border bg-background px-3 text-sm"
+						id="claimedNumber"
+						name="claimedNumber"
+						type="text"
+						aria-describedby="claim-hint"
+						value={form?.claimedNumber ?? ''}
+						required
+					/>
+				</div>
+			</div>
+			<p class="text-xs text-muted-foreground" id="claim-hint">{m.register_claimHint()}</p>
+		</fieldset>
 
 		<div class="flex flex-col gap-1.5">
 			<label class="text-sm font-medium" for="password">Kata sandi</label>
