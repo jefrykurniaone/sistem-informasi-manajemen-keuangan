@@ -203,5 +203,22 @@
 	"adminPosts_rule_unknownCategory": "Kategori itu tidak dikenal.",
 	"adminPosts_rule_authorNotRegistered": "Akun Anda belum terhubung ke data warga, jadi terbitan belum bisa ditulis atas nama Anda. Hubungi Superuser.",
 	"adminPosts_rule_coverImageNotAnImage": "Berkas itu bukan gambar JPEG, PNG, atau WebP.",
-	"adminPosts_rule_coverImageTooLarge": "Gambar sampul lebih besar dari 256 KB."
+	"adminPosts_rule_coverImageTooLarge": "Gambar sampul lebih besar dari 256 KB.",
+	"postPublic_pageTitle": "Papan pengumuman — Komplek",
+	"postPublic_pageDescription": "Kegiatan dan pengumuman komplek yang sudah terbit, bisa dibuka siapa pun tanpa akun.",
+	"postPublic_heading": "Papan pengumuman",
+	"postPublic_description": "Kegiatan yang akan datang muncul lebih dulu, diikuti pengumuman terbaru. Gunakan saringan untuk melihat yang sudah lewat atau menyaring menurut kategori.",
+	"postPublic_whenNavLabel": "Saring menurut waktu",
+	"postPublic_whenUpcoming": "Akan datang",
+	"postPublic_whenPast": "Sudah lewat",
+	"postPublic_filterCategoryLabel": "Kategori",
+	"postPublic_filterAllCategories": "Semua kategori",
+	"postPublic_filterSubmit": "Saring",
+	"postPublic_empty": "Belum ada kegiatan atau pengumuman yang cocok dengan saringan ini.",
+	"postPublic_paginationSummary": "Halaman {page} dari {totalPages}",
+	"postPublic_prevPage": "Sebelumnya",
+	"postPublic_nextPage": "Berikutnya",
+	"postPublic_readMoreLink": "Baca selengkapnya",
+	"postPublic_backLink": "Kembali ke papan pengumuman",
+	"postPublic_notFound": "Terbitan tidak ditemukan atau belum terbit."
 }
