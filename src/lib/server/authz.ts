@@ -127,7 +127,19 @@ export const ACTION = {
 	 * apa", which `CONTEXT.md` puts on Superuser. Accepting an invitation is deliberately not covered
 	 * here: the acceptor has no session yet, so that path is guarded by the token itself.
 	 */
-	manageInvitations: 'manageInvitations'
+	manageInvitations: 'manageInvitations',
+	/**
+	 * Seeing the Tarif history and setting, changing or removing a rate. See
+	 * `src/lib/server/services/dues/rate.ts`. One action for the read and the writes, the same
+	 * reasoning as `manageJobs`: the history is only useful to whoever may act on it.
+	 *
+	 * `CONTEXT.md` names Tarif directly in Superuser's list — "mengelola Warga dan peran, Unit dan
+	 * Masa Huni, Tarif, Pembebasan, pembatalan Tagihan, dan pembukaan kunci Periode" — so this is a
+	 * superuser-only action, and an `admin` who is not also a superuser cannot change what the complex
+	 * charges. Reading the rate in force on a given day is deliberately not covered here: the issuance
+	 * job that reads it has no session at all, so `duesRateOn` takes no caller and checks nothing.
+	 */
+	manageDuesRates: 'manageDuesRates'
 } as const;
 
 /** One of the actions above. */
@@ -192,7 +204,8 @@ const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.handleComplaints]: new Set([ROLE.admin]),
 	[ACTION.readAllComplaints]: new Set([ROLE.admin, ROLE.superuser]),
 	[ACTION.importResidents]: new Set([ROLE.superuser]),
-	[ACTION.manageInvitations]: new Set([ROLE.superuser])
+	[ACTION.manageInvitations]: new Set([ROLE.superuser]),
+	[ACTION.manageDuesRates]: new Set([ROLE.superuser])
 };
 
 /**
