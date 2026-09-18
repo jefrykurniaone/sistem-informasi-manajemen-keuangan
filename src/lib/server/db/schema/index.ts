@@ -4,6 +4,7 @@ import type { Rupiah } from '$lib/money';
 export * from './auth';
 export * from './audit';
 export * from './authz';
+export * from './complaint';
 export * from './email';
 export * from './invitation';
 export * from './occupancy';
