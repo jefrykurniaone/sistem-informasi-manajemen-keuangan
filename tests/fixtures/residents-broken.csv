@@ -1,0 +1,15 @@
+blok,nomor,nama,email,peran
+P,1,Budi Santoso,budi@komplek.id,pemilik
+,2,Tanpa Blok,tanpablok@komplek.id,pemilik
+Q,,Tanpa Nomor,tanpanomor@komplek.id,penyewa
+R,3,,tanpanama@komplek.id,pemilik
+R,4,Tanpa Email,,penyewa
+R,5,Email Rusak,bukan-email,pemilik
+R,6,Tanpa Peran,tanpaperan@komplek.id,
+R,7,Peran Tidak Dikenal,peranasing@komplek.id,juragan
+S,8,Rumah Kembar Satu,kembarsatu@komplek.id,pemilik
+S,8,Rumah Kembar Dua,kembardua@komplek.id,penyewa
+T,9,Email Kembar Satu,kembar@komplek.id,pemilik
+T,10,Email Kembar Dua,kembar@komplek.id,penyewa
+U,11,Kolom Kurang,kolomkurang@komplek.id
+V,12,Sudah Punya Akun,sudah@komplek.id,pemilik

@@ -102,7 +102,23 @@ export const ACTION = {
 	 * `manageJobs` records: a list is only useful to whoever may act on it. That reasoning does not
 	 * survive here, because this spec asks for two different sets of people. See `PERMISSIONS`.
 	 */
-	readAllComplaints: 'readAllComplaints'
+	readAllComplaints: 'readAllComplaints',
+	/**
+	 * Uploading a CSV of houses and their residents, reading the preview of it, and confirming the
+	 * import that writes the lot. See `src/lib/server/services/import/resident-csv.ts`.
+	 *
+	 * One action for the preview and the write, the reasoning `manageJobs` records: a preview is only
+	 * useful to whoever may press the button under it. It is `superuser`'s, by the same reading that
+	 * put `manageUnits` and `manageOccupancies` there — one confirmed import writes the house register
+	 * and creates the accounts of the people in it, which is both halves of what `CONTEXT.md` puts on
+	 * Superuser ("Unit dan Masa Huni", and who exists at all).
+	 *
+	 * It is an action of its own rather than a use of `manageUnits` and `manageOccupancies` together
+	 * because it does something neither of them does: it creates accounts. Answering "may this person
+	 * import a file" by asking two other questions would also mean that a later spec narrowing either
+	 * of them silently narrows this.
+	 */
+	importResidents: 'importResidents'
 } as const;
 
 /** One of the actions above. */
@@ -165,7 +181,8 @@ const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.manageOccupancies]: new Set([ROLE.superuser]),
 	[ACTION.managePosts]: new Set([ROLE.admin]),
 	[ACTION.handleComplaints]: new Set([ROLE.admin]),
-	[ACTION.readAllComplaints]: new Set([ROLE.admin, ROLE.superuser])
+	[ACTION.readAllComplaints]: new Set([ROLE.admin, ROLE.superuser]),
+	[ACTION.importResidents]: new Set([ROLE.superuser])
 };
 
 /**
