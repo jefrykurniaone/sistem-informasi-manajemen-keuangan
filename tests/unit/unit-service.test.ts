@@ -14,6 +14,7 @@ import {
 	deactivateUnit,
 	getUnit,
 	listUnits,
+	needsPrimaryOccupant,
 	reactivateUnit,
 	UnitConflictError,
 	UnitNotFoundError,
@@ -33,6 +34,21 @@ const testDb = testDatabase();
 
 const START = '2026-01-01T00:00:00.000Z';
 const STARTED_ON = '2026-01-01';
+
+/**
+ * The instant every read in this file happens at, and therefore the day `listUnits` and `getUnit`
+ * decide "living here now" against. It is months after `STARTED_ON` so that a fixture ending on
+ * `STARTED_ON` really has ended, and years before `FUTURE_END` so that one ending there has not.
+ *
+ * Every call below passes this explicitly. `getUnit` defaults its clock to `systemClock` — it has a
+ * caller outside this ticket's `writes:` that cannot pass one — and a test that leaned on that
+ * default would quietly start reading the real date and would answer differently depending on the
+ * day it ran.
+ */
+const READ_CLOCK = new FakeClock('2026-06-01T12:00:00.000Z');
+
+/** An end date that has been written but has not arrived, as of `READ_CLOCK`. */
+const FUTURE_END = '2027-12-31';
 
 /** Makes every block this file writes different from every other one, across every test. */
 let sequence = 0;
@@ -95,7 +111,7 @@ async function insertUnitRow(
 async function insertOccupancy(
 	unitId: string,
 	residentId: string,
-	overrides: Partial<{ endedOn: string }> = {}
+	overrides: Partial<{ endedOn: string; isPrimaryOccupant: boolean }> = {}
 ): Promise<void> {
 	await testDb.db.insert(occupancies).values({
 		unitId,
@@ -103,6 +119,7 @@ async function insertOccupancy(
 		role: OCCUPANCY_ROLE.owner,
 		startedOn: STARTED_ON,
 		endedOn: overrides.endedOn ?? null,
+		isPrimaryOccupant: overrides.isPrimaryOccupant ?? false,
 		createdAt: new Date(START)
 	});
 }
@@ -111,7 +128,7 @@ describe('listUnits', () => {
 	it('refuses a caller who is not a superuser', async () => {
 		const residentId = await insertUser('Warga Penasaran');
 
-		await expect(listUnits(testDb.db, { actorId: residentId })).rejects.toThrow(
+		await expect(listUnits(testDb.db, READ_CLOCK, { actorId: residentId })).rejects.toThrow(
 			PermissionDeniedError
 		);
 	});
@@ -123,8 +140,11 @@ describe('listUnits', () => {
 		await insertUnitRow({ block: activeBlock, number: '1' });
 		await insertUnitRow({ block: inactiveBlock, number: '1', isActive: false });
 
-		const defaultPage = await listUnits(testDb.db, { actorId: superuserId, search: activeBlock });
-		const inactivePage = await listUnits(testDb.db, {
+		const defaultPage = await listUnits(testDb.db, READ_CLOCK, {
+			actorId: superuserId,
+			search: activeBlock
+		});
+		const inactivePage = await listUnits(testDb.db, READ_CLOCK, {
 			actorId: superuserId,
 			search: inactiveBlock
 		});
@@ -138,7 +158,7 @@ describe('listUnits', () => {
 		const inactiveBlock = unique('B');
 		await insertUnitRow({ block: inactiveBlock, number: '1', isActive: false });
 
-		const filtered = await listUnits(testDb.db, {
+		const filtered = await listUnits(testDb.db, READ_CLOCK, {
 			actorId: superuserId,
 			search: inactiveBlock,
 			includeInactive: true
@@ -152,8 +172,8 @@ describe('listUnits', () => {
 		const block = unique('SRCH');
 		await insertUnitRow({ block, number: '77' });
 
-		const byBlock = await listUnits(testDb.db, { actorId: superuserId, search: block });
-		const byNumber = await listUnits(testDb.db, { actorId: superuserId, search: '77' });
+		const byBlock = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
+		const byNumber = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: '77' });
 
 		expect(byBlock.units.map((row) => row.block)).toContain(block);
 		expect(byNumber.units.some((row) => row.block === block && row.number === '77')).toBe(true);
@@ -166,13 +186,13 @@ describe('listUnits', () => {
 		await insertUnitRow({ block, number: '2' });
 		await insertUnitRow({ block, number: '3' });
 
-		const firstPage = await listUnits(testDb.db, {
+		const firstPage = await listUnits(testDb.db, READ_CLOCK, {
 			actorId: superuserId,
 			search: block,
 			page: 1,
 			pageSize: 2
 		});
-		const secondPage = await listUnits(testDb.db, {
+		const secondPage = await listUnits(testDb.db, READ_CLOCK, {
 			actorId: superuserId,
 			search: block,
 			page: 2,
@@ -194,9 +214,121 @@ describe('listUnits', () => {
 		await insertOccupancy(unitId, staying);
 		await insertOccupancy(unitId, moved, { endedOn: STARTED_ON });
 
-		const page = await listUnits(testDb.db, { actorId: superuserId, search: block });
+		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
 
 		expect(page.units.find((row) => row.id === unitId)?.activeOccupantCount).toBe(1);
+	});
+
+	it('says a unit has a primary occupant while that occupancy is still running', async () => {
+		const superuserId = await insertSuperuser('Pengurus Penanggung Jawab Ada');
+		const block = unique('PJ');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Bertanggung Jawab'), {
+			isPrimaryOccupant: true
+		});
+
+		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
+
+		const row = page.units.find((unit) => unit.id === unitId);
+		expect(row).toMatchObject({ hasPrimaryOccupant: true });
+		expect(row && needsPrimaryOccupant(row)).toBe(false);
+	});
+
+	it('flags an active unit that has occupants but nobody responsible for its invoices', async () => {
+		const superuserId = await insertSuperuser('Pengurus Penanggung Jawab Kosong');
+		const block = unique('NOPJ');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Tanpa Tanggung Jawab'));
+
+		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
+
+		const row = page.units.find((unit) => unit.id === unitId);
+		expect(row).toMatchObject({ activeOccupantCount: 1, hasPrimaryOccupant: false });
+		expect(row && needsPrimaryOccupant(row)).toBe(true);
+	});
+
+	it('does not count a primary occupant whose occupancy has already ended', async () => {
+		const superuserId = await insertSuperuser('Pengurus Penanggung Jawab Pergi');
+		const block = unique('PJEND');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Bertanggung Jawab Dulu'), {
+			endedOn: STARTED_ON,
+			isPrimaryOccupant: true
+		});
+
+		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
+
+		expect(page.units.find((unit) => unit.id === unitId)).toMatchObject({
+			activeOccupantCount: 0,
+			hasPrimaryOccupant: false
+		});
+	});
+
+	it('still counts someone whose end date has been written but has not arrived', async () => {
+		// The defect this guards: reading "living here now" as `ended_on is null` reported an empty
+		// house while the person was still in it for another eighteen months.
+		const superuserId = await insertSuperuser('Pengurus Pindah Tahun Depan');
+		const block = unique('NANTI');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Pindah Tahun Depan'), {
+			endedOn: FUTURE_END
+		});
+
+		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
+
+		expect(page.units.find((unit) => unit.id === unitId)?.activeOccupantCount).toBe(1);
+	});
+
+	it('stops counting that same person once the day they leave has passed', async () => {
+		const superuserId = await insertSuperuser('Pengurus Sudah Lewat');
+		const block = unique('LEWAT');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Sudah Pindah'), {
+			endedOn: FUTURE_END
+		});
+
+		const afterTheyLeft = await listUnits(testDb.db, new FakeClock('2028-01-01T00:00:00.000Z'), {
+			actorId: superuserId,
+			search: block
+		});
+
+		expect(afterTheyLeft.units.find((unit) => unit.id === unitId)?.activeOccupantCount).toBe(0);
+	});
+
+	it('counts a primary occupant with a future end date while reporting the slot as free', async () => {
+		// The two halves answer differently here on purpose, and this is the case that separates
+		// them: the person is still living there, so they are counted; the partial index has already
+		// released the slot, so the unit is flagged as needing a successor while there is time to
+		// name one.
+		const superuserId = await insertSuperuser('Pengurus Dua Jawaban');
+		const block = unique('DUA');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Penanggung Jawab Pamit'), {
+			endedOn: FUTURE_END,
+			isPrimaryOccupant: true
+		});
+
+		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
+
+		const row = page.units.find((unit) => unit.id === unitId);
+		expect(row).toMatchObject({ activeOccupantCount: 1, hasPrimaryOccupant: false });
+		expect(row && needsPrimaryOccupant(row)).toBe(true);
+	});
+
+	it('leaves a deactivated unit with no primary occupant unflagged, because it is not in service', async () => {
+		const superuserId = await insertSuperuser('Pengurus Unit Nonaktif');
+		const block = unique('MATI');
+		const unitId = await insertUnitRow({ block, number: '1', isActive: false });
+
+		const page = await listUnits(testDb.db, READ_CLOCK, {
+			actorId: superuserId,
+			search: block,
+			includeInactive: true
+		});
+
+		const row = page.units.find((unit) => unit.id === unitId);
+		expect(row).toMatchObject({ hasPrimaryOccupant: false });
+		expect(row && needsPrimaryOccupant(row)).toBe(false);
 	});
 });
 
@@ -205,24 +337,42 @@ describe('getUnit', () => {
 		const residentId = await insertUser('Warga Tak Berhak Lihat');
 		const unitId = await insertUnitRow();
 
-		await expect(getUnit(testDb.db, residentId, unitId)).rejects.toThrow(PermissionDeniedError);
+		await expect(getUnit(testDb.db, residentId, unitId, READ_CLOCK)).rejects.toThrow(
+			PermissionDeniedError
+		);
 	});
 
 	it('throws UnitNotFoundError for an id that names no unit', async () => {
 		const superuserId = await insertSuperuser('Pengurus Cari Unit');
 
-		await expect(getUnit(testDb.db, superuserId, randomUUID())).rejects.toThrow(UnitNotFoundError);
+		await expect(getUnit(testDb.db, superuserId, randomUUID(), READ_CLOCK)).rejects.toThrow(
+			UnitNotFoundError
+		);
 	});
 
-	it('returns the unit together with its active occupant count', async () => {
+	it('returns the unit together with its occupancy summary', async () => {
 		const superuserId = await insertSuperuser('Pengurus Detail Unit');
 		const unitId = await insertUnitRow();
 		const residentId = await insertResident('Warga Detail');
-		await insertOccupancy(unitId, residentId);
+		await insertOccupancy(unitId, residentId, { isPrimaryOccupant: true });
 
-		const detail = await getUnit(testDb.db, superuserId, unitId);
+		const detail = await getUnit(testDb.db, superuserId, unitId, READ_CLOCK);
 
-		expect(detail).toMatchObject({ id: unitId, activeOccupantCount: 1 });
+		expect(detail).toMatchObject({
+			id: unitId,
+			activeOccupantCount: 1,
+			hasPrimaryOccupant: true
+		});
+	});
+
+	it('reports a unit nobody lives in as empty rather than leaving the summary out', async () => {
+		const superuserId = await insertSuperuser('Pengurus Unit Kosong');
+		const unitId = await insertUnitRow();
+
+		expect(await getUnit(testDb.db, superuserId, unitId, READ_CLOCK)).toMatchObject({
+			activeOccupantCount: 0,
+			hasPrimaryOccupant: false
+		});
 	});
 });
 
@@ -282,7 +432,7 @@ describe('createUnit', () => {
 			createUnit(testDb.db, new FakeClock(START), { actorId: residentId, block, number: '1' })
 		).rejects.toThrow(PermissionDeniedError);
 
-		const remaining = await listUnits(testDb.db, {
+		const remaining = await listUnits(testDb.db, READ_CLOCK, {
 			actorId: await insertSuperuser('Pengurus Pemeriksa'),
 			search: block
 		});
@@ -302,7 +452,7 @@ describe('createUnit', () => {
 
 		await expect(failure).rejects.toThrow(UnitConflictError);
 		await expect(failure).rejects.toMatchObject({ block, number: '1' });
-		const page = await listUnits(testDb.db, {
+		const page = await listUnits(testDb.db, READ_CLOCK, {
 			actorId: superuserId,
 			search: block,
 			includeInactive: true
