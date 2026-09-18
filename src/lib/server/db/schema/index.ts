@@ -1,13 +1,18 @@
 import { bigint, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import type { Rupiah } from '$lib/money';
 
+export * from './allocation';
 export * from './auth';
 export * from './audit';
 export * from './authz';
 export * from './complaint';
+export * from './dues-rate';
 export * from './email';
+export * from './exemption';
 export * from './invitation';
+export * from './invoice';
 export * from './occupancy';
+export * from './payment';
 export * from './post';
 export * from './registration';
 export * from './resident';
