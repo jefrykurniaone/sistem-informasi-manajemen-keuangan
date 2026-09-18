@@ -195,6 +195,9 @@ Kata yang bukan benda dan tidak punya tabel:
 | status Post draf, terbit, dan arsip | `draft`, `published`, `archived` |
 | status Keluhan baru, ditinjau, dikerjakan, selesai, ditolak, dan ditarik | `new`, `reviewing`, `working`, `resolved`, `rejected`, `withdrawn` |
 | visibilitas Keluhan pribadi dan umum | `private`, `public` |
+| tipe Kategori Kas masuk dan keluar | `income`, `expense` |
+| status Periode terbuka dan terkunci | `open`, `locked` |
+| kategori sistem Iuran warga dan saldo awal | `dues`, `opening-balance` |
 
 **`Rupiah` tidak diterjemahkan.** Ia satuan mata uang sungguhan, bukan istilah domain lokal, dan
 menamainya `Money` menghapus fakta bahwa ia bilangan bulat tanpa satuan pecahan. Lihat
