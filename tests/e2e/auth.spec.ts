@@ -82,6 +82,10 @@ async function register(page: Page, email: string, password = PASSWORD): Promise
 	await page.goto('/register');
 	await page.getByLabel('Nama').fill('Warga Uji');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
+	// The claimed house the form asks for since #21. Nothing here checks it against `units`, and a
+	// registration nobody approves grants nothing, so this spec's flows are unaffected by its value.
+	await page.getByLabel('Blok rumah').fill('E2E');
+	await page.getByLabel('Nomor rumah').fill('0');
 	await page.getByLabel('Kata sandi', { exact: true }).fill(password);
 	await page.getByLabel('Ulangi kata sandi').fill(password);
 	await page.getByRole('button', { name: 'Daftar' }).click();
