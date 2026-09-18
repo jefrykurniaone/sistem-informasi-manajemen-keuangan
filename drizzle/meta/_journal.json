@@ -57,6 +57,13 @@
 			"when": 1789705494972,
 			"tag": "0007_complaint",
 			"breakpoints": true
+		},
+		{
+			"idx": 8,
+			"version": "7",
+			"when": 1789737057516,
+			"tag": "0008_dues",
+			"breakpoints": true
 		}
 	]
 }

@@ -52,7 +52,8 @@ Kewajiban satu Unit untuk satu Periode, dengan besaran yang dibekukan saat terbi
 _Hindari_: bill, invoice, iuran — "iuran" adalah konsepnya, Tagihan adalah dokumennya
 
 **Pembayaran**:
-Satu setoran uang dari seorang Warga, dengan bukti dan status menunggu, terverifikasi, atau ditolak.
+Satu setoran uang dari seorang Warga, dengan cara bayar transfer atau tunai, bukti, dan status
+menunggu, terverifikasi, atau ditolak.
 _Hindari_: setoran, transfer
 
 **Alokasi**:
@@ -164,7 +165,7 @@ kolom dari nama properti lewat `casing: 'snake_case'`, jadi nama kolom tidak dit
 | Tagihan | `Invoice` | `invoices` |
 | Pembayaran | `Payment` | `payments` |
 | Alokasi | `Allocation` | `allocations` |
-| Saldo Titipan | `CreditBalance` | `credit_balances` |
+| Saldo Titipan | `CreditBalance` | dihitung, tanpa tabel |
 | Pembebasan | `Exemption` | `exemptions` |
 | Transaksi Kas | `CashTransaction` | `cash_transactions` |
 | Kategori Kas | `CashCategory` | `cash_categories` |
@@ -185,6 +186,9 @@ Kata yang bukan benda dan tidak punya tabel:
 | --- | --- |
 | iuran (konsepnya, bukan dokumennya) | `dues` |
 | menunggak | `overdue` |
+| status Pembayaran menunggu, terverifikasi, dan ditolak | `pending`, `verified`, `rejected` |
+| cara bayar transfer dan tunai | `transfer`, `cash` |
+| pembatalan Tagihan | `void` |
 | komplek | `complex` |
 | peran Warga, Admin, Superuser | `resident`, `admin`, `superuser` |
 | tipe Post kegiatan dan pengumuman | `event`, `announcement` |
