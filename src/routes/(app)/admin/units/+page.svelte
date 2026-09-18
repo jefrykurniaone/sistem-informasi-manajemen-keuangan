@@ -83,9 +83,22 @@
 				<p class="text-sm text-muted-foreground">
 					{m.adminUnits_tableOccupants()}: {unit.activeOccupantCount}
 				</p>
-				<a class="text-sm underline underline-offset-2" href={resolve(`/admin/units/${unit.id}`)}>
-					{m.adminUnits_detailLink()}
-				</a>
+				{#if unit.needsPrimaryOccupant}
+					<p class="text-sm font-medium text-destructive" role="alert">
+						{m.adminOccupancies_needsPrimaryOccupant()}
+					</p>
+				{/if}
+				<div class="flex flex-wrap gap-4">
+					<a class="text-sm underline underline-offset-2" href={resolve(`/admin/units/${unit.id}`)}>
+						{m.adminUnits_detailLink()}
+					</a>
+					<a
+						class="text-sm underline underline-offset-2"
+						href={resolve(`/admin/units/${unit.id}/occupancies`)}
+					>
+						{m.adminOccupancies_historyLink()}
+					</a>
+				</div>
 			</section>
 		{/each}
 

@@ -52,7 +52,21 @@ export const ACTION = {
 	 * here changes the house register the rest of the application anchors invoices and cash
 	 * transactions to.
 	 */
-	manageUnits: 'manageUnits'
+	manageUnits: 'manageUnits',
+	/**
+	 * Recording a Masa Huni, ending one, and marking which one is the Penanggung Jawab. See
+	 * `src/lib/server/services/occupancy/index.ts`. `CONTEXT.md` puts "Unit dan Masa Huni" on
+	 * Superuser, so this is a superuser-only action like the three above it.
+	 *
+	 * It is also what "admin melihat seluruh riwayat Unit" means in
+	 * `spec-warga-unit-v1.md`: `unitVisibilityFor` in
+	 * `src/lib/server/services/occupancy/visibility.ts` answers "the whole history" to whoever holds
+	 * this action, and "only the days I lived here" to everyone else. Holding the right to change
+	 * the occupancy record and the right to read all of it are the same right — someone who may
+	 * reassign a house can already see who lived in it, and splitting them would let a screen show
+	 * less than the form beside it accepts.
+	 */
+	manageOccupancies: 'manageOccupancies'
 } as const;
 
 /** One of the actions above. */
@@ -67,7 +81,8 @@ export type Action = (typeof ACTION)[keyof typeof ACTION];
 const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.manageRoles]: new Set([ROLE.superuser]),
 	[ACTION.manageJobs]: new Set([ROLE.superuser]),
-	[ACTION.manageUnits]: new Set([ROLE.superuser])
+	[ACTION.manageUnits]: new Set([ROLE.superuser]),
+	[ACTION.manageOccupancies]: new Set([ROLE.superuser])
 };
 
 /**

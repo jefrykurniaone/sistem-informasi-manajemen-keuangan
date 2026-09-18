@@ -8,6 +8,7 @@ import {
 	createUnit,
 	DEFAULT_UNIT_PAGE_SIZE,
 	listUnits,
+	needsPrimaryOccupant,
 	UnitConflictError
 } from '$lib/server/services/unit';
 import type { Actions, PageServerLoad } from './$types';
@@ -39,7 +40,18 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			search,
 			includeInactive
 		});
-		return { ...result, search: search ?? '', includeInactive };
+		// `needsPrimaryOccupant` is decided here rather than in the template because it is a rule, not
+		// a rendering choice — see the function's own comment in `$lib/server/services/unit`. A
+		// component may not import from `$lib/server` at all, so the answer travels as data.
+		return {
+			...result,
+			units: result.units.map((unit) => ({
+				...unit,
+				needsPrimaryOccupant: needsPrimaryOccupant(unit)
+			})),
+			search: search ?? '',
+			includeInactive
+		};
 	} catch (caught) {
 		throwAsRouteError(caught);
 	}

@@ -14,6 +14,7 @@ import {
 	deactivateUnit,
 	getUnit,
 	listUnits,
+	needsPrimaryOccupant,
 	reactivateUnit,
 	UnitConflictError,
 	UnitNotFoundError,
@@ -95,7 +96,7 @@ async function insertUnitRow(
 async function insertOccupancy(
 	unitId: string,
 	residentId: string,
-	overrides: Partial<{ endedOn: string }> = {}
+	overrides: Partial<{ endedOn: string; isPrimaryOccupant: boolean }> = {}
 ): Promise<void> {
 	await testDb.db.insert(occupancies).values({
 		unitId,
@@ -103,6 +104,7 @@ async function insertOccupancy(
 		role: OCCUPANCY_ROLE.owner,
 		startedOn: STARTED_ON,
 		endedOn: overrides.endedOn ?? null,
+		isPrimaryOccupant: overrides.isPrimaryOccupant ?? false,
 		createdAt: new Date(START)
 	});
 }
@@ -198,6 +200,67 @@ describe('listUnits', () => {
 
 		expect(page.units.find((row) => row.id === unitId)?.activeOccupantCount).toBe(1);
 	});
+
+	it('says a unit has a primary occupant while that occupancy is still running', async () => {
+		const superuserId = await insertSuperuser('Pengurus Penanggung Jawab Ada');
+		const block = unique('PJ');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Bertanggung Jawab'), {
+			isPrimaryOccupant: true
+		});
+
+		const page = await listUnits(testDb.db, { actorId: superuserId, search: block });
+
+		const row = page.units.find((unit) => unit.id === unitId);
+		expect(row).toMatchObject({ hasPrimaryOccupant: true });
+		expect(row && needsPrimaryOccupant(row)).toBe(false);
+	});
+
+	it('flags an active unit that has occupants but nobody responsible for its invoices', async () => {
+		const superuserId = await insertSuperuser('Pengurus Penanggung Jawab Kosong');
+		const block = unique('NOPJ');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Tanpa Tanggung Jawab'));
+
+		const page = await listUnits(testDb.db, { actorId: superuserId, search: block });
+
+		const row = page.units.find((unit) => unit.id === unitId);
+		expect(row).toMatchObject({ activeOccupantCount: 1, hasPrimaryOccupant: false });
+		expect(row && needsPrimaryOccupant(row)).toBe(true);
+	});
+
+	it('does not count a primary occupant whose occupancy has already ended', async () => {
+		const superuserId = await insertSuperuser('Pengurus Penanggung Jawab Pergi');
+		const block = unique('PJEND');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Bertanggung Jawab Dulu'), {
+			endedOn: STARTED_ON,
+			isPrimaryOccupant: true
+		});
+
+		const page = await listUnits(testDb.db, { actorId: superuserId, search: block });
+
+		expect(page.units.find((unit) => unit.id === unitId)).toMatchObject({
+			activeOccupantCount: 0,
+			hasPrimaryOccupant: false
+		});
+	});
+
+	it('leaves a deactivated unit with no primary occupant unflagged, because it is not in service', async () => {
+		const superuserId = await insertSuperuser('Pengurus Unit Nonaktif');
+		const block = unique('MATI');
+		const unitId = await insertUnitRow({ block, number: '1', isActive: false });
+
+		const page = await listUnits(testDb.db, {
+			actorId: superuserId,
+			search: block,
+			includeInactive: true
+		});
+
+		const row = page.units.find((unit) => unit.id === unitId);
+		expect(row).toMatchObject({ hasPrimaryOccupant: false });
+		expect(row && needsPrimaryOccupant(row)).toBe(false);
+	});
 });
 
 describe('getUnit', () => {
@@ -214,15 +277,29 @@ describe('getUnit', () => {
 		await expect(getUnit(testDb.db, superuserId, randomUUID())).rejects.toThrow(UnitNotFoundError);
 	});
 
-	it('returns the unit together with its active occupant count', async () => {
+	it('returns the unit together with its occupancy summary', async () => {
 		const superuserId = await insertSuperuser('Pengurus Detail Unit');
 		const unitId = await insertUnitRow();
 		const residentId = await insertResident('Warga Detail');
-		await insertOccupancy(unitId, residentId);
+		await insertOccupancy(unitId, residentId, { isPrimaryOccupant: true });
 
 		const detail = await getUnit(testDb.db, superuserId, unitId);
 
-		expect(detail).toMatchObject({ id: unitId, activeOccupantCount: 1 });
+		expect(detail).toMatchObject({
+			id: unitId,
+			activeOccupantCount: 1,
+			hasPrimaryOccupant: true
+		});
+	});
+
+	it('reports a unit nobody lives in as empty rather than leaving the summary out', async () => {
+		const superuserId = await insertSuperuser('Pengurus Unit Kosong');
+		const unitId = await insertUnitRow();
+
+		expect(await getUnit(testDb.db, superuserId, unitId)).toMatchObject({
+			activeOccupantCount: 0,
+			hasPrimaryOccupant: false
+		});
 	});
 });
 

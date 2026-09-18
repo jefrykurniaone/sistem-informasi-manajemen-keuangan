@@ -1,4 +1,4 @@
-import { and, asc, count, eq, ilike, inArray, isNull, or } from 'drizzle-orm';
+import { and, asc, count, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { Database } from '../../db';
 import { occupancies } from '../../db/schema/occupancy';
 import { units, type Unit } from '../../db/schema/unit';
@@ -53,26 +53,51 @@ export async function findUnitById(db: Database, unitId: string): Promise<Unit |
 	return row;
 }
 
+/** What the admin screens need to know about one unit's running occupancies. */
+export interface OccupancySummary {
+	/** How many occupancies of the unit are still running. */
+	readonly activeOccupantCount: number;
+	/** Whether one of those running occupancies is the unit's primary occupant. */
+	readonly hasPrimaryOccupant: boolean;
+}
+
 /**
- * How many occupancies of each unit in `unitIds` are still running (`ended_on is null`) — "jumlah
- * penghuni aktifnya" on the admin screen. A unit with no running occupancy is absent from the
- * result rather than present with `0`; the caller defaults a missing entry to `0`.
+ * The running occupancies (`ended_on is null`) of each unit in `unitIds`, summarised — "jumlah
+ * penghuni aktifnya" and whether anyone is currently the Penanggung Jawab. A unit with no running
+ * occupancy is absent from the result rather than present with zeroes; the caller defaults a missing
+ * entry to none.
+ *
+ * **Both halves read "running" as `ended_on is null`**, the same predicate
+ * `occupancies_primary_occupant_unique` uses. So `hasPrimaryOccupant` means exactly "the slot the
+ * database guards is filled", and a primary occupant whose end date has been written but has not
+ * arrived yet counts as gone here. That is deliberate and it is the conservative direction: the unit
+ * shows up on the admin list as needing a primary occupant while there is still time to name the
+ * successor, rather than on the day the invoices go out with nobody to address them to.
  */
-export async function countActiveOccupants(
+export async function summarizeActiveOccupancies(
 	db: Database,
 	unitIds: readonly string[]
-): Promise<ReadonlyMap<string, number>> {
+): Promise<ReadonlyMap<string, OccupancySummary>> {
 	if (unitIds.length === 0) {
 		return new Map();
 	}
 
 	const rows = await db
-		.select({ unitId: occupancies.unitId, value: count() })
+		.select({
+			unitId: occupancies.unitId,
+			activeOccupantCount: count(),
+			hasPrimaryOccupant: sql<boolean>`bool_or(${occupancies.isPrimaryOccupant})`
+		})
 		.from(occupancies)
 		.where(and(inArray(occupancies.unitId, unitIds), isNull(occupancies.endedOn)))
 		.groupBy(occupancies.unitId);
 
-	return new Map(rows.map((row) => [row.unitId, row.value]));
+	return new Map(
+		rows.map(({ unitId, activeOccupantCount, hasPrimaryOccupant }) => [
+			unitId,
+			{ activeOccupantCount, hasPrimaryOccupant }
+		])
+	);
 }
 
 /**

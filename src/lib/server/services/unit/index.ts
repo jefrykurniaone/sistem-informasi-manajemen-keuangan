@@ -4,7 +4,12 @@ import { recordAuditEntry } from '../../audit';
 import type { Database } from '../../db';
 import { units, type Unit } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
-import { countActiveOccupants, findUnitById, queryUnitsPage } from './queries';
+import {
+	findUnitById,
+	queryUnitsPage,
+	summarizeActiveOccupancies,
+	type OccupancySummary
+} from './queries';
 
 /**
  * Managing the house register — Unit — the list `spec-warga-unit-v1.md` calls the one source of
@@ -72,12 +77,24 @@ export class UnitNotFoundError extends Error {
 const UNIQUE_VIOLATION = '23505';
 
 /**
- * A unit together with how many occupancies of it are running right now — "jumlah penghuni
- * aktifnya". Shared by the list screen's rows and the detail screen's single unit, so the two
- * never drift into two slightly different shapes of the same fact.
+ * A unit together with what its running occupancies add up to — how many people live there right
+ * now, and whether one of them is the Penanggung Jawab. Shared by the list screen's rows and the
+ * detail screen's single unit, so the two never drift into two slightly different shapes of the
+ * same fact.
  */
-export interface UnitWithOccupantCount extends Unit {
-	readonly activeOccupantCount: number;
+export interface UnitWithOccupancySummary extends Unit, OccupancySummary {}
+
+/**
+ * Whether this unit is one the admin list flags as needing attention: it is still in service, yet
+ * nobody running is its primary occupant, so an invoice issued for it would have no addressee —
+ * `spec-warga-unit-v1.md` asks for exactly this to be "terlihat di daftar admin sebagai hal yang
+ * perlu dibereskan".
+ *
+ * It is decided here rather than on the screen so that the list and any later screen asking the same
+ * question cannot answer it two different ways.
+ */
+export function needsPrimaryOccupant(unit: UnitWithOccupancySummary): boolean {
+	return unit.isActive && !unit.hasPrimaryOccupant;
 }
 
 /** What the admin unit list screen asks for. */
@@ -96,7 +113,7 @@ export interface ListUnitsRequest {
 
 /** One page of the admin unit list. */
 export interface UnitListResult {
-	readonly units: readonly UnitWithOccupantCount[];
+	readonly units: readonly UnitWithOccupancySummary[];
 	readonly page: number;
 	readonly pageSize: number;
 	readonly totalCount: number;
@@ -122,7 +139,7 @@ export async function listUnits(db: Database, request: ListUnitsRequest): Promis
 	});
 
 	return {
-		units: await withOccupantCounts(db, rows),
+		units: await withOccupancySummaries(db, rows),
 		page,
 		pageSize,
 		totalCount
@@ -139,7 +156,7 @@ export async function getUnit(
 	db: Database,
 	actorId: string,
 	unitId: string
-): Promise<UnitWithOccupantCount> {
+): Promise<UnitWithOccupancySummary> {
 	await requirePermission(db, actorId, ACTION.manageUnits);
 
 	const unit = await findUnitById(db, unitId);
@@ -147,20 +164,26 @@ export async function getUnit(
 		throw new UnitNotFoundError(unitId);
 	}
 
-	const [withCount] = await withOccupantCounts(db, [unit]);
-	return withCount;
+	const [withSummary] = await withOccupancySummaries(db, [unit]);
+	return withSummary;
 }
 
-/** Attaches each unit's active occupant count, in one query regardless of how many units there are. */
-async function withOccupantCounts(
+/** What a unit with no running occupancy at all adds up to. */
+const NO_RUNNING_OCCUPANCY: OccupancySummary = Object.freeze({
+	activeOccupantCount: 0,
+	hasPrimaryOccupant: false
+});
+
+/** Attaches each unit's occupancy summary, in one query regardless of how many units there are. */
+async function withOccupancySummaries(
 	db: Database,
 	rows: readonly Unit[]
-): Promise<readonly UnitWithOccupantCount[]> {
-	const counts = await countActiveOccupants(
+): Promise<readonly UnitWithOccupancySummary[]> {
+	const summaries = await summarizeActiveOccupancies(
 		db,
 		rows.map((row) => row.id)
 	);
-	return rows.map((row) => ({ ...row, activeOccupantCount: counts.get(row.id) ?? 0 }));
+	return rows.map((row) => ({ ...row, ...(summaries.get(row.id) ?? NO_RUNNING_OCCUPANCY) }));
 }
 
 /** Who is asking, and which house they are asking to register. */
