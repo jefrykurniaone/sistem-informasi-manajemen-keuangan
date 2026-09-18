@@ -139,7 +139,39 @@ export const ACTION = {
 	 * charges. Reading the rate in force on a given day is deliberately not covered here: the issuance
 	 * job that reads it has no session at all, so `duesRateOn` takes no caller and checks nothing.
 	 */
-	manageDuesRates: 'manageDuesRates'
+	manageDuesRates: 'manageDuesRates',
+	/**
+	 * Seeing the Kategori Kas list, adding one, renaming one, changing its type, and deactivating or
+	 * reactivating one. See `src/lib/server/services/cash/category.ts`. One action for the read and
+	 * the writes, the same reasoning as `manageJobs`: the list is only useful to whoever may act on
+	 * it.
+	 *
+	 * It is `superuser`'s, which is what `docs/spec-kas-laporan-v1.md` asks for — user stories 1, 2
+	 * and 3 all begin "sebagai superuser". Categories are the vocabulary every later cash figure is
+	 * grouped by, so renaming or retiring one changes how money that has already moved is read, which
+	 * is the sentence `CONTEXT.md` uses for Superuser.
+	 *
+	 * Reading the *active* categories for a recording form is deliberately not covered here, and is
+	 * not an action at all: `listActiveCashCategories` takes no caller, because the admin who records
+	 * a Transaksi Kas (#34) must be able to fill their own form without holding a superuser-only
+	 * action. That read is guarded by whatever action the screen around it already needs.
+	 */
+	manageCashCategories: 'manageCashCategories',
+	/**
+	 * Recording the opening cash balance — the one Transaksi Kas that states how much money existed
+	 * on the day the application started being used, and reading back whether it has been recorded.
+	 * See `src/lib/server/services/cash/opening-balance.ts`. `docs/spec-kas-laporan-v1.md` puts it on
+	 * Superuser twice: user story 11, and "Saldo awal … hanya bisa dibuat superuser".
+	 *
+	 * **An action of its own rather than a use of `manageCashCategories`, although both are
+	 * superuser's today.** The reasoning `importResidents` records applies unchanged: it does
+	 * something category management does not — it writes a money row into the append-only cash book,
+	 * once, with no correction path — and answering "may this person record the opening balance" by
+	 * asking "may they manage categories" would mean that a later spec widening category management
+	 * to `admin`, which `CONTEXT.md` would allow for daily master data, silently hands every admin
+	 * the opening balance too.
+	 */
+	recordOpeningBalance: 'recordOpeningBalance'
 } as const;
 
 /** One of the actions above. */
@@ -205,7 +237,9 @@ const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.readAllComplaints]: new Set([ROLE.admin, ROLE.superuser]),
 	[ACTION.importResidents]: new Set([ROLE.superuser]),
 	[ACTION.manageInvitations]: new Set([ROLE.superuser]),
-	[ACTION.manageDuesRates]: new Set([ROLE.superuser])
+	[ACTION.manageDuesRates]: new Set([ROLE.superuser]),
+	[ACTION.manageCashCategories]: new Set([ROLE.superuser]),
+	[ACTION.recordOpeningBalance]: new Set([ROLE.superuser])
 };
 
 /**
