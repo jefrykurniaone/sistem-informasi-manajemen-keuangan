@@ -21,6 +21,7 @@ import {
 	registerEmailJobs
 } from '$lib/server/email/jobs';
 import { enqueueEmail } from '$lib/server/email/queue';
+import { INVITATION_KIND } from '$lib/server/email/templates/invitation';
 import {
 	PASSWORD_RESET_KIND,
 	passwordResetPayload
@@ -268,7 +269,7 @@ async function claimThroughOpenTransaction(
 describe('applicationEmailTemplates', () => {
 	it('carries exactly the kinds this application queues, and renders each one', () => {
 		expect(Object.keys(applicationEmailTemplates).sort()).toEqual(
-			[VERIFY_EMAIL_KIND, PASSWORD_RESET_KIND].sort()
+			[VERIFY_EMAIL_KIND, PASSWORD_RESET_KIND, INVITATION_KIND].sort()
 		);
 		expect(
 			applicationEmailTemplates[VERIFY_EMAIL_KIND](
