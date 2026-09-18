@@ -44,7 +44,15 @@ export const ACTION = {
 	 * emails — so it is held to the same role as anything else that changes what has already
 	 * happened.
 	 */
-	manageJobs: 'manageJobs'
+	manageJobs: 'manageJobs',
+	/**
+	 * Seeing the admin list of Unit, adding a new one, and deactivating or reactivating one. See
+	 * `src/lib/server/services/unit/index.ts`. One action for the read and the writes, same
+	 * reasoning as `manageJobs`: the list is only useful to whoever may act on it, and every write
+	 * here changes the house register the rest of the application anchors invoices and cash
+	 * transactions to.
+	 */
+	manageUnits: 'manageUnits'
 } as const;
 
 /** One of the actions above. */
@@ -58,7 +66,8 @@ export type Action = (typeof ACTION)[keyof typeof ACTION];
  */
 const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.manageRoles]: new Set([ROLE.superuser]),
-	[ACTION.manageJobs]: new Set([ROLE.superuser])
+	[ACTION.manageJobs]: new Set([ROLE.superuser]),
+	[ACTION.manageUnits]: new Set([ROLE.superuser])
 };
 
 /**
