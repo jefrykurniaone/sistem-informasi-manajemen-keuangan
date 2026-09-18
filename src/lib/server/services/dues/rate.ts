@@ -64,6 +64,36 @@ import { currentDay } from '../occupancy/visibility';
  * are already billed would claim them without changing a single frozen `invoices.amount` — the
  * numbers would stay right while the history explaining them went wrong.
  *
+ * ## Inserting a rate is guarded too
+ *
+ * A window ends where the next one begins, so **inserting** a rate shortens its predecessor, and a
+ * rate locked by a billed Periode can be unlocked by handing that Periode to somebody else. With one
+ * rate running from January and February already billed, writing a second rate from 1 February moves
+ * February out of the first rate's window: the first rate is suddenly editable and deletable, and it
+ * is the rate that actually priced those bills. `createDuesRate` therefore refuses a new rate whose
+ * window would contain an already-billed Periode, which is the same rule stated from the other side:
+ * no billed Periode ever changes owner.
+ *
+ * ## A start date that has not arrived is never "used"
+ *
+ * Every one of these checks is skipped when the date being judged is later than today. A rate that
+ * has not started cannot have priced anything: the only reader of a rate is `duesRateOn`, and
+ * issuance asks it about a day that has arrived. Without this, the conservative shared-month rule
+ * would lock a rise that is still only scheduled — a rate set to start on the 15th would be refused
+ * as "used" because that month's Tagihan were issued on the 1st, by the rate that was already
+ * running — and `docs/spec-iuran-v1.md`'s "mengubah tarif yang belum berlaku" would be impossible.
+ *
+ * ## What the issuance ticket has to do about locking
+ *
+ * `updateDuesRate` and `deleteDuesRate` take `for update` on the rate rows and then read `invoices`
+ * without a lock, which is enough while nothing writes `invoices`. It stops being enough the moment
+ * #26 exists: under `read committed` an issuance transaction that has read its rate and not yet
+ * committed its Tagihan is invisible here, so a delete could pass the in-use test and commit between
+ * the two. **#26 must read its rate with `for('share')` inside the same transaction that inserts the
+ * Tagihan**, which makes this module's `for update` wait for it. That lock is not taken by
+ * `duesRateOn` itself, because the history screen and every other reader would then queue behind a
+ * writer for an answer they only display.
+ *
  * ## Today
  *
  * "Which rate is in force now" reads the day from `currentDay(clock)` in
@@ -279,8 +309,7 @@ export async function listDuesRates(
 	const inForceId = rows.findLast((row) => compareText(row.effectiveFrom, today) <= 0)?.id;
 
 	const rates = rows.map((row) => {
-		const window = windows.get(row.id);
-		const usedSince = window ? usedSincePeriodOf(window, periods) : undefined;
+		const usedSince = usedSincePeriodFor(row, windows.get(row.id), periods, today);
 		return {
 			...row,
 			isInForce: row.id === inForceId,
@@ -290,6 +319,23 @@ export async function listDuesRates(
 	});
 
 	return { rates: rates.reverse(), today };
+}
+
+/**
+ * What the history screen reports about one rate's billing — the same answer `assertNeverBilled` and
+ * the arrival exemption give the writes, so that the screen never offers an edit the service refuses,
+ * and never hides one it would accept.
+ */
+function usedSincePeriodFor(
+	rate: DuesRatePlacement,
+	window: DuesRateWindow | undefined,
+	billedPeriods: readonly string[],
+	today: string
+): string | undefined {
+	if (!window || !hasArrived(rate.effectiveFrom, today)) {
+		return undefined;
+	}
+	return usedSincePeriodOf(window, billedPeriods);
 }
 
 /** Who is asking, and which rate they are setting. */
@@ -305,11 +351,13 @@ export interface CreateDuesRateRequest {
 /**
  * Sets a new rate.
  *
- * Nothing here refuses a start date in the past: backdating is how a rise agreed late is recorded,
- * and the frozen `invoices.amount` of everything already issued is untouched by it either way.
+ * A start date in the past is allowed on its own — backdating is how a rise agreed late is recorded
+ * — but not when inserting the rate would take an already-billed Periode away from the rate that
+ * priced it. See "Inserting a rate is guarded too" in this module's doc comment.
  *
  * @throws {PermissionDeniedError} when `actorId` does not hold `superuser`.
  * @throws {TypeError} when `amount` is negative or `effectiveFrom` is not a real `YYYY-MM-DD` day.
+ * @throws {DuesRateInUseError} naming the rate that owns the billed Periode this one would claim.
  * @throws {DuesRateConflictError} when another rate already starts on that day.
  */
 export async function createDuesRate(
@@ -323,6 +371,12 @@ export async function createDuesRate(
 	try {
 		return await db.transaction(async (transaction) => {
 			await requirePermission(transaction, request.actorId, ACTION.manageDuesRates);
+
+			const today = currentDay(clock);
+			if (hasArrived(request.effectiveFrom, today)) {
+				const { rows, periods } = await loadCalendarForWrite(transaction);
+				assertClaimsNothingBilled(rows, periods, request.effectiveFrom);
+			}
 
 			const [row] = await transaction
 				.insert(duesRates)
@@ -367,7 +421,8 @@ export interface UpdateDuesRateRequest {
  *
  * Both the window the rate holds today and the window it would hold afterwards are checked — see
  * this module's doc comment for why moving a rate backwards over billed months is the same mistake
- * as editing a used one.
+ * as editing a used one. Each check is skipped for a date that has not arrived, because a rate that
+ * starts later than today has priced nothing.
  *
  * @throws {PermissionDeniedError} when `actorId` does not hold `superuser`.
  * @throws {TypeError} when `amount` is negative or `effectiveFrom` is not a real `YYYY-MM-DD` day.
@@ -388,15 +443,21 @@ export async function updateDuesRate(
 			await requirePermission(transaction, request.actorId, ACTION.manageDuesRates);
 
 			const { existing, rows, periods } = await loadForWrite(transaction, request.duesRateId);
+			assertDayIsFree(rows, request.duesRateId, request.effectiveFrom);
 
-			assertNeverBilled(rows, periods, request.duesRateId);
-			assertNeverBilled(
-				rows.map((row) =>
-					row.id === request.duesRateId ? { ...row, effectiveFrom: request.effectiveFrom } : row
-				),
-				periods,
-				request.duesRateId
-			);
+			const today = currentDay(clock);
+			if (hasArrived(existing.effectiveFrom, today)) {
+				assertNeverBilled(rows, periods, request.duesRateId);
+			}
+			if (hasArrived(request.effectiveFrom, today)) {
+				assertNeverBilled(
+					rows.map((row) =>
+						row.id === request.duesRateId ? { ...row, effectiveFrom: request.effectiveFrom } : row
+					),
+					periods,
+					request.duesRateId
+				);
+			}
 
 			const [row] = await transaction
 				.update(duesRates)
@@ -447,7 +508,9 @@ export async function deleteDuesRate(
 
 		const { existing, rows, periods } = await loadForWrite(transaction, request.duesRateId);
 
-		assertNeverBilled(rows, periods, request.duesRateId);
+		if (hasArrived(existing.effectiveFrom, currentDay(clock))) {
+			assertNeverBilled(rows, periods, request.duesRateId);
+		}
 
 		await transaction.delete(duesRates).where(eq(duesRates.id, request.duesRateId));
 
@@ -462,35 +525,60 @@ export async function deleteDuesRate(
 	});
 }
 
-/** What a write needs before it can decide: the row itself, every rate, and every Periode billed. */
-interface WriteContext {
-	readonly existing: DuesRate;
+/** The whole calendar a write decides against: every rate, and every Periode ever billed. */
+interface CalendarForWrite {
 	readonly rows: readonly DuesRate[];
 	readonly periods: readonly string[];
 }
 
+/** That calendar, plus the one row the write is about. */
+interface WriteContext extends CalendarForWrite {
+	readonly existing: DuesRate;
+}
+
 /**
- * Reads everything `updateDuesRate` and `deleteDuesRate` decide from, inside their transaction.
+ * Reads everything a write decides from, inside that write's transaction.
  *
  * The rate rows are taken `for update`: a window depends on its neighbours, so two superusers
- * editing two different rates at the same time would otherwise each decide against a calendar the
+ * writing to two different rates at the same time would otherwise each decide against a calendar the
  * other is in the middle of changing.
- *
- * @throws {DuesRateNotFoundError} when `duesRateId` names no rate.
  */
-async function loadForWrite(transaction: Transaction, duesRateId: string): Promise<WriteContext> {
+async function loadCalendarForWrite(transaction: Transaction): Promise<CalendarForWrite> {
 	const rows = await transaction
 		.select()
 		.from(duesRates)
 		.orderBy(asc(duesRates.effectiveFrom))
 		.for('update');
 
-	const existing = rows.find((row) => row.id === duesRateId);
+	return { rows, periods: await billedPeriodsOf(transaction) };
+}
+
+/**
+ * `loadCalendarForWrite` together with the row `duesRateId` names.
+ *
+ * @throws {DuesRateNotFoundError} when `duesRateId` names no rate.
+ */
+async function loadForWrite(transaction: Transaction, duesRateId: string): Promise<WriteContext> {
+	const calendar = await loadCalendarForWrite(transaction);
+
+	const existing = calendar.rows.find((row) => row.id === duesRateId);
 	if (!existing) {
 		throw new DuesRateNotFoundError(duesRateId);
 	}
 
-	return { existing, rows, periods: await billedPeriodsOf(transaction) };
+	return { ...calendar, existing };
+}
+
+/**
+ * Whether `day` is today or earlier.
+ *
+ * A rate starting later than today has priced nothing, whatever its window says: the only reader of
+ * a rate is `duesRateOn`, and issuance asks it for a day that has arrived. This is what keeps the
+ * conservative month window from locking a rise that is still only scheduled — a Tagihan issued for
+ * the month a mid-month rise lands in was priced by the rate that was already running.
+ */
+function hasArrived(day: string, today: string): boolean {
+	return compareText(day, today) <= 0;
 }
 
 /**
@@ -512,6 +600,59 @@ function assertNeverBilled(
 	const usedSince = usedSincePeriodOf(window, billedPeriods);
 	if (usedSince !== undefined) {
 		throw new DuesRateInUseError(duesRateId, usedSince);
+	}
+}
+
+/** The placement a rate about to be inserted stands in while its window is worked out. */
+const PROPOSED_RATE = '(proposed)';
+
+/**
+ * Throws when inserting a rate that starts on `effectiveFrom` would take an already-billed Periode
+ * away from the rate that owns it today.
+ *
+ * Checking only the new rate's own window is enough to mean "no billed Periode changes owner": a new
+ * rate shortens exactly one neighbour, its predecessor, and the months it takes off that
+ * predecessor's end are precisely the months its own window gains.
+ *
+ * @throws {DuesRateInUseError} naming the rate that owns the Periode, and that Periode.
+ */
+function assertClaimsNothingBilled(
+	rates: readonly DuesRatePlacement[],
+	billedPeriods: readonly string[],
+	effectiveFrom: string
+): void {
+	const proposed = duesRateWindows([...rates, { id: PROPOSED_RATE, effectiveFrom }]).find(
+		(window) => window.duesRateId === PROPOSED_RATE
+	);
+	const claimed = proposed && usedSincePeriodOf(proposed, billedPeriods);
+	if (claimed === undefined) {
+		return;
+	}
+
+	const owner = duesRateWindows(rates).find((window) => isWithinWindow(claimed, window));
+	throw new DuesRateInUseError(owner?.duesRateId ?? PROPOSED_RATE, claimed);
+}
+
+/**
+ * Throws when a rate other than `duesRateId` already starts on `effectiveFrom`.
+ *
+ * `dues_rates_effective_from_unique` refuses this anyway, but only once the `update` statement runs —
+ * by which point the window rule has already been asked about a calendar holding two rates on one
+ * day, and would answer with an in-use refusal naming a Periode the superuser never touched. This
+ * says the true reason first.
+ *
+ * @throws {DuesRateConflictError} naming the day that is taken.
+ */
+function assertDayIsFree(
+	rates: readonly DuesRatePlacement[],
+	duesRateId: string,
+	effectiveFrom: string
+): void {
+	const taken = rates.some(
+		(rate) => rate.id !== duesRateId && rate.effectiveFrom === effectiveFrom
+	);
+	if (taken) {
+		throw new DuesRateConflictError(effectiveFrom);
 	}
 }
 

@@ -329,6 +329,8 @@
 	"adminDuesRates_empty": "Belum ada tarif yang ditetapkan.",
 	"adminDuesRates_conflict": "Sudah ada tarif yang mulai berlaku {date}.",
 	"adminDuesRates_inUse": "Tarif itu sudah dipakai menagih sejak periode {period}, jadi tidak bisa diubah maupun dihapus.",
+	"adminDuesRates_wouldClaimBilled": "Tarif yang mulai berlaku {date} akan mengambil alih periode {period} dari tarif yang sudah memakainya menagih, jadi tidak bisa ditetapkan.",
+	"adminDuesRates_asOf": "Penanda berlaku sekarang dihitung untuk hari {date} menurut UTC.",
 	"adminDuesRates_notFound": "Tarif tidak ditemukan.",
 	"adminDuesRates_invalidForm": "Permintaan tidak valid: besaran dan tanggal mulai berlaku harus diisi dengan benar.",
 	"adminDuesRates_forbidden": "Anda tidak berhak mengelola tarif."

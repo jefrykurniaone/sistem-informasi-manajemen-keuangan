@@ -329,6 +329,8 @@
 	"adminDuesRates_empty": "No rate has been set yet.",
 	"adminDuesRates_conflict": "A rate effective from {date} already exists.",
 	"adminDuesRates_inUse": "That rate has been used to bill since period {period}, so it can no longer be changed or deleted.",
+	"adminDuesRates_wouldClaimBilled": "A rate effective from {date} would take period {period} away from the rate that has already used it to bill, so it cannot be set.",
+	"adminDuesRates_asOf": "The in-force marker is worked out for the day {date}, read in UTC.",
 	"adminDuesRates_notFound": "Rate not found.",
 	"adminDuesRates_invalidForm": "Invalid request: the amount and the effective date must both be filled in correctly.",
 	"adminDuesRates_forbidden": "You are not allowed to manage dues rates."

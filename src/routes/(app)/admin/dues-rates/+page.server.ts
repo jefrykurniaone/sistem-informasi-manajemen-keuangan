@@ -64,6 +64,16 @@ export const actions: Actions = {
 				})
 			};
 		} catch (caught) {
+			// Refused here, a rate in use is never the rate being written — it is the existing one whose
+			// already-billed Periode this new rate would take over, so it needs its own wording.
+			if (caught instanceof DuesRateInUseError) {
+				return fail(400, {
+					message: m.adminDuesRates_wouldClaimBilled({
+						date: input.effectiveFrom,
+						period: caught.usedSincePeriod
+					})
+				});
+			}
 			return failFromServiceError(caught);
 		}
 	},

@@ -46,6 +46,17 @@ const START = '2026-01-01T00:00:00.000Z';
 /** The instant every read in this file happens at, so "today" is `2026-06-15` for every assertion. */
 const READ_CLOCK = new FakeClock('2026-06-15T12:00:00.000Z');
 
+/**
+ * The instant every write against a calendar with a billed March happens at, so "today" is
+ * `2026-04-01`.
+ *
+ * A write clock matters as much as the rows do: a rate whose start date has not arrived has priced
+ * nothing by construction and is exempt from the in-use rule, so a fixture billing March has to be
+ * judged from a day after March — otherwise it is describing Tagihan that were issued in a month
+ * that had not happened yet, and it would prove the wrong thing.
+ */
+const WRITE_CLOCK = new FakeClock('2026-04-01T00:00:00.000Z');
+
 const OLD_AMOUNT = rupiah(150_000);
 const NEW_AMOUNT = rupiah(175_000);
 
@@ -262,6 +273,22 @@ describe('listDuesRates', () => {
 		});
 	});
 
+	it('leaves a rate whose start date has not arrived editable, even inside a billed month', async () => {
+		// The screen has to agree with the service: a rise scheduled for the 15th of a month whose
+		// Tagihan already went out has priced nothing, and `updateDuesRate` would accept a change to it.
+		const superuserId = await insertSuperuser('Pengurus Rencana Kenaikan');
+		await insertRate('2026-01-01', OLD_AMOUNT);
+		const scheduled = await insertRate('2026-06-20', NEW_AMOUNT);
+		await insertInvoice('2026-06');
+
+		const history = await listDuesRates(testDb.db, READ_CLOCK, superuserId);
+
+		expect(history.rates.find((rate) => rate.id === scheduled)).toMatchObject({
+			usedSincePeriod: null,
+			isEditable: true
+		});
+	});
+
 	it('answers an empty history rather than failing when no rate has been set', async () => {
 		const superuserId = await insertSuperuser('Pengurus Tarif Kosong');
 
@@ -433,7 +460,7 @@ describe('a rate that has already been used to bill', () => {
 		const superuserId = await insertSuperuser('Pengurus Ubah Terpakai');
 		const { billed } = await billedCalendar();
 
-		const failure = updateDuesRate(testDb.db, new FakeClock(START), {
+		const failure = updateDuesRate(testDb.db, WRITE_CLOCK, {
 			actorId: superuserId,
 			duesRateId: billed,
 			amount: NEW_AMOUNT,
@@ -452,7 +479,7 @@ describe('a rate that has already been used to bill', () => {
 		const superuserId = await insertSuperuser('Pengurus Hapus Terpakai');
 		const { billed } = await billedCalendar();
 
-		const failure = deleteDuesRate(testDb.db, new FakeClock(START), {
+		const failure = deleteDuesRate(testDb.db, WRITE_CLOCK, {
 			actorId: superuserId,
 			duesRateId: billed
 		});
@@ -467,7 +494,7 @@ describe('a rate that has already been used to bill', () => {
 		const { billed } = await billedCalendar();
 
 		await expect(
-			deleteDuesRate(testDb.db, new FakeClock(START), { actorId: superuserId, duesRateId: billed })
+			deleteDuesRate(testDb.db, WRITE_CLOCK, { actorId: superuserId, duesRateId: billed })
 		).rejects.toThrow(DuesRateInUseError);
 
 		expect(await auditEntriesFor(testDb.db, billed)).toHaveLength(0);
@@ -477,7 +504,7 @@ describe('a rate that has already been used to bill', () => {
 		const superuserId = await insertSuperuser('Pengurus Ubah Penerus');
 		const { untouched } = await billedCalendar();
 
-		const updated = await updateDuesRate(testDb.db, new FakeClock(START), {
+		const updated = await updateDuesRate(testDb.db, WRITE_CLOCK, {
 			actorId: superuserId,
 			duesRateId: untouched,
 			amount: rupiah(200_000),
@@ -487,6 +514,27 @@ describe('a rate that has already been used to bill', () => {
 		expect(updated).toMatchObject({ amount: rupiah(200_000), effectiveFrom: '2026-07-01' });
 	});
 
+	it('reports a collision with another rate as a conflict, not as being in use', async () => {
+		// The defect this guards: the proposed calendar briefly holds two rates on one day, and the
+		// window rule read that as the moving rate swallowing January — refusing with a period the
+		// superuser never touched instead of naming the date that is taken.
+		const superuserId = await insertSuperuser('Pengurus Tanggal Terpakai');
+		const billed = await insertRate('2026-01-01', OLD_AMOUNT);
+		const moving = await insertRate('2026-06-01', NEW_AMOUNT);
+		await insertInvoice('2026-01');
+
+		const failure = updateDuesRate(testDb.db, WRITE_CLOCK, {
+			actorId: superuserId,
+			duesRateId: moving,
+			amount: NEW_AMOUNT,
+			effectiveFrom: '2026-01-01'
+		});
+
+		await expect(failure).rejects.toThrow(DuesRateConflictError);
+		await expect(failure).rejects.toMatchObject({ effectiveFrom: '2026-01-01' });
+		expect(await duesRateOn(testDb.db, '2026-01-01')).toMatchObject({ id: billed });
+	});
+
 	it('refuses to move a free rate backwards over months that are already billed', async () => {
 		// The successor has billed nothing of its own, but dragging it to February would make it the
 		// rate that priced March — rewriting the history of a bill somebody has already paid, while
@@ -494,7 +542,7 @@ describe('a rate that has already been used to bill', () => {
 		const superuserId = await insertSuperuser('Pengurus Mundurkan Tarif');
 		const { untouched } = await billedCalendar();
 
-		const failure = updateDuesRate(testDb.db, new FakeClock(START), {
+		const failure = updateDuesRate(testDb.db, WRITE_CLOCK, {
 			actorId: superuserId,
 			duesRateId: untouched,
 			amount: NEW_AMOUNT,
@@ -510,22 +558,23 @@ describe('a rate that has already been used to bill', () => {
 		const earlier = await insertRate('2026-01-01', OLD_AMOUNT);
 		const later = await insertRate('2026-04-15', NEW_AMOUNT);
 		await insertInvoice('2026-04');
+		const afterBoth = new FakeClock('2026-05-01T00:00:00.000Z');
 
 		await expect(
-			deleteDuesRate(testDb.db, new FakeClock(START), { actorId: superuserId, duesRateId: earlier })
+			deleteDuesRate(testDb.db, afterBoth, { actorId: superuserId, duesRateId: earlier })
 		).rejects.toThrow(DuesRateInUseError);
 		await expect(
-			deleteDuesRate(testDb.db, new FakeClock(START), { actorId: superuserId, duesRateId: later })
+			deleteDuesRate(testDb.db, afterBoth, { actorId: superuserId, duesRateId: later })
 		).rejects.toThrow(DuesRateInUseError);
 	});
 
 	it('leaves a rate whose start date has arrived but has billed nothing changeable', async () => {
-		// The rule is "has it billed", never "has its date arrived": a rise that starts today and has
-		// not yet priced anything is still a mistake a superuser may correct.
+		// The rule is "has it billed", never "has its date arrived": a rise that started months ago and
+		// has not yet priced anything is still a mistake a superuser may correct.
 		const superuserId = await insertSuperuser('Pengurus Belum Menagih');
 		const rateId = await insertRate('2026-01-01', OLD_AMOUNT);
 
-		const updated = await updateDuesRate(testDb.db, new FakeClock(START), {
+		const updated = await updateDuesRate(testDb.db, WRITE_CLOCK, {
 			actorId: superuserId,
 			duesRateId: rateId,
 			amount: NEW_AMOUNT,
@@ -533,6 +582,92 @@ describe('a rate that has already been used to bill', () => {
 		});
 
 		expect(updated).toMatchObject({ amount: NEW_AMOUNT });
+	});
+});
+
+describe('a rate whose start date has not arrived', () => {
+	/**
+	 * A rise scheduled for the middle of a month whose Tagihan have already gone out, judged from a
+	 * day before it starts.
+	 *
+	 * The month window is deliberately conservative — two rates sharing a month are both treated as
+	 * having billed it — and on its own that would lock this rise the moment the month's invoices were
+	 * issued by the rate already running. It cannot have priced them: it has not started.
+	 */
+	async function scheduledRise(): Promise<string> {
+		await insertRate('2026-01-01', OLD_AMOUNT);
+		const scheduled = await insertRate('2026-06-15', NEW_AMOUNT);
+		await insertInvoice('2026-06');
+		return scheduled;
+	}
+
+	/** A day inside the billed month, but before the scheduled rise starts. */
+	const BEFORE_IT_STARTS = new FakeClock('2026-06-10T00:00:00.000Z');
+
+	it('can still be changed', async () => {
+		const superuserId = await insertSuperuser('Pengurus Betulkan Rencana');
+		const scheduled = await scheduledRise();
+
+		const updated = await updateDuesRate(testDb.db, BEFORE_IT_STARTS, {
+			actorId: superuserId,
+			duesRateId: scheduled,
+			amount: rupiah(200_000),
+			effectiveFrom: '2026-06-20'
+		});
+
+		expect(updated).toMatchObject({ amount: rupiah(200_000), effectiveFrom: '2026-06-20' });
+	});
+
+	it('can still be removed', async () => {
+		const superuserId = await insertSuperuser('Pengurus Batalkan Rencana');
+		const scheduled = await scheduledRise();
+
+		await deleteDuesRate(testDb.db, BEFORE_IT_STARTS, {
+			actorId: superuserId,
+			duesRateId: scheduled
+		});
+
+		expect(await testDb.db.select().from(duesRates)).toHaveLength(1);
+	});
+});
+
+describe('setting a rate that would take a billed period from another rate', () => {
+	it('is refused, naming the rate that owns the period and the period itself', async () => {
+		// The defect this guards: a rate locked by a billed Periode could be unlocked by inserting a
+		// second rate in front of it, which moved that Periode out of the first rate's window. The
+		// January rate priced the February Tagihan; a rate starting 1 February would take February
+		// from it and leave it editable.
+		const superuserId = await insertSuperuser('Pengurus Sisipkan Tarif');
+		const owner = await insertRate('2026-01-01', OLD_AMOUNT);
+		await insertInvoice('2026-02');
+
+		const failure = createDuesRate(testDb.db, new FakeClock('2026-03-01T00:00:00.000Z'), {
+			actorId: superuserId,
+			amount: NEW_AMOUNT,
+			effectiveFrom: '2026-02-01'
+		});
+
+		await expect(failure).rejects.toThrow(DuesRateInUseError);
+		await expect(failure).rejects.toMatchObject({
+			duesRateId: owner,
+			usedSincePeriod: '2026-02'
+		});
+		expect(await testDb.db.select().from(duesRates)).toHaveLength(1);
+	});
+
+	it('is allowed when the backdated rate ends before anything that has been billed', async () => {
+		const superuserId = await insertSuperuser('Pengurus Tarif Lama');
+		await insertRate('2026-06-01', NEW_AMOUNT);
+		await insertInvoice('2026-06');
+
+		const created = await createDuesRate(testDb.db, new FakeClock('2026-06-20T00:00:00.000Z'), {
+			actorId: superuserId,
+			amount: OLD_AMOUNT,
+			effectiveFrom: '2026-01-01'
+		});
+
+		expect(created).toMatchObject({ effectiveFrom: '2026-01-01' });
+		expect(await duesRateOn(testDb.db, '2026-03-01')).toMatchObject({ id: created.id });
 	});
 });
 

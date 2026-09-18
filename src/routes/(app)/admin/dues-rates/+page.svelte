@@ -27,7 +27,12 @@
 	</section>
 
 	<section class="flex flex-col gap-4">
-		<h2 class="text-lg font-semibold">{m.adminDuesRates_historyHeading()}</h2>
+		<div class="flex flex-col gap-1">
+			<h2 class="text-lg font-semibold">{m.adminDuesRates_historyHeading()}</h2>
+			<p class="text-sm text-muted-foreground">
+				{m.adminDuesRates_asOf({ date: data.today })}
+			</p>
+		</div>
 
 		{#each data.rates as rate (rate.id)}
 			<article class="flex flex-col gap-2 rounded-lg border border-border p-4">
