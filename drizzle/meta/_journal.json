@@ -43,6 +43,13 @@
 			"when": 1789682637224,
 			"tag": "0005_resident_unit",
 			"breakpoints": true
+		},
+		{
+			"idx": 6,
+			"version": "7",
+			"when": 1789687840705,
+			"tag": "0006_post",
+			"breakpoints": true
 		}
 	]
 }
