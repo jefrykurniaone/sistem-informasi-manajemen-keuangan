@@ -55,7 +55,16 @@ const ACTIONS_NOT_SUPERUSER_ONLY: Readonly<Partial<Record<Action, readonly Role[
 	// `CONTEXT.md` puts "mengelola Post" on Admin and leaves it off Superuser, and
 	// `docs/spec-fondasi-v1.md` makes the three roles a set rather than a ladder. See the argument
 	// recorded next to `PERMISSIONS` in `src/lib/server/authz.ts`.
-	[ACTION.managePosts]: [ROLE.admin]
+	[ACTION.managePosts]: [ROLE.admin],
+	// `CONTEXT.md` puts "menangani Keluhan" on Admin and leaves it off Superuser, the same reading
+	// that put `managePosts` on Admin: moving a complaint between statuses changes neither the past
+	// nor anybody's rights, which is what Superuser's list is for.
+	[ACTION.handleComplaints]: [ROLE.admin],
+	// Both, unlike every other entry here. `docs/spec-keluhan-v1.md` says a `pribadi` complaint is
+	// readable by "pemegang peran admin atau superuser", and user story 19 — "sebagai superuser,
+	// saya ingin melihat siapa mengubah status apa dan kapan" — is a read of the Riwayat Status by
+	// somebody the spec never asks to handle a complaint. See `PERMISSIONS`.
+	[ACTION.readAllComplaints]: [ROLE.admin, ROLE.superuser]
 };
 
 /** Which roles `action` is expected to be permitted to. Superuser alone unless stated otherwise. */
@@ -82,6 +91,19 @@ describe('isAllowed — every combination of roles and every known action', () =
 		expect(isAllowed([ROLE.admin], ACTION.managePosts)).toBe(true);
 		expect(isAllowed([ROLE.superuser], ACTION.managePosts)).toBe(false);
 		expect(isAllowed([ROLE.resident], ACTION.managePosts)).toBe(false);
+	});
+
+	it('lets a superuser read every Keluhan without letting them handle one', () => {
+		// The first action pair in this table where reading and writing are held by different sets,
+		// spelled out because the split is the decision rather than a consequence of one: a superuser
+		// sees the whole queue and every private complaint on it, and the buttons on that queue still
+		// refuse them.
+		expect(isAllowed([ROLE.superuser], ACTION.readAllComplaints)).toBe(true);
+		expect(isAllowed([ROLE.superuser], ACTION.handleComplaints)).toBe(false);
+		expect(isAllowed([ROLE.admin], ACTION.readAllComplaints)).toBe(true);
+		expect(isAllowed([ROLE.admin], ACTION.handleComplaints)).toBe(true);
+		expect(isAllowed([ROLE.resident], ACTION.readAllComplaints)).toBe(false);
+		expect(isAllowed([ROLE.resident], ACTION.handleComplaints)).toBe(false);
 	});
 });
 

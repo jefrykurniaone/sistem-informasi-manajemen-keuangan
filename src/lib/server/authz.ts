@@ -74,7 +74,35 @@ export const ACTION = {
 	 *
 	 * **The first action in this table that is not `superuser`'s.** See `PERMISSIONS` below.
 	 */
-	managePosts: 'managePosts'
+	managePosts: 'managePosts',
+	/**
+	 * Moving a Keluhan through its statuses: taking it on, working it, resolving it, and rejecting
+	 * it with a reason. See `src/lib/server/services/complaint/index.ts`.
+	 *
+	 * Named after `CONTEXT.md`'s own verb — Admin "menangani Keluhan" — rather than `manageComplaints`,
+	 * because this action deliberately is *not* the whole of managing one. Reading every complaint is
+	 * `readAllComplaints` below, and the two are held by different sets; calling this one "manage"
+	 * would claim it covers the read as well.
+	 *
+	 * It also does not cover the two moves that belong to the reporter — withdrawing a complaint and
+	 * lowering its visibility. Those are "only their own row" rules, which `PERMISSIONS` cannot
+	 * express: every Warga holds them for their own rows, so an entry here would be one every account
+	 * matches. They are guarded by comparing the row's `reporterId` to the running session instead,
+	 * and still refused with `PermissionDeniedError` so that a route needs no second error class.
+	 */
+	handleComplaints: 'handleComplaints',
+	/**
+	 * Reading every Keluhan whatever its visibility, and the Riwayat Status behind it — the admin
+	 * queue, a `pribadi` complaint somebody else reported, and who moved what and when. See
+	 * `src/lib/server/services/complaint/visibility.ts`, which turns this answer into a `where`
+	 * clause rather than letting each screen decide.
+	 *
+	 * **Split from `handleComplaints` on purpose, and it is the first read/write split in this
+	 * table.** Every action above bundles a list with the writes on it, on the reasoning
+	 * `manageJobs` records: a list is only useful to whoever may act on it. That reasoning does not
+	 * survive here, because this spec asks for two different sets of people. See `PERMISSIONS`.
+	 */
+	readAllComplaints: 'readAllComplaints'
 } as const;
 
 /** One of the actions above. */
@@ -104,13 +132,40 @@ export type Action = (typeof ACTION)[keyof typeof ACTION];
  * rather than a rank, and it costs nothing to undo: whoever needs both grants both roles, which is
  * what `user_roles` is for. The binding acceptance criterion — that `resident` cannot call a single
  * write operation on a Post — holds either way, and it holds here because `resident` is not named.
+ *
+ * ## The two Keluhan actions are held by different sets, and that is the whole reason there are two
+ *
+ * `handleComplaints` is `admin`'s, by the same reading that put `managePosts` there. `CONTEXT.md`
+ * lists "menangani Keluhan" as the second thing Admin does, and Superuser's list — residents and
+ * roles, Unit and Masa Huni, Tarif, Pembebasan, cancelling a Tagihan, unlocking a Periode — does not
+ * contain it, because moving a complaint from `reviewing` to `working` changes neither the past nor
+ * anybody's rights.
+ *
+ * `readAllComplaints` is `admin`'s **and** `superuser`'s, and this is where the usual "one action for
+ * the list and the writes on it" stops working. Two sentences of this feature's spec name a reader
+ * who is not the handler. `docs/spec-keluhan-v1.md` says a `pribadi` complaint "hanya bisa dibaca
+ * pelapornya dan pemegang peran admin atau superuser" — admin *or* superuser, not the admin set
+ * alone — and user story 19 is "sebagai superuser, saya ingin melihat siapa mengubah status apa dan
+ * kapan", which is a read of the Riwayat Status by somebody the spec never asks to handle anything.
+ * One action held by `admin` alone would refuse both; one action held by both would hand a superuser
+ * the power to reject a neighbour's complaint, which `CONTEXT.md` does not give them.
+ *
+ * Splitting the read from the write is therefore what the spec asks for rather than a preference,
+ * and it stays honest in both directions: a superuser sees the whole queue and every private
+ * complaint on it, and the buttons on that queue still refuse them.
+ *
+ * Neither action is held by `resident`. A Warga reads their own complaints and every `public` one
+ * through `complaintReadScopeFor`, which is a rule about rows rather than about roles — see
+ * `src/lib/server/services/complaint/visibility.ts`.
  */
 const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.manageRoles]: new Set([ROLE.superuser]),
 	[ACTION.manageJobs]: new Set([ROLE.superuser]),
 	[ACTION.manageUnits]: new Set([ROLE.superuser]),
 	[ACTION.manageOccupancies]: new Set([ROLE.superuser]),
-	[ACTION.managePosts]: new Set([ROLE.admin])
+	[ACTION.managePosts]: new Set([ROLE.admin]),
+	[ACTION.handleComplaints]: new Set([ROLE.admin]),
+	[ACTION.readAllComplaints]: new Set([ROLE.admin, ROLE.superuser])
 };
 
 /**
