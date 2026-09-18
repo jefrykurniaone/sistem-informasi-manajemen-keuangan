@@ -26,6 +26,7 @@ import {
 	PASSWORD_RESET_KIND,
 	passwordResetPayload
 } from '$lib/server/email/templates/password-reset';
+import { REGISTRATION_APPROVED_KIND } from '$lib/server/email/templates/registration-approved';
 import { VERIFY_EMAIL_KIND, verifyEmailPayload } from '$lib/server/email/templates/verify-email';
 import { FakeClock, FakeEmailSender } from '$lib/server/ports/fakes';
 import {
@@ -269,7 +270,7 @@ async function claimThroughOpenTransaction(
 describe('applicationEmailTemplates', () => {
 	it('carries exactly the kinds this application queues, and renders each one', () => {
 		expect(Object.keys(applicationEmailTemplates).sort()).toEqual(
-			[VERIFY_EMAIL_KIND, PASSWORD_RESET_KIND, INVITATION_KIND].sort()
+			[VERIFY_EMAIL_KIND, PASSWORD_RESET_KIND, INVITATION_KIND, REGISTRATION_APPROVED_KIND].sort()
 		);
 		expect(
 			applicationEmailTemplates[VERIFY_EMAIL_KIND](
