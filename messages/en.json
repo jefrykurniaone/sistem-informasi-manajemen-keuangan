@@ -203,5 +203,22 @@
 	"adminPosts_rule_unknownCategory": "That category is not one this application knows.",
 	"adminPosts_rule_authorNotRegistered": "Your account is not linked to a resident record yet, so a post cannot be attributed to you. Contact a Superuser.",
 	"adminPosts_rule_coverImageNotAnImage": "That file is not a JPEG, PNG or WebP image.",
-	"adminPosts_rule_coverImageTooLarge": "The cover image is larger than 256 KB."
+	"adminPosts_rule_coverImageTooLarge": "The cover image is larger than 256 KB.",
+	"postPublic_pageTitle": "Announcement board — Komplek",
+	"postPublic_pageDescription": "The complex's published activities and announcements, open to anyone without an account.",
+	"postPublic_heading": "Announcement board",
+	"postPublic_description": "Upcoming activities appear first, followed by the latest announcements. Use the filters to see past ones or narrow by category.",
+	"postPublic_whenNavLabel": "Filter by time",
+	"postPublic_whenUpcoming": "Upcoming",
+	"postPublic_whenPast": "Past",
+	"postPublic_filterCategoryLabel": "Category",
+	"postPublic_filterAllCategories": "All categories",
+	"postPublic_filterSubmit": "Filter",
+	"postPublic_empty": "No activity or announcement matches this filter yet.",
+	"postPublic_paginationSummary": "Page {page} of {totalPages}",
+	"postPublic_prevPage": "Previous",
+	"postPublic_nextPage": "Next",
+	"postPublic_readMoreLink": "Read more",
+	"postPublic_backLink": "Back to the announcement board",
+	"postPublic_notFound": "This post was not found or has not been published."
 }
