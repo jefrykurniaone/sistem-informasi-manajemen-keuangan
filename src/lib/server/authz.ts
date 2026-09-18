@@ -66,7 +66,15 @@ export const ACTION = {
 	 * reassign a house can already see who lived in it, and splitting them would let a screen show
 	 * less than the form beside it accepts.
 	 */
-	manageOccupancies: 'manageOccupancies'
+	manageOccupancies: 'manageOccupancies',
+	/**
+	 * Seeing the admin list of Post, writing one, editing it, previewing it, publishing it and
+	 * archiving it. See `src/lib/server/services/post/index.ts`. One action for the read and the
+	 * writes, the same reasoning as `manageJobs` and `manageUnits`.
+	 *
+	 * **The first action in this table that is not `superuser`'s.** See `PERMISSIONS` below.
+	 */
+	managePosts: 'managePosts'
 } as const;
 
 /** One of the actions above. */
@@ -77,12 +85,32 @@ export type Action = (typeof ACTION)[keyof typeof ACTION];
  *
  * A later spec adds its own entry here when it adds its own action — this object, not a second map
  * somewhere closer to that feature, is "the one place" `spec-fondasi-v1.md` asks for.
+ *
+ * ## `managePosts` belongs to `admin`, and to `admin` alone
+ *
+ * Every other entry here is `superuser`'s, which made it easy to read this table as a ladder. It is
+ * not one. `spec-fondasi-v1.md`'s "Peran" section is explicit — "Tiga peran sebagai himpunan, bukan
+ * tingkatan tunggal" — and `isAllowed` below has no inheritance in it, so a role that is not named
+ * on an action does not hold it, whatever else that role can do.
+ *
+ * `CONTEXT.md` then says which set this action belongs to. Admin is "peran pengurus harian", and the
+ * very first thing it lists is "mengelola Post". Superuser is "peran yang memegang setiap tindakan
+ * yang mengubah masa lalu atau mengubah siapa boleh apa", and its list — residents and roles, Unit
+ * and Masa Huni, Tarif, Pembebasan, cancelling a Tagihan, unlocking a Periode — does not contain
+ * Post, because writing an announcement changes nothing that already happened and nobody's rights.
+ * The three actions above all do fall under that sentence, which is why they read the way they do.
+ *
+ * So a superuser who is not also an admin cannot write a Post. That is the intended reading of a set
+ * rather than a rank, and it costs nothing to undo: whoever needs both grants both roles, which is
+ * what `user_roles` is for. The binding acceptance criterion — that `resident` cannot call a single
+ * write operation on a Post — holds either way, and it holds here because `resident` is not named.
  */
 const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.manageRoles]: new Set([ROLE.superuser]),
 	[ACTION.manageJobs]: new Set([ROLE.superuser]),
 	[ACTION.manageUnits]: new Set([ROLE.superuser]),
-	[ACTION.manageOccupancies]: new Set([ROLE.superuser])
+	[ACTION.manageOccupancies]: new Set([ROLE.superuser]),
+	[ACTION.managePosts]: new Set([ROLE.admin])
 };
 
 /**

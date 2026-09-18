@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { PermissionDeniedError } from '$lib/errors';
-import { ACTION, isAllowed, requirePermission, rolesOf } from '$lib/server/authz';
+import { ACTION, isAllowed, requirePermission, rolesOf, type Action } from '$lib/server/authz';
 import { user } from '$lib/server/db/schema/auth';
 import { ROLE, ROLES, userRoles, type Role } from '$lib/server/db/schema/authz';
 import { testDatabase } from '$lib/server/db/test-helpers';
@@ -37,21 +37,51 @@ async function grant(userId: string, role: Role): Promise<void> {
 	await testDb.db.insert(userRoles).values({ userId, role, createdAt: new Date() });
 }
 
+/**
+ * The actions whose role set is deliberately something other than "superuser alone", and which set
+ * each of them really is.
+ *
+ * Read together with `expectedRolesFor` below, this is a *rule* rather than a table of every
+ * action: anything not named here — including an action added after this file was last edited — is
+ * still expected to be superuser-only, and the sweep still walks `Object.values(ACTION)` to find
+ * out which actions exist. That shape is on purpose. A table listing every action by name would
+ * make this file the second place the permission map lives, and a ticket adding an ordinary
+ * superuser-only action would fail a test it never touched. As it is, a new superuser-only action
+ * passes without anybody editing this file, and a new action granted to somebody else fails loudly
+ * until whoever made that decision comes here and writes it down — which is the whole reason this
+ * sweep exists.
+ */
+const ACTIONS_NOT_SUPERUSER_ONLY: Readonly<Partial<Record<Action, readonly Role[]>>> = {
+	// `CONTEXT.md` puts "mengelola Post" on Admin and leaves it off Superuser, and
+	// `docs/spec-fondasi-v1.md` makes the three roles a set rather than a ladder. See the argument
+	// recorded next to `PERMISSIONS` in `src/lib/server/authz.ts`.
+	[ACTION.managePosts]: [ROLE.admin]
+};
+
+/** Which roles `action` is expected to be permitted to. Superuser alone unless stated otherwise. */
+function expectedRolesFor(action: Action): readonly Role[] {
+	return ACTIONS_NOT_SUPERUSER_ONLY[action] ?? [ROLE.superuser];
+}
+
 describe('isAllowed — every combination of roles and every known action', () => {
-	// `ACTION.manageRoles` is, today, the only action this application knows, and it is permitted
-	// to `superuser` alone. A later spec that adds an action allowed to a different role set has to
-	// widen this expectation, not just `PERMISSIONS` — if it forgets, the case below for its new
-	// action fails loudly instead of quietly passing.
 	it.each(
 		ROLE_SUBSETS.flatMap((roles) =>
 			Object.values(ACTION).map((action) => ({
 				roles,
 				action,
-				expected: roles.includes(ROLE.superuser)
+				expected: expectedRolesFor(action).some((permitted) => roles.includes(permitted))
 			}))
 		)
 	)('roles $roles, action $action -> allowed: $expected', ({ roles, action, expected }) => {
 		expect(isAllowed(roles, action)).toBe(expected);
+	});
+
+	it('permits managePosts to an admin and refuses it to a superuser who is not one', () => {
+		// The one case the sweep above would also cover, spelled out on its own because it is the
+		// first time in this run that holding `superuser` is not enough for something.
+		expect(isAllowed([ROLE.admin], ACTION.managePosts)).toBe(true);
+		expect(isAllowed([ROLE.superuser], ACTION.managePosts)).toBe(false);
+		expect(isAllowed([ROLE.resident], ACTION.managePosts)).toBe(false);
 	});
 });
 
