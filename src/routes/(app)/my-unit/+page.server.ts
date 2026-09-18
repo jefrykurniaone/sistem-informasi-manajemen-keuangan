@@ -1,6 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import { AUTH_PATHS } from '$lib/server/auth';
 import { database } from '$lib/server/db';
+import { systemClock } from '$lib/server/ports/clock';
 import { occupiedUnitsForUser, type OwnOccupancy } from '$lib/server/services/occupancy';
 import { residentProfileForUser } from '$lib/server/services/resident/profile';
 import type { PageServerLoad } from './$types';
@@ -31,7 +32,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	const db = database();
 	const profile = await residentProfileForUser(db, locals.user.id);
 	const occupancies: readonly OwnOccupancy[] = profile
-		? await occupiedUnitsForUser(db, locals.user.id)
+		? await occupiedUnitsForUser(db, systemClock, locals.user.id)
 		: [];
 
 	return { hasResidentRecord: profile !== undefined, occupancies };

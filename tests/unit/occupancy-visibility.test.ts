@@ -7,10 +7,14 @@ import { occupancies, OCCUPANCY_ROLE } from '$lib/server/db/schema/occupancy';
 import { residents } from '$lib/server/db/schema/resident';
 import { units } from '$lib/server/db/schema/unit';
 import { testDatabase } from '$lib/server/db/test-helpers';
+import { FakeClock } from '$lib/server/ports/fakes';
 import {
+	currentDay,
+	isStillRunningOn,
 	isVisibleOn,
 	mergeDateRanges,
 	occupiedRangesOfUnit,
+	stillRunningOn,
 	unitVisibilityFor,
 	visibilityDateFilter,
 	VISIBLE_ALWAYS,
@@ -319,6 +323,73 @@ describe('unitVisibilityFor', () => {
 			kind: 'ranges',
 			ranges: [{ from: OLD_FROM, to: OLD_UNTIL }]
 		});
+	});
+});
+
+describe('currentDay', () => {
+	it('reads the instant as a UTC calendar day', () => {
+		expect(currentDay(new FakeClock('2026-08-01T12:00:00.000Z'))).toBe('2026-08-01');
+	});
+
+	it.each([
+		['the first moment of a day', '2026-08-01T00:00:00.000Z', '2026-08-01'],
+		['the last moment of a day', '2026-08-01T23:59:59.999Z', '2026-08-01'],
+		// The complex is at UTC+7, so this instant is already the 2nd in Jakarta. The module's doc
+		// comment states that consequence rather than hiding it: the answer can lag the local day by
+		// the offset, and the lag only ever keeps someone counted as living in their house for
+		// longer.
+		['an instant that is already tomorrow in Jakarta', '2026-08-01T18:00:00.000Z', '2026-08-01']
+	])('answers %s', (_description, instant, expected) => {
+		expect(currentDay(new FakeClock(instant))).toBe(expected);
+	});
+});
+
+describe('isStillRunningOn', () => {
+	it.each([
+		['a stay with no end date at all', null, true],
+		['a stay ending after today', '2027-12-31', true],
+		['a stay ending today', '2026-08-01', true],
+		['a stay that ended yesterday', '2026-07-31', false]
+	])('answers %s', (_description, endedOn, expected) => {
+		expect(isStillRunningOn(endedOn, '2026-08-01')).toBe(expected);
+	});
+});
+
+describe('stillRunningOn', () => {
+	it('keeps the stays that have not ended by the given day, and drops the ones that have', async () => {
+		const unitId = await insertUnitRow();
+		const leavingNextYear = await insertResident('Warga Akan Pergi');
+		const gone = await insertResident('Warga Sudah Pergi');
+		const staying = await insertResident('Warga Tanpa Tanggal Selesai');
+		await insertOccupancyRow(unitId, leavingNextYear.residentId, OLD_FROM, '2027-12-31');
+		await insertOccupancyRow(unitId, gone.residentId, OLD_FROM, OLD_UNTIL);
+		await insertOccupancyRow(unitId, staying.residentId, OLD_FROM, null);
+
+		const rows = await testDb.db
+			.select({ endedOn: occupancies.endedOn })
+			.from(occupancies)
+			.where(and(eq(occupancies.unitId, unitId), stillRunningOn(occupancies.endedOn, '2026-08-01')))
+			.orderBy(occupancies.endedOn);
+
+		expect(rows).toEqual([{ endedOn: '2027-12-31' }, { endedOn: null }]);
+	});
+});
+
+describe('a stay whose end date has not arrived', () => {
+	it('still shows the resident the days they are living through', async () => {
+		// The other half of the defect reported against `/my-unit`: whatever the occupant count says,
+		// the visibility contract must not cut someone off from days they are still living in. It
+		// answers the days as data, so an end date in the future is simply part of the range.
+		const unitId = await insertUnitRow();
+		const { userId, residentId } = await insertResident('Warga Pamit Untuk Tahun Depan');
+		await insertOccupancyRow(unitId, residentId, OLD_FROM, '2027-12-31');
+
+		const visibility = await unitVisibilityFor(testDb.db, { viewerUserId: userId, unitId });
+
+		expect(visibility).toEqual({ kind: 'ranges', ranges: [{ from: OLD_FROM, to: '2027-12-31' }] });
+		expect(isVisibleOn(visibility, '2026-08-01')).toBe(true);
+		expect(isVisibleOn(visibility, '2027-12-31')).toBe(true);
+		expect(isVisibleOn(visibility, '2028-01-01')).toBe(false);
 	});
 });
 

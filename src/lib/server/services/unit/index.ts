@@ -3,7 +3,8 @@ import { ACTION, requirePermission } from '../../authz';
 import { recordAuditEntry } from '../../audit';
 import type { Database } from '../../db';
 import { units, type Unit } from '../../db/schema/unit';
-import type { Clock } from '../../ports/clock';
+import { systemClock, type Clock } from '../../ports/clock';
+import { currentDay } from '../occupancy/visibility';
 import {
 	findUnitById,
 	queryUnitsPage,
@@ -125,7 +126,11 @@ export interface UnitListResult {
  *
  * @throws {PermissionDeniedError} when `actorId` does not hold `superuser`.
  */
-export async function listUnits(db: Database, request: ListUnitsRequest): Promise<UnitListResult> {
+export async function listUnits(
+	db: Database,
+	clock: Clock,
+	request: ListUnitsRequest
+): Promise<UnitListResult> {
 	await requirePermission(db, request.actorId, ACTION.manageUnits);
 
 	const page = normalizePage(request.page);
@@ -139,7 +144,7 @@ export async function listUnits(db: Database, request: ListUnitsRequest): Promis
 	});
 
 	return {
-		units: await withOccupancySummaries(db, rows),
+		units: await withOccupancySummaries(db, clock, rows),
 		page,
 		pageSize,
 		totalCount
@@ -155,7 +160,8 @@ export async function listUnits(db: Database, request: ListUnitsRequest): Promis
 export async function getUnit(
 	db: Database,
 	actorId: string,
-	unitId: string
+	unitId: string,
+	clock: Clock = systemClock
 ): Promise<UnitWithOccupancySummary> {
 	await requirePermission(db, actorId, ACTION.manageUnits);
 
@@ -164,23 +170,36 @@ export async function getUnit(
 		throw new UnitNotFoundError(unitId);
 	}
 
-	const [withSummary] = await withOccupancySummaries(db, [unit]);
+	const [withSummary] = await withOccupancySummaries(db, clock, [unit]);
 	return withSummary;
 }
 
-/** What a unit with no running occupancy at all adds up to. */
+/** What a unit nobody is living in adds up to. */
 const NO_RUNNING_OCCUPANCY: OccupancySummary = Object.freeze({
 	activeOccupantCount: 0,
 	hasPrimaryOccupant: false
 });
 
-/** Attaches each unit's occupancy summary, in one query regardless of how many units there are. */
+/**
+ * Attaches each unit's occupancy summary, in one query regardless of how many units there are.
+ *
+ * The clock is here because `activeOccupantCount` means "living here on this day" — see
+ * `summarizeActiveOccupancies` for why that is not the same question as `hasPrimaryOccupant`.
+ * `listUnits` takes it as a required second argument, the position `createUnit` and the rest of this
+ * service layer already put a `Clock` in. `getUnit` cannot: its other caller,
+ * `src/routes/(app)/admin/units/[id]/+page.server.ts`, is outside this ticket's `writes:` and so
+ * cannot be handed one, which is why that signature takes the clock last and defaults it. Every
+ * caller that can pass one does, tests included — a test that forgot would be reading the real wall
+ * clock, and its result would depend on the day it ran.
+ */
 async function withOccupancySummaries(
 	db: Database,
+	clock: Clock,
 	rows: readonly Unit[]
 ): Promise<readonly UnitWithOccupancySummary[]> {
 	const summaries = await summarizeActiveOccupancies(
 		db,
+		currentDay(clock),
 		rows.map((row) => row.id)
 	);
 	return rows.map((row) => ({ ...row, ...(summaries.get(row.id) ?? NO_RUNNING_OCCUPANCY) }));

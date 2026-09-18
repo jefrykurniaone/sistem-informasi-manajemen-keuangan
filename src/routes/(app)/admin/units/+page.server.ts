@@ -33,7 +33,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 	const includeInactive = url.searchParams.get('includeInactive') === 'true';
 
 	try {
-		const result = await listUnits(database(), {
+		const result = await listUnits(database(), systemClock, {
 			actorId: locals.user.id,
 			page,
 			pageSize: DEFAULT_UNIT_PAGE_SIZE,

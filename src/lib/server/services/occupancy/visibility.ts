@@ -1,8 +1,9 @@
-import { and, asc, eq, gte, lte, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, gte, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { ACTION, isAllowed, rolesOf, type DatabaseWriter } from '../../authz';
 import { occupancies } from '../../db/schema/occupancy';
 import { residents } from '../../db/schema/resident';
+import type { Clock } from '../../ports/clock';
 
 /**
  * **What a person may see of one Unit, expressed as calendar days.**
@@ -41,9 +42,14 @@ import { residents } from '../../db/schema/resident';
  * A day is `YYYY-MM-DD`, exactly as `src/lib/server/db/schema/occupancy.ts` stores it and for the
  * reason recorded there: turning a calendar day into a `Date` makes it an instant at midnight in
  * some zone, and reading it back in another zone can move it a day. ISO-8601 days also compare
- * correctly with `<` and `>` as plain strings, so nothing in this module needs date arithmetic or a
- * time zone — and nothing in it needs a `Clock`, because it never asks what day it is today. "Today"
- * is the caller's question; this module only says which days belong to whom.
+ * correctly with `<` and `>` as plain strings, so nothing in this module needs date arithmetic.
+ *
+ * **The visibility answer itself still never asks what day it is.** `unitVisibilityFor` returns the
+ * days as data, and whether today falls inside them is the caller's question — which is what lets a
+ * resident whose end date has been written but has not arrived still see the days they are living
+ * through. `currentDay` and `isStillRunningOn` at the bottom of this file are the other half: the one
+ * definition of "living here now", kept here because this is where the `YYYY-MM-DD` vocabulary lives,
+ * and taking a `Clock` so that no caller reads the wall clock for itself.
  */
 
 /**
@@ -191,6 +197,52 @@ export function visibilityDateFilter(
 			and(gte(column, range.from), range.to === null ? undefined : lte(column, range.to))
 		)
 	);
+}
+
+/**
+ * Today, as the calendar day `YYYY-MM-DD` that the occupancy table's `date` columns compare against.
+ *
+ * **Two different questions get two different predicates, and this one belongs to only one of them.**
+ *
+ * - *"Is the primary-occupant slot the database guards filled?"* is `ended_on is null`, exactly what
+ *   `occupancies_primary_occupant_unique` means by it, and it does not need a day at all.
+ * - *"Is this person living here now?"* is `isStillRunningOn` below, and it does. An end date written
+ *   before it arrives — someone announcing in March that they move out next year — is a normal thing
+ *   for a superuser to record, and reading it as "already gone" tells a resident their home is not
+ *   theirs.
+ *
+ * **The instant is read as a UTC day.** `Clock.now()` answers which *moment* it is, never which day
+ * it is somewhere, and `src/lib/server/ports/clock.ts` settled that a zone is a property of the
+ * complex rather than of the clock. Nothing in this repository names the complex's zone yet, and
+ * inventing one here would put it in the wrong place — the iuran spec, which has to decide what "the
+ * first of the month" means, is where it belongs. Until then this reads the instant the same way
+ * `(app)/admin/units/[id]/+page.svelte` and `(app)/admin/jobs/+page.svelte` already display one: in
+ * UTC.
+ *
+ * The consequence is worth stating plainly rather than discovering later. The complex is at UTC+7,
+ * so between midnight and 07:00 local the UTC day is still yesterday, and a stay whose last day was
+ * yesterday counts as running for those few hours. The error is at most one day and always in the
+ * direction of keeping someone visible in their own house, never of cutting them off early.
+ */
+export function currentDay(clock: Clock): string {
+	return clock.now().toISOString().slice(0, 10);
+}
+
+/**
+ * Whether a stay ending on `endedOn` — `null` while it has not been given an end date — is still
+ * running on `day`. The one definition of "living here now", shared by every screen that asks.
+ */
+export function isStillRunningOn(endedOn: string | null, day: string): boolean {
+	return endedOn === null || compareDays(endedOn, day) >= 0;
+}
+
+/**
+ * `isStillRunningOn` as a condition on an `ended_on` column, for the queries that ask the same
+ * question of many rows at once.
+ */
+export function stillRunningOn(endedOnColumn: AnyPgColumn, day: string): SQL {
+	// `or()` only widens to `undefined` when every argument is, and neither of these is.
+	return or(isNull(endedOnColumn), gte(endedOnColumn, day)) as SQL;
 }
 
 /** `-1`, `0` or `1`, comparing two `YYYY-MM-DD` days. ISO days sort correctly as plain strings. */

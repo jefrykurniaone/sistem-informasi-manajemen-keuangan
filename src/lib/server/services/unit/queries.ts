@@ -1,7 +1,8 @@
-import { and, asc, count, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, count, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import type { Database } from '../../db';
 import { occupancies } from '../../db/schema/occupancy';
 import { units, type Unit } from '../../db/schema/unit';
+import { stillRunningOn } from '../occupancy/visibility';
 
 /**
  * Raw reads against `units` and `occupancies`, with no permission decision in them. The service
@@ -53,29 +54,40 @@ export async function findUnitById(db: Database, unitId: string): Promise<Unit |
 	return row;
 }
 
-/** What the admin screens need to know about one unit's running occupancies. */
+/** What the admin screens need to know about one unit's occupancies. */
 export interface OccupancySummary {
-	/** How many occupancies of the unit are still running. */
+	/** How many people are living in the unit on the day this was asked about. */
 	readonly activeOccupantCount: number;
-	/** Whether one of those running occupancies is the unit's primary occupant. */
+	/** Whether the primary-occupant slot the database guards is currently filled. */
 	readonly hasPrimaryOccupant: boolean;
 }
 
 /**
- * The running occupancies (`ended_on is null`) of each unit in `unitIds`, summarised — "jumlah
- * penghuni aktifnya" and whether anyone is currently the Penanggung Jawab. A unit with no running
- * occupancy is absent from the result rather than present with zeroes; the caller defaults a missing
- * entry to none.
+ * Each unit in `unitIds` summarised as of `today` — "jumlah penghuni aktifnya" and whether anyone
+ * holds the Penanggung Jawab slot. A unit nobody is living in is absent from the result rather than
+ * present with zeroes; the caller defaults a missing entry to none.
  *
- * **Both halves read "running" as `ended_on is null`**, the same predicate
- * `occupancies_primary_occupant_unique` uses. So `hasPrimaryOccupant` means exactly "the slot the
- * database guards is filled", and a primary occupant whose end date has been written but has not
- * arrived yet counts as gone here. That is deliberate and it is the conservative direction: the unit
- * shows up on the admin list as needing a primary occupant while there is still time to name the
- * successor, rather than on the day the invoices go out with nobody to address them to.
+ * **The two halves deliberately ask two different questions, with two different predicates.** They
+ * used to share one, and sharing it put a false sentence on the screen.
+ *
+ * - `activeOccupantCount` counts a stay that is **still running on `today`**: `ended_on is null or
+ *   ended_on >= today`. An end date written before it arrives — someone announcing in March that
+ *   they leave next year — does not stop them living there in the meantime, and counting them as
+ *   gone told a resident their own house had no occupants.
+ * - `hasPrimaryOccupant` stays on `ended_on is null`, the predicate
+ *   `occupancies_primary_occupant_unique` itself uses, so it means exactly "the slot the database
+ *   guards is filled". A primary occupant with a future end date therefore reads as gone *here*, and
+ *   that is the conservative direction on purpose: the unit surfaces on the admin list as needing a
+ *   successor while there is still time to name one, rather than on the day the invoices go out with
+ *   nobody to address them to. The `filter (where …)` clause is what keeps this half narrow while the
+ *   row set around it is the wider one.
+ *
+ * `coalesce` is not decoration: `bool_or` over an empty filtered set is `null`, which would reach the
+ * screen as a missing answer rather than as "no".
  */
 export async function summarizeActiveOccupancies(
 	db: Database,
+	today: string,
 	unitIds: readonly string[]
 ): Promise<ReadonlyMap<string, OccupancySummary>> {
 	if (unitIds.length === 0) {
@@ -86,10 +98,10 @@ export async function summarizeActiveOccupancies(
 		.select({
 			unitId: occupancies.unitId,
 			activeOccupantCount: count(),
-			hasPrimaryOccupant: sql<boolean>`bool_or(${occupancies.isPrimaryOccupant})`
+			hasPrimaryOccupant: sql<boolean>`coalesce(bool_or(${occupancies.isPrimaryOccupant}) filter (where ${occupancies.endedOn} is null), false)`
 		})
 		.from(occupancies)
-		.where(and(inArray(occupancies.unitId, unitIds), isNull(occupancies.endedOn)))
+		.where(and(inArray(occupancies.unitId, unitIds), stillRunningOn(occupancies.endedOn, today)))
 		.groupBy(occupancies.unitId);
 
 	return new Map(

@@ -93,17 +93,24 @@
 				/>
 			</div>
 
+			<!--
+				The box is drawn at 20 pixels and sits inside a 44-pixel square, so the whole square is
+				part of the label and toggles it. A 44-pixel checkbox would hit the target by being an
+				oddly huge box; this hits it without redrawing the control.
+			-->
 			<label
-				class="flex h-11 items-center gap-2 text-sm"
+				class="flex min-h-11 items-center gap-1 text-sm"
 				for="occupancy-form-primary-occupant-{uid}"
 			>
-				<input
-					id="occupancy-form-primary-occupant-{uid}"
-					name="isPrimaryOccupant"
-					type="checkbox"
-					value="true"
-					class="size-5 rounded border-border"
-				/>
+				<span class="flex size-11 shrink-0 items-center justify-center">
+					<input
+						id="occupancy-form-primary-occupant-{uid}"
+						name="isPrimaryOccupant"
+						type="checkbox"
+						value="true"
+						class="size-5 rounded border-border"
+					/>
+				</span>
 				{m.adminOccupancies_primaryLabel()}
 			</label>
 

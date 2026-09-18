@@ -48,6 +48,15 @@ const FUTURE_END = '2026-12-31';
 /** A day inside the stretch `STARTED_ON`–`FUTURE_END` covers. */
 const MID_YEAR = '2026-06-01';
 
+/**
+ * The instant every *read* in this file happens at, and therefore the day the reads decide "living
+ * here now" against. It sits after `ENDED_ON` and before `FUTURE_END`, so a stay ending on the first
+ * really has ended while one ending on the second has not — which is the whole distinction the
+ * occupant count and `/my-unit` turn on. Writes keep using a clock at `START`, because what they
+ * stamp is `createdAt` and the audit row, not a decision about today.
+ */
+const READ_CLOCK = new FakeClock('2026-08-01T12:00:00.000Z');
+
 /** Makes every block this file writes different from every other one, across every test. */
 let sequence = 0;
 function unique(prefix: string): string {
@@ -522,7 +531,7 @@ describe('endOccupancy', () => {
 			endedOn: ENDED_ON
 		});
 
-		const page = await listUnits(testDb.db, { actorId: superuserId, search: block });
+		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
 		const row = page.units.find((unit) => unit.id === unitId);
 		expect(row).toMatchObject({ hasPrimaryOccupant: false, activeOccupantCount: 0 });
 		expect(row && needsPrimaryOccupant(row)).toBe(true);
@@ -604,7 +613,7 @@ describe('listUnitOccupancies', () => {
 		const unitId = await insertUnitRow();
 
 		await expect(
-			listUnitOccupancies(testDb.db, await insertUser('Warga Pengintip'), unitId)
+			listUnitOccupancies(testDb.db, READ_CLOCK, await insertUser('Warga Pengintip'), unitId)
 		).rejects.toThrow(PermissionDeniedError);
 	});
 
@@ -619,10 +628,29 @@ describe('listUnitOccupancies', () => {
 		await insertOccupancyRow(unitId, later.residentId, { startedOn: MID_YEAR });
 		await insertOccupancyRow(otherUnitId, stranger.residentId);
 
-		const history = await listUnitOccupancies(testDb.db, superuserId, unitId);
+		const history = await listUnitOccupancies(testDb.db, READ_CLOCK, superuserId, unitId);
 
 		expect(history.map((row) => row.residentName)).toEqual(['Warga Baru', 'Warga Lama']);
 		expect(history[0]).toMatchObject({ unitId, startedOn: MID_YEAR, endedOn: null });
+	});
+
+	it('marks a stay whose end date has not arrived as still running, and a past one as not', async () => {
+		const superuserId = await insertSuperuser('Pengurus Riwayat Berjalan');
+		const unitId = await insertUnitRow();
+		const leavingNextYear = await insertResident('Warga Akan Pergi');
+		const alreadyGone = await insertResident('Warga Sudah Pergi Lama');
+		await insertOccupancyRow(unitId, leavingNextYear.residentId, { endedOn: FUTURE_END });
+		await insertOccupancyRow(unitId, alreadyGone.residentId, {
+			startedOn: '2025-01-01',
+			endedOn: ENDED_ON
+		});
+
+		const history = await listUnitOccupancies(testDb.db, READ_CLOCK, superuserId, unitId);
+
+		expect(history.map((row) => [row.residentName, row.isRunning])).toEqual([
+			['Warga Akan Pergi', true],
+			['Warga Sudah Pergi Lama', false]
+		]);
 	});
 });
 
@@ -651,7 +679,7 @@ describe('occupiedUnitsForUser', () => {
 	it('returns nothing for a signed-in account with no residents row yet', async () => {
 		const userId = await insertUser('Warga Belum Tercatat');
 
-		expect(await occupiedUnitsForUser(testDb.db, userId)).toEqual([]);
+		expect(await occupiedUnitsForUser(testDb.db, READ_CLOCK, userId)).toEqual([]);
 	});
 
 	it('returns the resident’s own running stay together with everyone recorded in that house', async () => {
@@ -664,7 +692,7 @@ describe('occupiedUnitsForUser', () => {
 		await insertOccupancyRow(unitId, housemate.residentId);
 		await insertOccupancyRow(unitId, formerNeighbour.residentId, { endedOn: ENDED_ON });
 
-		const [mine] = await occupiedUnitsForUser(testDb.db, me.userId);
+		const [mine] = await occupiedUnitsForUser(testDb.db, READ_CLOCK, me.userId);
 
 		expect(mine).toMatchObject({
 			unitId,
@@ -687,9 +715,56 @@ describe('occupiedUnitsForUser', () => {
 		await insertOccupancyRow(unitId, movedOut.residentId, { endedOn: ENDED_ON });
 		await insertOccupancyRow(unitId, movedIn.residentId, { startedOn: MID_YEAR });
 
-		const [mine] = await occupiedUnitsForUser(testDb.db, movedOut.userId);
+		const [mine] = await occupiedUnitsForUser(testDb.db, READ_CLOCK, movedOut.userId);
 
-		expect(mine).toMatchObject({ unitId, endedOn: ENDED_ON });
+		expect(mine).toMatchObject({ unitId, endedOn: ENDED_ON, isRunning: false });
 		expect(mine.occupants).toEqual([]);
+	});
+
+	it('still calls the stay running, and still names the household, when the end date has not arrived', async () => {
+		// Reported from the running application: a resident whose `ended_on` was set to next year was
+		// shown "Masa huni Anda di rumah ini sudah selesai" on the same screen as "Sejak … sampai
+		// <next year>", and the household was hidden from them — while they were living in the house.
+		const unitId = await insertUnitRow();
+		const leavingNextYear = await insertResident('Warga Pamit Untuk Tahun Depan');
+		const housemate = await insertResident('Warga Masih Serumah');
+		await insertOccupancyRow(unitId, leavingNextYear.residentId, {
+			endedOn: FUTURE_END,
+			isPrimaryOccupant: true
+		});
+		await insertOccupancyRow(unitId, housemate.residentId);
+
+		const [mine] = await occupiedUnitsForUser(testDb.db, READ_CLOCK, leavingNextYear.userId);
+
+		expect(mine).toMatchObject({ unitId, endedOn: FUTURE_END, isRunning: true });
+		expect(mine.occupants.map((occupant) => occupant.name)).toEqual([
+			'Warga Masih Serumah',
+			'Warga Pamit Untuk Tahun Depan'
+		]);
+	});
+
+	it('calls that same stay over once the day it ends on has passed', async () => {
+		const unitId = await insertUnitRow();
+		const leavingNextYear = await insertResident('Warga Pamit Lalu Pergi');
+		await insertOccupancyRow(unitId, leavingNextYear.residentId, { endedOn: FUTURE_END });
+
+		const [mine] = await occupiedUnitsForUser(
+			testDb.db,
+			new FakeClock('2027-01-01T00:00:00.000Z'),
+			leavingNextYear.userId
+		);
+
+		expect(mine).toMatchObject({ endedOn: FUTURE_END, isRunning: false });
+		expect(mine.occupants).toEqual([]);
+	});
+
+	it('counts the last day of a stay as still living there, not as already gone', async () => {
+		const unitId = await insertUnitRow();
+		const leavingToday = await insertResident('Warga Pergi Hari Ini');
+		await insertOccupancyRow(unitId, leavingToday.residentId, { endedOn: '2026-08-01' });
+
+		const [mine] = await occupiedUnitsForUser(testDb.db, READ_CLOCK, leavingToday.userId);
+
+		expect(mine).toMatchObject({ endedOn: '2026-08-01', isRunning: true });
 	});
 });

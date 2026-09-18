@@ -59,7 +59,7 @@
 					<p class="text-sm font-medium">{m.myUnit_primaryBadge()}</p>
 				{/if}
 
-				{#if occupancy.endedOn === null}
+				{#if occupancy.isRunning}
 					<h3 class="text-sm font-medium">{m.myUnit_occupantsHeading()}</h3>
 					<ul class="flex flex-col gap-2">
 						{#each occupancy.occupants as occupant (occupant.residentId)}

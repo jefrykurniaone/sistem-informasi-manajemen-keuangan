@@ -71,7 +71,7 @@
 					<p class="text-sm font-medium">{m.adminOccupancies_primaryBadge()}</p>
 				{/if}
 
-				{#if occupancy.endedOn === null}
+				{#if occupancy.isRunning}
 					<div class="flex flex-col gap-3 sm:flex-row sm:items-end">
 						<form method="POST" action="?/end" class="flex flex-1 flex-col gap-3 sm:flex-row">
 							<input type="hidden" name="occupancyId" value={occupancy.occupancyId} />

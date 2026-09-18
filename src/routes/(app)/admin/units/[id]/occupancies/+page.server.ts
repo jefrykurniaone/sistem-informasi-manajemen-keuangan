@@ -44,8 +44,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	const db = database();
 	try {
 		const [unit, occupancies, residents] = await Promise.all([
-			getUnit(db, locals.user.id, params.id),
-			listUnitOccupancies(db, locals.user.id, params.id),
+			getUnit(db, locals.user.id, params.id, systemClock),
+			listUnitOccupancies(db, systemClock, locals.user.id, params.id),
 			listAssignableResidents(db, locals.user.id)
 		]);
 		return { unit, occupancies, residents, roles: OCCUPANCY_ROLES };

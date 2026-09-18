@@ -8,7 +8,7 @@ import { residents } from '../../db/schema/resident';
 import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
 import { UnitNotFoundError } from '../unit';
-import type { DateRange } from './visibility';
+import { currentDay, isStillRunningOn, stillRunningOn, type DateRange } from './visibility';
 
 /**
  * Masa Huni: who lives in which house, for which stretch of time, and which one of them the house's
@@ -41,6 +41,18 @@ import type { DateRange } from './visibility';
  *
  * The database index stays the rule for the ordinary `ended_on is null` case, and nothing here
  * replaces it; this only covers what it cannot see.
+ *
+ * ## Two questions that look like one
+ *
+ * "Is the primary-occupant slot filled?" and "is this person living here now?" are different
+ * questions and take different predicates. The first is `ended_on is null`, because that is what
+ * `occupancies_primary_occupant_unique` means; the second is `isStillRunningOn` in `./visibility.ts`,
+ * `ended_on is null or ended_on >= today`. Answering the second with the first is what made a
+ * resident with a future end date read as having moved out already — see
+ * `summarizeActiveOccupancies` for the same split on the admin side. Everything in this module that
+ * says "now" uses the second one and takes a `Clock` to get the day; `assertPrimarySlotFree` uses
+ * neither, because an overlap between two stays is a question about their own days and never about
+ * today's.
  */
 
 /** The audit log's `action` for a newly recorded occupancy. */
@@ -162,6 +174,12 @@ export interface OccupancyRecord {
 	readonly role: OccupancyRole;
 	readonly startedOn: string;
 	readonly endedOn: string | null;
+	/**
+	 * Whether this person is living in the house today — `ended_on is null or ended_on >= today`, not
+	 * `ended_on is null`. A stay with an end date that has not arrived yet is still a stay, and the
+	 * screen's controls for ending it or making it the primary occupant have to stay reachable.
+	 */
+	readonly isRunning: boolean;
 	readonly isPrimaryOccupant: boolean;
 }
 
@@ -373,18 +391,22 @@ export async function setPrimaryOccupant(
  */
 export async function listUnitOccupancies(
 	db: DatabaseWriter,
+	clock: Clock,
 	actorId: string,
 	unitId: string
 ): Promise<readonly OccupancyRecord[]> {
 	await requirePermission(db, actorId, ACTION.manageOccupancies);
 
-	return db
+	const today = currentDay(clock);
+	const rows = await db
 		.select(OCCUPANCY_RECORD_COLUMNS)
 		.from(occupancies)
 		.innerJoin(residents, eq(residents.id, occupancies.residentId))
 		.innerJoin(user, eq(user.id, residents.userId))
 		.where(eq(occupancies.unitId, unitId))
 		.orderBy(desc(occupancies.startedOn), desc(occupancies.createdAt));
+
+	return rows.map((row) => ({ ...row, isRunning: isStillRunningOn(row.endedOn, today) }));
 }
 
 /** One person who can be attached to a house, for the picker on the admin form. */
@@ -429,11 +451,18 @@ export interface OwnOccupancy {
 	readonly role: OccupancyRole;
 	readonly startedOn: string;
 	readonly endedOn: string | null;
+	/**
+	 * Whether this resident is living in that house today. An end date that has been written but has
+	 * not arrived leaves this `true`: they still live there until that day comes, and a screen reading
+	 * `endedOn === null` instead would tell them their stay was over while they were standing in the
+	 * house.
+	 */
+	readonly isRunning: boolean;
 	readonly isPrimaryOccupant: boolean;
 	/**
-	 * Everyone recorded as living in that house at the moment, this resident included — empty for a
-	 * stay that has ended. Who lives there *now* is not part of what someone who has moved out may
-	 * see; their own stay is their own data and stays visible, the current household is not. That is
+	 * Everyone recorded as living in that house today, this resident included — empty once their own
+	 * stay is over. Who lives there *now* is not part of what someone who has moved out may see; their
+	 * own stay is their own data and stays visible, the current household is not. That is
 	 * `./visibility.ts`'s rule applied to a screen rather than to a query.
 	 */
 	readonly occupants: readonly FellowOccupant[];
@@ -450,8 +479,10 @@ export interface OwnOccupancy {
  */
 export async function occupiedUnitsForUser(
 	db: DatabaseWriter,
+	clock: Clock,
 	userId: string
 ): Promise<readonly OwnOccupancy[]> {
+	const today = currentDay(clock);
 	const stays = await db
 		.select({
 			occupancyId: occupancies.id,
@@ -469,18 +500,27 @@ export async function occupiedUnitsForUser(
 		.where(eq(residents.userId, userId))
 		.orderBy(desc(occupancies.startedOn), desc(occupancies.createdAt));
 
-	const runningUnitIds = stays.filter((stay) => stay.endedOn === null).map((stay) => stay.unitId);
-	const occupantsByUnit = await currentOccupantsOf(db, runningUnitIds);
+	const running = stays.filter((stay) => isStillRunningOn(stay.endedOn, today));
+	const occupantsByUnit = await currentOccupantsOf(
+		db,
+		today,
+		running.map((stay) => stay.unitId)
+	);
 
-	return stays.map((stay) => ({
-		...stay,
-		occupants: stay.endedOn === null ? (occupantsByUnit.get(stay.unitId) ?? []) : []
-	}));
+	return stays.map((stay) => {
+		const isRunning = isStillRunningOn(stay.endedOn, today);
+		return {
+			...stay,
+			isRunning,
+			occupants: isRunning ? (occupantsByUnit.get(stay.unitId) ?? []) : []
+		};
+	});
 }
 
-/** Everyone with a running occupancy of each unit in `unitIds`, in one query. */
+/** Everyone living in each unit in `unitIds` on `today`, in one query. */
 async function currentOccupantsOf(
 	db: DatabaseWriter,
+	today: string,
 	unitIds: readonly string[]
 ): Promise<ReadonlyMap<string, readonly FellowOccupant[]>> {
 	const byUnit = new Map<string, FellowOccupant[]>();
@@ -499,7 +539,7 @@ async function currentOccupantsOf(
 		.from(occupancies)
 		.innerJoin(residents, eq(residents.id, occupancies.residentId))
 		.innerJoin(user, eq(user.id, residents.userId))
-		.where(and(inArray(occupancies.unitId, unitIds), isNull(occupancies.endedOn)))
+		.where(and(inArray(occupancies.unitId, unitIds), stillRunningOn(occupancies.endedOn, today)))
 		.orderBy(asc(user.name));
 
 	for (const { unitId, ...occupant } of rows) {
