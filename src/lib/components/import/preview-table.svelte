@@ -98,14 +98,16 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each problems as problem (problem.rowNumber)}
+					<!-- Keyed by position, not by row number: two records can share a line number, and a
+				     repeated key is a runtime error rather than a rendering quirk. -->
+					{#each problems as problem, position (position)}
 						<tr class="border-b border-border last:border-0">
 							<th scope="row" class="py-2 pr-3 align-top font-medium whitespace-nowrap">
 								{problem.rowNumber}
 							</th>
 							<td class="py-2 align-top">
 								<ul class="flex flex-col gap-1">
-									{#each problem.reasons as reason (reason.code + reason.value)}
+									{#each problem.reasons as reason, reasonPosition (reasonPosition)}
 										<li class="break-words text-destructive">{reasonText(reason)}</li>
 									{/each}
 								</ul>

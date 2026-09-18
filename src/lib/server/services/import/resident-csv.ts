@@ -125,12 +125,22 @@ export interface ResidentImportResult {
 export class ImportRejectedError extends Error {
 	override readonly name = 'ImportRejectedError';
 
-	/** Every refused row, by line number. */
-	readonly problems: readonly ImportRowProblem[];
+	/**
+	 * What the file looks like as of the refusal — the preview the screen re-renders. It is carried
+	 * here rather than read again by the route: a third reading could answer differently from the one
+	 * that refused, and a screen saying "the import was cancelled" beside an enabled confirm button
+	 * is worse than either answer on its own.
+	 */
+	readonly preview: ImportPreview;
 
-	constructor(problems: readonly ImportRowProblem[]) {
-		super(`The import file has ${problems.length} row(s) that cannot be imported.`);
-		this.problems = problems;
+	constructor(preview: ImportPreview) {
+		super(`The import file has ${preview.problems.length} row(s) that cannot be imported.`);
+		this.preview = preview;
+	}
+
+	/** Every refused row, by line number. */
+	get problems(): readonly ImportRowProblem[] {
+		return this.preview.problems;
 	}
 }
 
@@ -150,6 +160,15 @@ export async function previewResidentImport(
 	await requirePermission(db, request.actorId, ACTION.importResidents);
 
 	const { rows, problems } = await examine(db, request.content);
+	return asPreview(request, rows, problems);
+}
+
+/** One reading of a file, as the screen shows it. */
+function asPreview(
+	request: ResidentImportRequest,
+	rows: readonly ParsedImportRow[],
+	problems: readonly ImportRowProblem[]
+): ImportPreview {
 	return {
 		fileName: request.fileName,
 		content: request.content,
@@ -186,7 +205,7 @@ export async function importResidents(
 
 		const { rows, problems } = await examine(transaction, request.content);
 		if (problems.length > 0) {
-			throw new ImportRejectedError(problems);
+			throw new ImportRejectedError(asPreview(request, rows, problems));
 		}
 
 		return writeImport(transaction, clock, request, rows);
@@ -202,18 +221,21 @@ async function examine(
 	const conflicts = await findStoredConflicts(reader, validation.rows);
 
 	return {
-		rows: validation.rows.filter((row) => !conflicts.has(row.rowNumber)),
-		problems: [...validation.problems, ...conflicts.values()].sort(
-			(left, right) => left.rowNumber - right.rowNumber
-		)
+		rows: validation.rows.filter((_row, position) => !conflicts.has(position)),
+		// Both lists are already in the file's own order, and a row never appears in both — the
+		// database is only asked about rows the file itself accepted — so merging them is a matter of
+		// keeping that order rather than of sorting by a line number two rows could share.
+		problems: mergeInFileOrder(validation.problems, [...conflicts.values()])
 	};
 }
 
 /**
  * The rows that clash with something already stored: a house already in the register, or an address
- * that already has an account. Keyed by line number, so a caller merges them with the file's own
- * problems without looking for duplicates — a row carrying a problem from the file never reaches
- * here.
+ * that already has an account.
+ *
+ * **Keyed by the row's position in `rows`, never by its line number.** A line number is not unique —
+ * see `Candidate` in `./validation.ts` — and a map keyed by one would drop a conflict, or attach it
+ * to the wrong row.
  */
 async function findStoredConflicts(
 	reader: DatabaseWriter,
@@ -232,7 +254,7 @@ async function findStoredConflicts(
 		)
 	]);
 
-	for (const row of rows) {
+	for (const [position, row] of rows.entries()) {
 		const reasons: ImportProblemReason[] = [];
 		if (storedUnits.has(unitKey(row.block, row.number))) {
 			reasons.push({
@@ -244,10 +266,36 @@ async function findStoredConflicts(
 			reasons.push({ code: IMPORT_PROBLEM.emailAlreadyRegistered, value: row.email });
 		}
 		if (reasons.length > 0) {
-			conflicts.set(row.rowNumber, { rowNumber: row.rowNumber, reasons });
+			conflicts.set(position, { rowNumber: row.rowNumber, reasons });
 		}
 	}
 	return conflicts;
+}
+
+/**
+ * Two lists of problems, each already in the file's own order, interleaved back into one that still
+ * is. Neither list is sorted by line number: two rows can share one, and sorting by it would let a
+ * row appear before the row above it.
+ */
+function mergeInFileOrder(
+	fromFile: readonly ImportRowProblem[],
+	fromDatabase: readonly ImportRowProblem[]
+): readonly ImportRowProblem[] {
+	const merged: ImportRowProblem[] = [];
+	let fileIndex = 0;
+	let databaseIndex = 0;
+
+	while (fileIndex < fromFile.length && databaseIndex < fromDatabase.length) {
+		if (fromFile[fileIndex].rowNumber <= fromDatabase[databaseIndex].rowNumber) {
+			merged.push(fromFile[fileIndex]);
+			fileIndex += 1;
+			continue;
+		}
+		merged.push(fromDatabase[databaseIndex]);
+		databaseIndex += 1;
+	}
+
+	return [...merged, ...fromFile.slice(fileIndex), ...fromDatabase.slice(databaseIndex)];
 }
 
 /**
@@ -268,6 +316,12 @@ async function registeredUnitKeys(reader: DatabaseWriter): Promise<ReadonlySet<s
  * The comparison is case-insensitive on both sides: `Budi@Komplek.id` and `budi@komplek.id` are one
  * address, and letting the second one through would hand the same person a second account that the
  * first one's owner can never sign into.
+ *
+ * **This is a read, and a read is not a constraint.** `user_email_unique` is on the raw column, so
+ * two writers committing addresses that differ only in capitals would both pass this check and both
+ * land. Closing that needs a unique index on `lower(email)`, which is a migration, and this spec
+ * adds none. Until it exists, the rule holds for every import that does not race another writer,
+ * and the import itself always lowercases what it stores.
  */
 async function registeredEmails(
 	reader: DatabaseWriter,
@@ -290,8 +344,8 @@ async function writeImport(
 ): Promise<ResidentImportResult> {
 	const now = clock.now();
 	const unitIdByKey = await insertUnits(transaction, rows, now);
-	const residentIdByRow = await insertResidents(transaction, clock, rows, now);
-	await insertOccupancies(transaction, clock, rows, unitIdByKey, residentIdByRow, now);
+	const residentIds = await insertResidents(transaction, clock, rows, now);
+	await insertOccupancies(transaction, clock, rows, unitIdByKey, residentIds, now);
 
 	// The audit log wants one row per thing that happened, and what happened here is one import — not
 	// a hundred unrelated houses. `targetId` is therefore the import's own identifier, generated here
@@ -323,11 +377,15 @@ async function insertUnits(
 
 /**
  * Inserts an account and a `residents` row for every row of the file, then the default Langganan of
- * each one, and says which `residents.id` each row's person got.
+ * each one, and answers with the `residents.id` of each row **in the same order as `rows`**.
+ *
+ * A list rather than a map keyed by the row's line number: a line number is not unique — see
+ * `Candidate` in `./validation.ts` — and keying by one collapsed two rows into a single resident,
+ * which would attach both of their houses to the same person.
  *
  * The accounts and the resident records go in one statement each; the Langganan are one call per
  * resident, because `ensureDefaultSubscriptions` is the one place that knows the default set and
- * this module has no business rebuilding it. The returned rows are matched back by `userId` rather
+ * this module has no business rebuilding it. The inserted rows are matched back by `userId` rather
  * than by position: an insert's `returning` order is not something to lean on.
  */
 async function insertResidents(
@@ -335,9 +393,8 @@ async function insertResidents(
 	clock: Clock,
 	rows: readonly ParsedImportRow[],
 	now: Date
-): Promise<ReadonlyMap<number, string>> {
+): Promise<readonly string[]> {
 	const accounts = rows.map((row) => ({
-		rowNumber: row.rowNumber,
 		id: randomUUID(),
 		name: row.name,
 		email: row.email
@@ -364,11 +421,8 @@ async function insertResidents(
 		await ensureDefaultSubscriptions(transaction, clock, resident.id);
 	}
 
-	return new Map(
-		accounts.map((account) => [
-			account.rowNumber,
-			required(residentIdByUserId.get(account.id), `resident row for account ${account.id}`)
-		])
+	return accounts.map((account) =>
+		required(residentIdByUserId.get(account.id), `resident row for account ${account.id}`)
 	);
 }
 
@@ -378,17 +432,18 @@ async function insertOccupancies(
 	clock: Clock,
 	rows: readonly ParsedImportRow[],
 	unitIdByKey: ReadonlyMap<string, string>,
-	residentIdByRow: ReadonlyMap<number, string>,
+	residentIds: readonly string[],
 	now: Date
 ): Promise<void> {
 	const startedOn = currentDay(clock);
 	await transaction.insert(occupancies).values(
-		rows.map((row) => ({
+		rows.map((row, position) => ({
 			unitId: required(
 				unitIdByKey.get(unitKey(row.block, row.number)),
 				`unit for row ${row.rowNumber}`
 			),
-			residentId: required(residentIdByRow.get(row.rowNumber), `resident for row ${row.rowNumber}`),
+			// By position in `rows`, which is how `insertResidents` answered — never by line number.
+			residentId: required(residentIds[position], `resident for row ${row.rowNumber}`),
 			role: row.role,
 			startedOn,
 			endedOn: null,

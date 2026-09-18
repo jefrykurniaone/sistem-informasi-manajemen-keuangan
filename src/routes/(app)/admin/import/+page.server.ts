@@ -8,9 +8,7 @@ import { systemClock } from '$lib/server/ports/clock';
 import {
 	importResidents,
 	previewResidentImport,
-	ImportRejectedError,
-	type ImportPreview,
-	type ResidentImportRequest
+	ImportRejectedError
 } from '$lib/server/services/import/resident-csv';
 import {
 	EmptyImportFileError,
@@ -56,6 +54,15 @@ export const actions: Actions = {
 			redirect(303, AUTH_PATHS.login);
 		}
 
+		// Before the body is read, not after: `previewResidentImport` checks the same permission, but
+		// reaching it means an upload of up to `BODY_SIZE_LIMIT` has already been materialised for
+		// somebody who was never allowed to send one.
+		try {
+			await requirePermission(database(), locals.user.id, ACTION.importResidents);
+		} catch (caught) {
+			throwAsRouteError(caught);
+		}
+
 		const form = await request.formData();
 		const file = form.get('file');
 		if (!(file instanceof File) || file.size === 0) {
@@ -64,7 +71,7 @@ export const actions: Actions = {
 
 		const importRequest = {
 			actorId: locals.user.id,
-			fileName: file.name,
+			fileName: trimmedFileName(file.name),
 			content: await file.text()
 		};
 		try {
@@ -82,7 +89,7 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const importRequest = {
 			actorId: locals.user.id,
-			fileName: String(form.get('fileName') ?? '').trim(),
+			fileName: trimmedFileName(String(form.get('fileName') ?? '')),
 			content: String(form.get('content') ?? '')
 		};
 		if (importRequest.content.trim() === '') {
@@ -94,24 +101,21 @@ export const actions: Actions = {
 			return { message: m.adminImport_importSuccess({ count: result.importedRowCount }) };
 		} catch (caught) {
 			if (caught instanceof ImportRejectedError) {
-				return fail(400, {
-					message: m.adminImport_importRejected(),
-					preview: await freshPreview(importRequest)
-				});
+				// The refusal carries the reading that refused, so the rows to fix are shown exactly as
+				// the transaction saw them — no second reading that could answer differently.
+				return fail(400, { message: m.adminImport_importRejected(), preview: caught.preview });
 			}
 			return refusalOrThrow(caught);
 		}
 	}
 };
 
-/**
- * The preview of a file whose confirmation was refused, so that the screen shows the superuser the
- * rows to fix rather than an error with nothing under it. It is read anew rather than carried
- * through the rejection, because between the upload and now somebody may have registered one of the
- * houses in it — and that is exactly the kind of row this second reading has to name.
- */
-async function freshPreview(request: ResidentImportRequest): Promise<ImportPreview> {
-	return previewResidentImport(database(), request);
+/** The longest file name worth keeping. It is written into an audit row, and it is untrusted. */
+const MAX_FILE_NAME_LENGTH = 255;
+
+/** A file name as it is recorded: trimmed, and cut to a length an audit row can carry. */
+function trimmedFileName(name: string): string {
+	return name.trim().slice(0, MAX_FILE_NAME_LENGTH);
 }
 
 /** Turns a file this import cannot use into `fail(400, …)`, or hands anything else on. */

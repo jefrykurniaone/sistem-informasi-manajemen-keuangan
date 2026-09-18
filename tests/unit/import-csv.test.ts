@@ -323,6 +323,7 @@ describe('importResidents, what one confirmed row creates', () => {
 
 	it('records one audit row naming the actor, the file and how many rows went in', async () => {
 		const actorId = await insertSuperuser('Pengurus Impor Jejak Audit');
+		const before = await rowCounts();
 
 		const result = await importResidents(testDb.db, new FakeClock(START), {
 			actorId,
@@ -333,6 +334,9 @@ describe('importResidents, what one confirmed row creates', () => {
 		const entries = await auditEntriesFor(testDb.db, result.importId);
 
 		expect(entries).toHaveLength(1);
+		// One row for the whole import, not one per imported row: the count of the whole table, not
+		// only of the rows carrying this import's own target id.
+		expect((await rowCounts()).auditEntries).toBe(before.auditEntries + 1);
 		expect(entries[0]).toMatchObject({
 			actorId,
 			action: RESIDENTS_IMPORTED_ACTION,
@@ -413,8 +417,41 @@ describe('importResidents, a hundred rows', () => {
 		const after = await rowCounts();
 		expect(result.importedRowCount).toBe(100);
 		expect(after.units).toBe(before.units + 100);
+		expect(after.users).toBe(before.users + 100);
+		expect(after.residents).toBe(before.residents + 100);
 		expect(after.occupancies).toBe(before.occupancies + 100);
 		expect(after.subscriptions).toBe(before.subscriptions + 100 * SUBSCRIPTION_KINDS.length);
 		expect(elapsed).toBeLessThan(10_000);
+	});
+
+	it('gives every row its own resident, attached to the house that row named', async () => {
+		const actorId = await insertSuperuser('Pengurus Impor Pasangan Baris');
+		const block = uniqueBlock();
+
+		await importResidents(testDb.db, new FakeClock(START), {
+			actorId,
+			fileName: 'warga.csv',
+			content: fileOf(block, 20)
+		});
+
+		const written = await testDb.db
+			.select({
+				residentId: occupancies.residentId,
+				number: units.number,
+				email: user.email
+			})
+			.from(occupancies)
+			.innerJoin(units, eq(units.id, occupancies.unitId))
+			.innerJoin(residents, eq(residents.id, occupancies.residentId))
+			.innerJoin(user, eq(user.id, residents.userId))
+			.where(eq(units.block, block));
+
+		expect(written).toHaveLength(20);
+		// Twenty distinct people, and each one living in the house their own line named — the pairing
+		// a resident map keyed by a line number silently got wrong.
+		expect(new Set(written.map((row) => row.residentId)).size).toBe(20);
+		for (const row of written) {
+			expect(row.email).toBe(`warga.${block.toLowerCase()}.${row.number}@komplek.id`);
+		}
 	});
 });

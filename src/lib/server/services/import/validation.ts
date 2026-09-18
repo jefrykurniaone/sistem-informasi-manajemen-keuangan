@@ -225,13 +225,17 @@ export function validateImportCsv(content: string): CsvValidation {
 		throw new ImportTooLargeError(dataRecords.length);
 	}
 
-	const reasonsByRow = new Map<number, ImportProblemReason[]>();
-	const candidates = dataRecords.map((record) => readCandidate(record, reasonsByRow));
-	flagRepeats(candidates, reasonsByRow);
+	const reasonsByPosition = new Map<number, ImportProblemReason[]>();
+	const candidates = dataRecords.map((record, position) =>
+		readCandidate(record, position, reasonsByPosition)
+	);
+	flagRepeats(candidates, reasonsByPosition);
 
 	return {
-		rows: candidates.filter((candidate) => !reasonsByRow.has(candidate.rowNumber)).map(asParsedRow),
-		problems: collectProblems(reasonsByRow)
+		rows: candidates
+			.filter((candidate) => !reasonsByPosition.has(candidate.position))
+			.map(asParsedRow),
+		problems: collectProblems(candidates, reasonsByPosition)
 	};
 }
 
@@ -252,12 +256,21 @@ export function unitLabel(block: string, number: string): string {
 }
 
 /** An address as it is compared and stored: trimmed and lowercased, so `A@B.com` is `a@b.com`. */
-export function normalizeEmail(value: string): string {
+function normalizeEmail(value: string): string {
 	return value.trim().toLowerCase();
 }
 
-/** A row on its way through validation, before it is known whether anything refuses it. */
+/**
+ * A row on its way through validation, before it is known whether anything refuses it.
+ *
+ * **`position` is the key everything internal is held by, never `rowNumber`.** A line number is not
+ * unique — a file written with bare `\r` endings, or a stray character after a closing quote, can
+ * put two records on one line — and keying reasons or resident ids by it would merge two rows into
+ * one. `rowNumber` is reported, and nothing is looked up by it.
+ */
 interface Candidate {
+	/** Where this row sits among the data rows, counting from 0. Unique by construction. */
+	readonly position: number;
 	readonly rowNumber: number;
 	readonly block: string;
 	readonly number: string;
@@ -280,55 +293,56 @@ function assertHeader(header: CsvRecord | undefined): void {
 /** Reads one data record, recording every reason the row is refused on its own terms. */
 function readCandidate(
 	record: CsvRecord,
-	reasonsByRow: Map<number, ImportProblemReason[]>
+	position: number,
+	reasonsByPosition: Map<number, ImportProblemReason[]>
 ): Candidate {
-	const rowNumber = record.lineNumber;
 	if (record.fields.length !== COLUMN_COUNT) {
-		addReason(reasonsByRow, rowNumber, IMPORT_PROBLEM.malformedRow);
+		addReason(reasonsByPosition, position, IMPORT_PROBLEM.malformedRow);
 	}
 
 	const [block = '', number = '', name = '', email = '', role = ''] = record.fields.map((field) =>
 		field.trim()
 	);
 
-	requireText(reasonsByRow, rowNumber, block, IMPORT_PROBLEM.missingBlock);
-	requireText(reasonsByRow, rowNumber, number, IMPORT_PROBLEM.missingNumber);
-	requireText(reasonsByRow, rowNumber, name, IMPORT_PROBLEM.missingName);
+	requireText(reasonsByPosition, position, block, IMPORT_PROBLEM.missingBlock);
+	requireText(reasonsByPosition, position, number, IMPORT_PROBLEM.missingNumber);
+	requireText(reasonsByPosition, position, name, IMPORT_PROBLEM.missingName);
 
 	return {
-		rowNumber,
+		position,
+		rowNumber: record.lineNumber,
 		block,
 		number,
 		name,
-		email: checkEmail(reasonsByRow, rowNumber, email),
-		role: checkRole(reasonsByRow, rowNumber, role)
+		email: checkEmail(reasonsByPosition, position, email),
+		role: checkRole(reasonsByPosition, position, role)
 	};
 }
 
 /** Records `code` when `value` is empty. */
 function requireText(
-	reasonsByRow: Map<number, ImportProblemReason[]>,
-	rowNumber: number,
+	reasonsByPosition: Map<number, ImportProblemReason[]>,
+	position: number,
 	value: string,
 	code: ImportProblemCode
 ): void {
 	if (value === '') {
-		addReason(reasonsByRow, rowNumber, code);
+		addReason(reasonsByPosition, position, code);
 	}
 }
 
 /** The address, normalized — or the empty string, with the reason recorded, when it is not one. */
 function checkEmail(
-	reasonsByRow: Map<number, ImportProblemReason[]>,
-	rowNumber: number,
+	reasonsByPosition: Map<number, ImportProblemReason[]>,
+	position: number,
 	written: string
 ): string {
 	if (written === '') {
-		addReason(reasonsByRow, rowNumber, IMPORT_PROBLEM.missingEmail);
+		addReason(reasonsByPosition, position, IMPORT_PROBLEM.missingEmail);
 		return '';
 	}
 	if (!isEmailAddress(written)) {
-		addReason(reasonsByRow, rowNumber, IMPORT_PROBLEM.invalidEmail, written);
+		addReason(reasonsByPosition, position, IMPORT_PROBLEM.invalidEmail, written);
 		return '';
 	}
 	return normalizeEmail(written);
@@ -336,17 +350,17 @@ function checkEmail(
 
 /** The occupancy role the word means — or `undefined`, with the reason recorded. */
 function checkRole(
-	reasonsByRow: Map<number, ImportProblemReason[]>,
-	rowNumber: number,
+	reasonsByPosition: Map<number, ImportProblemReason[]>,
+	position: number,
 	written: string
 ): OccupancyRole | undefined {
 	if (written === '') {
-		addReason(reasonsByRow, rowNumber, IMPORT_PROBLEM.missingRole);
+		addReason(reasonsByPosition, position, IMPORT_PROBLEM.missingRole);
 		return undefined;
 	}
 	const role = ROLE_BY_INDONESIAN_WORD[written.toLowerCase()];
 	if (!role) {
-		addReason(reasonsByRow, rowNumber, IMPORT_PROBLEM.unknownRole, written);
+		addReason(reasonsByPosition, position, IMPORT_PROBLEM.unknownRole, written);
 	}
 	return role;
 }
@@ -380,23 +394,23 @@ function hasWhitespace(value: string): boolean {
 
 /** Records a reason against a row, keeping the reasons of one row together and in order. */
 function addReason(
-	reasonsByRow: Map<number, ImportProblemReason[]>,
-	rowNumber: number,
+	reasonsByPosition: Map<number, ImportProblemReason[]>,
+	position: number,
 	code: ImportProblemCode,
 	value = ''
 ): void {
-	const reasons = reasonsByRow.get(rowNumber);
+	const reasons = reasonsByPosition.get(position);
 	if (reasons) {
 		reasons.push({ code, value });
 		return;
 	}
-	reasonsByRow.set(rowNumber, [{ code, value }]);
+	reasonsByPosition.set(position, [{ code, value }]);
 }
 
 /** Records the repeats: every row of a house named twice, and every row of an address written twice. */
 function flagRepeats(
 	candidates: readonly Candidate[],
-	reasonsByRow: Map<number, ImportProblemReason[]>
+	reasonsByPosition: Map<number, ImportProblemReason[]>
 ): void {
 	const byUnit = groupBy(candidates, (candidate) =>
 		candidate.block === '' || candidate.number === ''
@@ -404,7 +418,7 @@ function flagRepeats(
 			: unitKey(candidate.block, candidate.number)
 	);
 	for (const group of byUnit.values()) {
-		flagGroup(group, reasonsByRow, IMPORT_PROBLEM.duplicateUnitInFile, (candidate) =>
+		flagGroup(group, reasonsByPosition, IMPORT_PROBLEM.duplicateUnitInFile, (candidate) =>
 			unitLabel(candidate.block, candidate.number)
 		);
 	}
@@ -415,7 +429,7 @@ function flagRepeats(
 	for (const group of byEmail.values()) {
 		flagGroup(
 			group,
-			reasonsByRow,
+			reasonsByPosition,
 			IMPORT_PROBLEM.duplicateEmailInFile,
 			(candidate) => candidate.email
 		);
@@ -425,7 +439,7 @@ function flagRepeats(
 /** Records `code` against every row of a group that holds more than one. */
 function flagGroup(
 	group: readonly Candidate[],
-	reasonsByRow: Map<number, ImportProblemReason[]>,
+	reasonsByPosition: Map<number, ImportProblemReason[]>,
 	code: ImportProblemCode,
 	valueOf: (candidate: Candidate) => string
 ): void {
@@ -433,7 +447,7 @@ function flagGroup(
 		return;
 	}
 	for (const candidate of group) {
-		addReason(reasonsByRow, candidate.rowNumber, code, valueOf(candidate));
+		addReason(reasonsByPosition, candidate.position, code, valueOf(candidate));
 	}
 }
 
@@ -458,13 +472,24 @@ function groupBy(
 	return groups;
 }
 
-/** The recorded reasons as the list a screen renders, ordered by line number. */
+/**
+ * The recorded reasons as the list a screen renders, in the order the rows appear in the file.
+ *
+ * Built by walking the candidates rather than the map, so the order is the file's own and two rows
+ * that happen to share a line number each keep their own entry.
+ */
 function collectProblems(
-	reasonsByRow: ReadonlyMap<number, ImportProblemReason[]>
+	candidates: readonly Candidate[],
+	reasonsByPosition: ReadonlyMap<number, ImportProblemReason[]>
 ): readonly ImportRowProblem[] {
-	return [...reasonsByRow.entries()]
-		.map(([rowNumber, reasons]) => ({ rowNumber, reasons }))
-		.sort((left, right) => left.rowNumber - right.rowNumber);
+	const problems: ImportRowProblem[] = [];
+	for (const candidate of candidates) {
+		const reasons = reasonsByPosition.get(candidate.position);
+		if (reasons) {
+			problems.push({ rowNumber: candidate.rowNumber, reasons });
+		}
+	}
+	return problems;
 }
 
 /**
@@ -511,9 +536,19 @@ function readRecord(scanner: Scanner): string[] {
 	}
 }
 
-/** Reads one field, quoted or bare. */
+/**
+ * Reads one field, quoted or bare.
+ *
+ * Anything written after a closing quote and before the next comma or line break — `"pemilik"X` —
+ * is kept as part of the same field rather than ending the record where it stands. Ending it there
+ * would start a second record on the same line, and a line number is what the superuser is sent to
+ * look at; two records on one line is a row nobody can find.
+ */
 function readField(scanner: Scanner): string {
-	return scanner.text[scanner.index] === QUOTE ? readQuotedField(scanner) : readBareField(scanner);
+	if (scanner.text[scanner.index] !== QUOTE) {
+		return readBareField(scanner);
+	}
+	return readQuotedField(scanner) + readBareField(scanner);
 }
 
 /**
@@ -535,13 +570,24 @@ function readQuotedField(scanner: Scanner): string {
 			value += QUOTE;
 			continue;
 		}
-		if (character === LINE_FEED) {
+		if (isLineStart(scanner, character)) {
 			scanner.line += 1;
 		}
 		scanner.index += 1;
 		value += character;
 	}
 	return value;
+}
+
+/**
+ * Whether the character at the scanner's position begins a new line inside a quoted field: a `\n`,
+ * or a `\r` that no `\n` follows. The `\r` of a `\r\n` is left to its `\n`, so a pair counts once.
+ */
+function isLineStart(scanner: Scanner, character: string): boolean {
+	if (character === LINE_FEED) {
+		return true;
+	}
+	return character === CARRIAGE_RETURN && scanner.text[scanner.index + 1] !== LINE_FEED;
 }
 
 /** Reads a field written without quotes: everything up to the next comma or line break. */
@@ -558,10 +604,21 @@ function isFieldEnd(character: string): boolean {
 	return character === FIELD_SEPARATOR || character === LINE_FEED || character === CARRIAGE_RETURN;
 }
 
-/** Steps over a `\n`, a `\r\n`, or the end of the text, counting the line. */
+/**
+ * Steps over a `\n`, a `\r\n`, a bare `\r`, or the end of the text, counting the line.
+ *
+ * A bare `\r` counts too. Some spreadsheets still write files that way, and a parser that stepped
+ * over one without counting would give every record in such a file line 1 — which is both a useless
+ * number to send someone to and, worse, a number two rows would share.
+ */
 function consumeLineBreak(scanner: Scanner): void {
-	if (scanner.text[scanner.index] === CARRIAGE_RETURN) {
+	const hadCarriageReturn = scanner.text[scanner.index] === CARRIAGE_RETURN;
+	if (hadCarriageReturn) {
 		scanner.index += 1;
+	}
+	if (hadCarriageReturn && scanner.text[scanner.index] !== LINE_FEED) {
+		scanner.line += 1;
+		return;
 	}
 	if (scanner.text[scanner.index] === LINE_FEED) {
 		scanner.index += 1;

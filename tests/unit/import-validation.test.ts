@@ -25,6 +25,9 @@ const HEADER = IMPORT_CSV_HEADER.join(',');
 /** U+FEFF, built from its code point rather than typed: a literal one is invisible in a diff. */
 const BYTE_ORDER_MARK = String.fromCodePoint(0xfeff);
 
+/** One data line nothing refuses, for the tests that only care about the rows around it. */
+const GOOD_ROW = 'A,1,Budi,budi@komplek.id,pemilik';
+
 /** The committed fixture named by `name`, read as the upload would hand it over. */
 function fixture(name: string): string {
 	return readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8');
@@ -77,6 +80,21 @@ describe('parseCsvRecords', () => {
 
 		expect(records.at(-1)?.lineNumber).toBe(4);
 	});
+
+	it('counts the lines of a file written with bare carriage returns', () => {
+		const records = parseCsvRecords(
+			`${HEADER}\rA,1,Budi,budi@komplek.id,pemilik\rA,2,Sari,sari@komplek.id,penyewa`
+		);
+
+		expect(records.map((record) => record.lineNumber)).toEqual([1, 2, 3]);
+	});
+
+	it('keeps text written after a closing quote in the same field, never starting a second record', () => {
+		const records = parseCsvRecords('A,1,Budi,budi@komplek.id,"pemilik"X,2,Sari');
+
+		expect(records).toHaveLength(1);
+		expect(records[0].fields[4]).toBe('pemilikX');
+	});
 });
 
 describe('validateImportCsv, whole-file refusals', () => {
@@ -112,9 +130,7 @@ describe('validateImportCsv, whole-file refusals', () => {
 
 describe('validateImportCsv, rows it accepts', () => {
 	it('maps the Indonesian occupancy roles to the ones the schema stores', () => {
-		const result = validateImportCsv(
-			file('A,1,Budi,budi@komplek.id,pemilik', 'A,2,Sari,sari@komplek.id,PENYEWA')
-		);
+		const result = validateImportCsv(file(GOOD_ROW, 'A,2,Sari,sari@komplek.id,PENYEWA'));
 
 		expect(result.rows.map((row) => row.role)).toEqual([
 			OCCUPANCY_ROLE.owner,
@@ -135,11 +151,19 @@ describe('validateImportCsv, rows it accepts', () => {
 	});
 
 	it('numbers a row by its line in the file, counting the header as line 1', () => {
-		const result = validateImportCsv(
-			file('A,1,Budi,budi@komplek.id,pemilik', 'A,2,Sari,sari@komplek.id,penyewa')
-		);
+		const result = validateImportCsv(file(GOOD_ROW, 'A,2,Sari,sari@komplek.id,penyewa'));
 
 		expect(result.rows.map((row) => row.rowNumber)).toEqual([2, 3]);
+	});
+
+	it('gives every row of a file written with bare carriage returns its own line number', () => {
+		const result = validateImportCsv(
+			`${HEADER}\r${GOOD_ROW}\rA,2,Sari,sari@komplek.id,penyewa\rA,3,Tono,tono@komplek.id,pemilik`
+		);
+
+		const rowNumbers = result.rows.map((row) => row.rowNumber);
+		expect(rowNumbers).toEqual([2, 3, 4]);
+		expect(new Set(rowNumbers).size).toBe(rowNumbers.length);
 	});
 
 	it('accepts the committed hundred-row fixture whole, with no problem at all', () => {
@@ -176,7 +200,7 @@ describe('validateImportCsv, the reasons a row is refused', () => {
 	});
 
 	it('refuses every row of a house named twice, not only the second one', () => {
-		const content = file('A,1,Budi,budi@komplek.id,pemilik', 'A,1,Sari,sari@komplek.id,penyewa');
+		const content = file(GOOD_ROW, 'A,1,Sari,sari@komplek.id,penyewa');
 
 		expect(codesAt(content, 2)).toContain(IMPORT_PROBLEM.duplicateUnitInFile);
 		expect(codesAt(content, 3)).toContain(IMPORT_PROBLEM.duplicateUnitInFile);
