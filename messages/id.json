@@ -880,5 +880,10 @@
 	"emailPaymentRejected_greeting": "Halo,",
 	"emailPaymentRejected_intro": "Pembayaran Anda sebesar {amount} ditolak pengurus dengan alasan berikut.",
 	"emailPaymentRejected_reasonLine": "Alasan: {reason}",
-	"emailPaymentRejected_closing": "Silakan catat pembayaran baru setelah masalah di atas diperbaiki."
+	"emailPaymentRejected_closing": "Silakan catat pembayaran baru setelah masalah di atas diperbaiki.",
+	"emailNewPost_subject": "Terbitan baru: {title}",
+	"emailNewPost_greeting": "Halo,",
+	"emailNewPost_intro": "Ada terbitan baru di papan pengumuman komplek Anda: {title}",
+	"emailNewPost_linkLabel": "Baca selengkapnya:",
+	"emailNewPost_footer": "Anda menerima email ini karena mengaktifkan notifikasi terbitan baru di preferensi profil Anda."
 }

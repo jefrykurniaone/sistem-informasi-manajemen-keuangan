@@ -23,6 +23,7 @@ import {
 import { enqueueEmail } from '$lib/server/email/queue';
 import { INVITATION_KIND } from '$lib/server/email/templates/invitation';
 import { INVOICE_ISSUED_KIND } from '$lib/server/email/templates/invoice-issued';
+import { NEW_POST_KIND } from '$lib/server/email/templates/new-post';
 import {
 	PASSWORD_RESET_KIND,
 	passwordResetPayload
@@ -280,7 +281,8 @@ describe('applicationEmailTemplates', () => {
 				REGISTRATION_APPROVED_KIND,
 				INVOICE_ISSUED_KIND,
 				PAYMENT_VERIFIED_KIND,
-				PAYMENT_REJECTED_KIND
+				PAYMENT_REJECTED_KIND,
+				NEW_POST_KIND
 			].sort()
 		);
 		expect(

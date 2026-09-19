@@ -880,5 +880,10 @@
 	"emailPaymentRejected_greeting": "Hello,",
 	"emailPaymentRejected_intro": "Your payment of {amount} was rejected by the management for the following reason.",
 	"emailPaymentRejected_reasonLine": "Reason: {reason}",
-	"emailPaymentRejected_closing": "Please record a new payment once the issue above has been fixed."
+	"emailPaymentRejected_closing": "Please record a new payment once the issue above has been fixed.",
+	"emailNewPost_subject": "New post: {title}",
+	"emailNewPost_greeting": "Hello,",
+	"emailNewPost_intro": "There is a new post on your complex's announcement board: {title}",
+	"emailNewPost_linkLabel": "Read more:",
+	"emailNewPost_footer": "You are receiving this email because you turned on new-post notifications in your profile preferences."
 }

@@ -15,6 +15,7 @@ import { residents } from '../../db/schema/resident';
 import type { Clock } from '../../ports/clock';
 import type { FileStore } from '../../ports/file-store';
 import { renderPostBody } from './markdown';
+import { notifyNewPost } from './notification';
 
 /**
  * The announcement board's write side: an admin writing a kegiatan or a pengumuman, saving it as a
@@ -30,6 +31,10 @@ import { renderPostBody } from './markdown';
  *   wajah" filtering, the upcoming-events ordering and the category filter belong to the ticket that
  *   builds the public board (#40). What that ticket needs from this one is `renderPostBody` in
  *   `./markdown.ts`, which is the security boundary and is exported for exactly that reason.
+ * - **Who gets emailed about a new Post is not here either.** `./notification.ts` holds
+ *   `notifyNewPost` — the `new-post` Langganan recipients, the payload it sends them, and the
+ *   `readOrigin()`-built link. `publishPost` below calls it exactly once, after its own transaction
+ *   has committed and only for a Post's first publication — see `publishPost`'s own doc comment.
  * - **The database owns three rules and this module owns the rest.** `posts_type_check`,
  *   `posts_status_check` and `posts_time_order_check` are in `src/lib/server/db/schema/post.ts`.
  *   Everything below — an `announcement` may not carry event times, an `event` needs a start time,
@@ -503,12 +508,37 @@ export interface PostStatusChangeRequest {
 }
 
 /**
+ * What a caller may hand `publishPost` instead of the production notifier.
+ *
+ * The one field is for a test only: production code never has a reason to pass it, which is why
+ * every existing caller of `publishPost` — the admin route among them — keeps compiling unchanged
+ * against the settings argument being optional.
+ */
+export interface PublishPostSettings {
+	/**
+	 * Replaces `notifyNewPost` for this call. A test hands this a spy or a no-op so it can assert on
+	 * the decision to notify without a real `Database` write; production code never sets it, so
+	 * `publishPost` always queues through the real recipient list otherwise.
+	 */
+	readonly notify?: (db: Database, clock: Clock, post: Post) => Promise<void>;
+}
+
+/**
  * Puts a Post on the public board, from `draft` or from `archived`.
  *
  * `publishedAt` is stamped only the first time. Story 18 asks an admin to see *when* a publication
  * was published, and for one that was archived and brought back that answer is still the day it
  * first reached the board — restamping it would quietly rewrite the record every time somebody
  * un-archived something.
+ *
+ * **The `new-post` email is queued here, after the transaction commits, and only when this was the
+ * Post's first publication.** `publishedAt` being `null` right before this change is that fact —
+ * exactly the condition the doc comment above already explains for `publishedAt` itself — so no
+ * migration and no new column were needed to answer "has this Post already notified everyone once".
+ * Queuing after `changePostStatus`'s transaction has resolved, rather than inside it, means a Post
+ * whose publish is rolled back for some other reason never left an email promising something that
+ * did not happen; see `src/lib/server/email/queue.ts`'s own doc comment for why that ordering is the
+ * whole guarantee a queue gives.
  *
  * @throws {PermissionDeniedError} when `actorId` may not manage Posts.
  * @throws {PostNotFoundError} when `postId` names no Post.
@@ -517,13 +547,31 @@ export interface PostStatusChangeRequest {
 export async function publishPost(
 	db: Database,
 	clock: Clock,
-	request: PostStatusChangeRequest
+	request: PostStatusChangeRequest,
+	settings: PublishPostSettings = {}
 ): Promise<Post> {
-	return changePostStatus(db, clock, request, POST_STATUS.published, POST_PUBLISHED_ACTION);
+	const { row, previousPublishedAt } = await changePostStatus(
+		db,
+		clock,
+		request,
+		POST_STATUS.published,
+		POST_PUBLISHED_ACTION
+	);
+
+	if (previousPublishedAt === null) {
+		const notify = settings.notify ?? notifyNewPost;
+		await notify(db, clock, row);
+	}
+
+	return row;
 }
 
 /**
  * Takes a Post off the public board without deleting it — story 10.
+ *
+ * Queues nothing: archiving is not a publication event, and `changePostStatus` leaves
+ * `publishedAt` exactly where it was, which is what lets a later `publishPost` on the same Post
+ * recognise this was not its first time and stay silent too.
  *
  * @throws {PermissionDeniedError} when `actorId` may not manage Posts.
  * @throws {PostNotFoundError} when `postId` names no Post.
@@ -534,7 +582,22 @@ export async function archivePost(
 	clock: Clock,
 	request: PostStatusChangeRequest
 ): Promise<Post> {
-	return changePostStatus(db, clock, request, POST_STATUS.archived, POST_ARCHIVED_ACTION);
+	const { row } = await changePostStatus(
+		db,
+		clock,
+		request,
+		POST_STATUS.archived,
+		POST_ARCHIVED_ACTION
+	);
+	return row;
+}
+
+/** What `changePostStatus` hands back: the updated row, and what `publishedAt` was before the change. */
+interface StatusChangeResult {
+	readonly row: Post;
+	/** `existing.publishedAt`, read before this change — `publishPost` reads it to decide whether this
+	 *  was the Post's first publication. */
+	readonly previousPublishedAt: Date | null;
 }
 
 /** Shared body of `publishPost` and `archivePost`: they differ only in target status and audit name. */
@@ -544,7 +607,7 @@ async function changePostStatus(
 	request: PostStatusChangeRequest,
 	to: PostStatus,
 	action: string
-): Promise<Post> {
+): Promise<StatusChangeResult> {
 	return db.transaction(async (transaction) => {
 		await requirePermission(transaction, request.actorId, ACTION.managePosts);
 
@@ -573,7 +636,7 @@ async function changePostStatus(
 			after: { status: row.status, publishedAt: row.publishedAt }
 		});
 
-		return row;
+		return { row, previousPublishedAt: existing.publishedAt };
 	});
 }
 
