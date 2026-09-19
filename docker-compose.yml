@@ -9,6 +9,7 @@ services:
       NODE_ENV: development
       ORIGIN: ${ORIGIN:-http://localhost:5173}
       VITE_USE_POLLING: ${VITE_USE_POLLING:-false}
+      BODY_SIZE_LIMIT: ${BODY_SIZE_LIMIT:-16M}
       DATABASE_URL: postgres://${POSTGRES_USER:-komplek}:${POSTGRES_PASSWORD:-kata-sandi-lokal-ganti-saya}@db:5432/${POSTGRES_DB:-komplek}
       # Written here rather than forwarded from .env, for the same reason as DATABASE_URL above:
       # one value cannot describe two network viewpoints. Inside this network the mail server is
