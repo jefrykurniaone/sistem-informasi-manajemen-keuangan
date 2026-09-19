@@ -404,8 +404,15 @@ describe('startJobScheduler', () => {
 		});
 
 		expect(await waitFor(() => following.contexts.length >= 1)).toBe(true);
-		const failures = await runsOf(failing.name);
-		expect(failures[0]).toMatchObject({ status: JOB_RUN_STATUS.failed, error: FAILURE_MESSAGE });
+		// The failed row is looked for rather than the first one. `failJobRun` takes a row out of the
+		// partial claim index, so the tick twenty milliseconds later claims this same fixed period
+		// again and inserts a second `running` row; both carry the same `startedAt` because the clock
+		// is fake, so `runsOf` breaks the tie on a random uuid and whichever row sorts first is a coin
+		// flip. The failure this test is about is on the failed row either way, and it is certain to
+		// exist by now: `runDueJobs` awaits `failJobRun` before it reaches the job after it, which is
+		// what the line above waited for.
+		const failed = (await runsOf(failing.name)).find((row) => row.status === JOB_RUN_STATUS.failed);
+		expect(failed).toMatchObject({ status: JOB_RUN_STATUS.failed, error: FAILURE_MESSAGE });
 	});
 
 	it('replaces the trigger already running rather than adding a second one', async () => {
