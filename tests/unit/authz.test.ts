@@ -82,7 +82,12 @@ const ACTIONS_NOT_SUPERUSER_ONLY: Readonly<Partial<Record<Action, readonly Role[
 	// admin" — the same reading that put `managePosts`, `handleComplaints` and
 	// `recordCashTransactions` there: none of them change the past or who may do what, which is what
 	// keeps them out of Superuser's sentence in `CONTEXT.md`.
-	[ACTION.readOverdue]: [ROLE.admin]
+	[ACTION.readOverdue]: [ROLE.admin],
+	// `CONTEXT.md` puts "memverifikasi Pembayaran" on Admin and leaves it off Superuser, the same
+	// reading that put `managePosts`, `handleComplaints`, `recordCashTransactions` and `readOverdue`
+	// there: verifying a payment records what happened rather than changing the past or anybody's
+	// rights. See the argument recorded next to the action in `src/lib/server/authz.ts`.
+	[ACTION.verifyPayments]: [ROLE.admin]
 };
 
 /** Which roles `action` is expected to be permitted to. Superuser alone unless stated otherwise. */

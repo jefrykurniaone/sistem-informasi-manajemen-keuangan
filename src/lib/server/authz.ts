@@ -266,7 +266,24 @@ export const ACTION = {
 	 * `handleComplaints` and `recordCashTransactions` there. `isAllowed` has no inheritance, so a
 	 * superuser who is not also an admin is refused here too, which is what the spec asks for.
 	 */
-	readOverdue: 'readOverdue'
+	readOverdue: 'readOverdue',
+	/**
+	 * Seeing the queue of Pembayaran waiting to be decided, verifying one, rejecting one with a
+	 * reason, and recording a cash payment on a resident's behalf — which is a verification the
+	 * moment it is recorded (`docs/spec-iuran-v1.md` user story 17). See
+	 * `src/lib/server/services/dues/verification.ts`. One action for the read and the writes, the
+	 * same reasoning as `manageJobs`: the queue is only useful to whoever may decide the rows on it.
+	 *
+	 * `CONTEXT.md` puts "memverifikasi Pembayaran" on Admin's own sentence and leaves it off
+	 * Superuser's, the same reading that put `managePosts`, `handleComplaints`,
+	 * `recordCashTransactions` and `readOverdue` there: verifying a payment records what happened
+	 * rather than changing the past or anybody's rights. It is deliberately not a use of
+	 * `recordCashTransactions`, although both are `admin`'s today: verification writes into the
+	 * system category "Iuran warga", which the manual recording path refuses outright, and answering
+	 * "may this person verify" by asking "may they record cash by hand" would mean a later spec
+	 * moving either action silently moves the other.
+	 */
+	verifyPayments: 'verifyPayments'
 } as const;
 
 /** One of the actions above. */
@@ -340,7 +357,8 @@ const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.manageExemptions]: new Set([ROLE.superuser]),
 	[ACTION.readPeriods]: new Set([ROLE.admin, ROLE.superuser]),
 	[ACTION.unlockPeriods]: new Set([ROLE.superuser]),
-	[ACTION.readOverdue]: new Set([ROLE.admin])
+	[ACTION.readOverdue]: new Set([ROLE.admin]),
+	[ACTION.verifyPayments]: new Set([ROLE.admin])
 };
 
 /**

@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { Rupiah } from '$lib/money';
-import { ACTION, requirePermission, type DatabaseWriter } from '../../authz';
+import { ACTION, requirePermission, type DatabaseWriter, type Transaction } from '../../authz';
 import { recordAuditEntry } from '../../audit';
 import type { Database } from '../../db';
 import type { CashCategory } from '../../db/schema/cash-category';
 import { cashTransactions, type CashTransaction } from '../../db/schema/cash-transaction';
 import type { Clock } from '../../ports/clock';
 import type { FileStore } from '../../ports/file-store';
-import { CashCategoryNotFoundError, findCashCategoryById } from './category';
+import { CashCategoryNotFoundError, duesCategory, findCashCategoryById } from './category';
 import { requireOpenPeriodFor } from './period';
 
 /**
@@ -27,10 +27,11 @@ import { requireOpenPeriodFor } from './period';
  * update and of a delete structural, at four levels that each fail independently:
  *
  * 1. **No function here, or in `./correction.ts` or `./balance.ts`, issues `update` or `delete`
- *    against `cash_transactions`.** There is exactly one `insert` in this file and exactly one in
- *    `./correction.ts`, and neither is exported: the only way into the table is through the two
- *    guarded functions that own them, so there is no low-level write a later caller could reach
- *    for.
+ *    against `cash_transactions`.** There are exactly two `insert`s in this file — the manual
+ *    recording below, and `recordDuesIncome`, the one door into the system category "Iuran warga" —
+ *    and exactly one in `./correction.ts`, and none of the three statements is exported: the only
+ *    way into the table is through the guarded functions that own them, so there is no low-level
+ *    write a later caller could reach for.
  * 2. **`attachmentKey` is written on the insert, never after it.** The row's id is minted here with
  *    `randomUUID()` rather than left to the column default, precisely so that the receipt's storage
  *    key can be derived from it *before* the row exists. The obvious alternative — insert, store the
@@ -351,6 +352,91 @@ export async function recordCashTransaction(
 
 		return row;
 	});
+}
+
+/** What #29's payment verification hands over for the one cash row a verification writes. */
+export interface RecordDuesIncomeRequest {
+	/** The day the money was actually received — `payments.receivedOn`, never the verification day. */
+	readonly occurredOn: string;
+	/** The verified payment's full amount, in whole rupiah. Strictly positive. */
+	readonly amount: Rupiah;
+	/** What this money was for, naming the house and the payment. Data in the book, so Indonesian. */
+	readonly description: string;
+	/** The verifying admin's account — a `user.id`, which is what `recordedBy` references. */
+	readonly recordedBy: string;
+}
+
+/**
+ * Writes the one kind of cash row that `recordCashTransaction` refuses: income into the system
+ * category "Iuran warga", dated on the day the money was received.
+ *
+ * `CONTEXT.md` defines that category as one "yang hanya bisa diisi lewat verifikasi Pembayaran",
+ * and this function is what makes that sentence structural rather than a convention: the category
+ * is resolved here by its stable `systemKey` through `duesCategory`, the caller never names a
+ * category at all, and no other code path — inside this module or outside it — inserts into it.
+ * It lives in the cash book module, not in the dues module, because append-only is the *shape* of
+ * this module (see the doc comment above), and a second writer of `cash_transactions` outside it
+ * would dissolve that shape into a convention.
+ *
+ * Three deliberate differences from `recordCashTransaction`, each an argument rather than an
+ * omission:
+ *
+ * - **It takes a `Transaction`, never a `Database`.** The row it writes is one third of the
+ *   verification `docs/spec-iuran-v1.md:144-150` demands be indivisible — status, cash row and
+ *   allocations succeed together or fail together — so it must run inside the verification's own
+ *   transaction. Taking a `Transaction` is also what keeps it out of a route's reach, the same
+ *   argument `lockPeriod` in `./period.ts` records: only a service that already opened a
+ *   transaction, and therefore already checked the action entitling it to verify, holds one.
+ * - **It checks no permission of its own.** Whether the caller may verify a Pembayaran is
+ *   `ACTION.verifyPayments`'s question, answered by the verification service before this runs.
+ *   Checking `recordCashTransactions` here instead would demand a right the verifying admin is not
+ *   required to hold — the two actions are different sets on purpose, see
+ *   `src/lib/server/authz.ts`.
+ * - **It writes no audit row.** The acceptance criteria says a verification records exactly one
+ *   audit row, filed against the Pembayaran; the verification service writes it, carrying this
+ *   row's id in `after`. A second row here, targeted at the cash transaction, would turn one
+ *   decision into two audit entries.
+ *
+ * What it shares with every other money write: the id is minted with `randomUUID()` before the
+ * insert, and `requireOpenPeriodFor` runs here, inside the caller's transaction, against
+ * `occurredOn` — after the caller has taken its own row locks, so the lock order everywhere money
+ * is written stays "the rows the money is about first, the Periode second".
+ *
+ * @throws {CashRuleError} `amountNotPositive`, `notACalendarDay`, or `descriptionMissing`.
+ * @throws {SystemCategoryMissingError} when the migration's seed row is not there.
+ * @throws {PeriodLockedError} when `occurredOn` falls inside a Periode that is locked.
+ */
+export async function recordDuesIncome(
+	transaction: Transaction,
+	clock: Clock,
+	request: RecordDuesIncomeRequest
+): Promise<CashTransaction> {
+	const description = request.description.trim();
+	assertPositiveAmount(request.amount);
+	assertCalendarDay(request.occurredOn);
+	assertCashDescription(description);
+
+	const category = await duesCategory(transaction);
+	await requireOpenPeriodFor(transaction, clock, request.occurredOn);
+
+	const [row] = await transaction
+		.insert(cashTransactions)
+		.values({
+			id: randomUUID(),
+			occurredOn: request.occurredOn,
+			// The category's own direction, exactly as the manual path writes it. "Iuran warga" is
+			// seeded as income, and `SystemCashCategoryError` in `./category.ts` keeps its type fixed.
+			type: category.type,
+			categoryId: category.id,
+			amount: request.amount,
+			description,
+			attachmentKey: null,
+			recordedBy: request.recordedBy,
+			createdAt: clock.now()
+		})
+		.returning();
+
+	return row;
 }
 
 /**
