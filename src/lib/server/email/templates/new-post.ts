@@ -8,8 +8,9 @@ import type { EmailPayload, EmailTemplate, EmailTemplates } from '$lib/server/po
  * caller, and only for a Post's first publication; see that module's doc comment for why a
  * re-publish never reaches here a second time.
  *
- * **This is the one template that renders through Paraglide instead of a hand-written string.**
- * Every other template in this directory writes fixed Indonesian text, because every other kind is
+ * **This template renders through Paraglide instead of a hand-written string**, as the three dues
+ * templates from #31 (`./invoice-issued.ts`, `./payment-verified.ts`, `./payment-rejected.ts`) do;
+ * the older templates in this directory write fixed Indonesian text, because their kinds are
  * transactional — sent about something the recipient themselves did, in the language the whole
  * application already answers a signed-out visitor in. This one is sent because a resident opted
  * into a Langganan, and the acceptance criteria for #41 ask for it to go through
