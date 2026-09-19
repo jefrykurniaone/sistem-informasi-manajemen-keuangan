@@ -8,6 +8,7 @@ import type { Clock } from '../../ports/clock';
 import { applyCreditToInvoice } from './allocation';
 import { isUnitExemptOn } from './exemption';
 import { dueDateOfPeriod, firstDayOfPeriod, issueInvoice } from './invoice';
+import { notifyInvoiceIssued } from './notification';
 import { duesRateOn } from './rate';
 
 /**
@@ -169,6 +170,31 @@ export interface SkippedUnit {
 	readonly reason: UnitSkipReason;
 }
 
+/**
+ * Why a Unit that *was* invoiced this run went without its `invoice-issued` email — ticket #31's own.
+ * There is one reason today: nobody to send it to. A Unit that has no active primary occupant is
+ * still billed — `UNIT_SKIP_REASON` above never sees this case — its email is simply skipped, and
+ * this is that skip recorded so it "terlihat di hasil eksekusi pekerjaan" as the acceptance criteria
+ * ask, structurally on `InvoiceIssuanceSummary` rather than by widening `describeIssuance`'s own
+ * wording, which two of this file's own tests already pin to an exact string.
+ */
+export const NOTIFICATION_SKIP_REASON = {
+	/** No occupancy of this Unit is both `isPrimaryOccupant` and still running today. */
+	noActivePrimaryOccupant: 'no-active-primary-occupant'
+} as const;
+
+/** The one reason above, typed. */
+export type NotificationSkipReason =
+	(typeof NOTIFICATION_SKIP_REASON)[keyof typeof NOTIFICATION_SKIP_REASON];
+
+/** One Unit this run invoiced but could not email, and why. */
+export interface SkippedNotification {
+	readonly unitId: string;
+	readonly block: string;
+	readonly number: string;
+	readonly reason: NotificationSkipReason;
+}
+
 /** What one run of issuance came to. */
 export interface InvoiceIssuanceSummary {
 	/** The Periode issued, as `YYYY-MM`. */
@@ -189,6 +215,11 @@ export interface InvoiceIssuanceSummary {
 	readonly issuedCount: number;
 	/** Every Unit that went without one, and why. */
 	readonly skipped: readonly SkippedUnit[];
+	/**
+	 * Every Unit this run invoiced whose `invoice-issued` email was not queued, and why — see
+	 * `NOTIFICATION_SKIP_REASON`. A Unit here always has a fresh Tagihan; it is not in `skipped`.
+	 */
+	readonly skippedNotifications: readonly SkippedNotification[];
 }
 
 /** One house as a run walks it. */
@@ -204,6 +235,11 @@ interface UnitOutcome {
 	readonly reason?: UnitSkipReason;
 	/** The amount the Tagihan was written at, when one was. */
 	readonly amount?: Rupiah;
+	/**
+	 * Whether the `invoice-issued` email was queued. Only meaningful when `amount` is set; `undefined`
+	 * for a Unit this run did not invoice at all.
+	 */
+	readonly notified?: boolean;
 }
 
 /**
@@ -236,6 +272,7 @@ export async function issueInvoicesForPeriod(
 
 	const billable = await activeUnitsToBill(db);
 	const skipped: SkippedUnit[] = [];
+	const skippedNotifications: SkippedNotification[] = [];
 	let issuedCount = 0;
 	let amount: Rupiah | undefined;
 
@@ -252,9 +289,26 @@ export async function issueInvoicesForPeriod(
 		}
 		issuedCount += 1;
 		amount = outcome.amount;
+		if (!outcome.notified) {
+			skippedNotifications.push({
+				unitId: unit.id,
+				block: unit.block,
+				number: unit.number,
+				reason: NOTIFICATION_SKIP_REASON.noActivePrimaryOccupant
+			});
+		}
 	}
 
-	return { period, issuanceDay, dueDate, amount, unitCount: billable.length, issuedCount, skipped };
+	return {
+		period,
+		issuanceDay,
+		dueDate,
+		amount,
+		unitCount: billable.length,
+		issuedCount,
+		skipped,
+		skippedNotifications
+	};
 }
 
 /**
@@ -319,7 +373,7 @@ async function issueForUnit(
 	plan: IssuancePlan,
 	unit: BillableUnit
 ): Promise<UnitOutcome> {
-	return db.transaction(async (transaction) => {
+	const outcome = await db.transaction(async (transaction) => {
 		await lockDuesRatesForIssuance(transaction);
 
 		const rate = await duesRateOn(transaction, plan.issuanceDay);
@@ -344,6 +398,21 @@ async function issueForUnit(
 		await applyCreditToInvoice(transaction, clock, issued);
 		return { amount: issued.amount };
 	});
+
+	// After the transaction has committed, never inside it — an email about a Tagihan that then rolled
+	// back would announce money that was never actually owed. See `./notification.ts`'s doc comment.
+	if (outcome.reason || outcome.amount === undefined) {
+		return outcome;
+	}
+	const notified = await notifyInvoiceIssued(db, clock, {
+		unitId: unit.id,
+		block: unit.block,
+		number: unit.number,
+		period: plan.period,
+		amount: outcome.amount,
+		dueDate: plan.dueDate
+	});
+	return { ...outcome, notified };
 }
 
 /**

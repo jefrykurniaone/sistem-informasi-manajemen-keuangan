@@ -28,6 +28,7 @@ import {
 	type OpenInvoice,
 	type PlannedAllocation
 } from './allocation';
+import { notifyPaymentRejected, notifyPaymentVerified } from './notification';
 import { PAYMENT_RECORDED_ACTION } from './payment';
 import { UnitNotFoundError } from './queries';
 
@@ -104,12 +105,17 @@ import { UnitNotFoundError } from './queries';
  * therefore true by construction: there is one verification code path, and the cash flow is a
  * caller of it, not a copy.
  *
+ * ## The `payment-verified` and `payment-rejected` emails — #31's own, queued after this commits
+ *
+ * `docs/spec-iuran-v1.md:174-176` names a "pembayaran diverifikasi" email; ticket #31 is the one
+ * that wires it, through `./notification.ts`. `verifyPayment`, `recordCashPayment` and
+ * `rejectPayment` each call it **after** their `db.transaction` has resolved, never from inside the
+ * transaction callback above — an email announcing a verification that rolled back is worse than a
+ * late one. `notifyPaymentVerified`/`notifyPaymentRejected` never throw: see that module's doc
+ * comment for why a notification failure must never look like this transaction failed too.
+ *
  * ## What is deliberately absent
  *
- * - **No email.** `docs/spec-iuran-v1.md:174-176` names a "pembayaran diverifikasi" email; the
- *   ticket that wires the two iuran emails owns it, and this module's `writes:` does not include
- *   the email queue. When it lands it must enqueue *after* this transaction commits, never inside
- *   it — an email announcing a verification that rolled back is worse than a late one.
  * - **No second audit row for the cash transaction.** One decision, one row, filed against the
  *   Pembayaran, with the cash row's id and the allocations in `after`. `recordDuesIncome` writes
  *   none for the same reason, and says so.
@@ -359,7 +365,7 @@ export async function verifyPayment(
 	clock: Clock,
 	request: VerifyPaymentRequest
 ): Promise<VerificationOutcome> {
-	return db.transaction(async (transaction) => {
+	const outcome = await db.transaction(async (transaction) => {
 		await requirePermission(transaction, request.actorId, ACTION.verifyPayments);
 		const verifierResidentId = await requireActorResidentId(transaction, request.actorId);
 
@@ -371,6 +377,9 @@ export async function verifyPayment(
 			invoiceIds: request.invoiceIds ?? []
 		});
 	});
+
+	await notifyPaymentVerified(db, clock, outcome.payment, outcome.allocations);
+	return outcome;
 }
 
 /** Who is rejecting, which payment, and the reason the Warga will read. */
@@ -404,7 +413,7 @@ export async function rejectPayment(
 ): Promise<Payment> {
 	const reason = request.reason.trim();
 
-	return db.transaction(async (transaction) => {
+	const row = await db.transaction(async (transaction) => {
 		await requirePermission(transaction, request.actorId, ACTION.verifyPayments);
 		if (reason === '') {
 			throw new VerificationRuleError(
@@ -415,7 +424,7 @@ export async function rejectPayment(
 
 		const payment = await lockPendingPayment(transaction, request.paymentId);
 
-		const [row] = await transaction
+		const [rejected] = await transaction
 			.update(payments)
 			.set({ status: PAYMENT_STATUS.rejected, rejectionReason: reason })
 			.where(eq(payments.id, payment.id))
@@ -424,13 +433,16 @@ export async function rejectPayment(
 		await recordAuditEntry(transaction, clock, {
 			actorId: request.actorId,
 			action: PAYMENT_REJECTED_ACTION,
-			targetId: row.id,
+			targetId: rejected.id,
 			before: { status: payment.status },
-			after: { status: row.status, reason }
+			after: { status: rejected.status, reason }
 		});
 
-		return row;
+		return rejected;
 	});
+
+	await notifyPaymentRejected(db, clock, row);
+	return row;
 }
 
 /** Who is recording a deposit handed over in person, for which house, and how much. */
@@ -470,7 +482,7 @@ export async function recordCashPayment(
 	clock: Clock,
 	request: RecordCashPaymentRequest
 ): Promise<VerificationOutcome> {
-	return db.transaction(async (transaction) => {
+	const outcome = await db.transaction(async (transaction) => {
 		await requirePermission(transaction, request.actorId, ACTION.verifyPayments);
 		const verifierResidentId = await requireActorResidentId(transaction, request.actorId);
 
@@ -523,6 +535,9 @@ export async function recordCashPayment(
 			invoiceIds: request.invoiceIds ?? []
 		});
 	});
+
+	await notifyPaymentVerified(db, clock, outcome.payment, outcome.allocations);
+	return outcome;
 }
 
 /** Everything `verifyHeldPayment` needs, resolved and locked by its caller. */

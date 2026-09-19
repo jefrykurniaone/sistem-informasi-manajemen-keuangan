@@ -22,10 +22,13 @@ import {
 } from '$lib/server/email/jobs';
 import { enqueueEmail } from '$lib/server/email/queue';
 import { INVITATION_KIND } from '$lib/server/email/templates/invitation';
+import { INVOICE_ISSUED_KIND } from '$lib/server/email/templates/invoice-issued';
 import {
 	PASSWORD_RESET_KIND,
 	passwordResetPayload
 } from '$lib/server/email/templates/password-reset';
+import { PAYMENT_REJECTED_KIND } from '$lib/server/email/templates/payment-rejected';
+import { PAYMENT_VERIFIED_KIND } from '$lib/server/email/templates/payment-verified';
 import { REGISTRATION_APPROVED_KIND } from '$lib/server/email/templates/registration-approved';
 import { VERIFY_EMAIL_KIND, verifyEmailPayload } from '$lib/server/email/templates/verify-email';
 import { FakeClock, FakeEmailSender } from '$lib/server/ports/fakes';
@@ -270,7 +273,15 @@ async function claimThroughOpenTransaction(
 describe('applicationEmailTemplates', () => {
 	it('carries exactly the kinds this application queues, and renders each one', () => {
 		expect(Object.keys(applicationEmailTemplates).sort()).toEqual(
-			[VERIFY_EMAIL_KIND, PASSWORD_RESET_KIND, INVITATION_KIND, REGISTRATION_APPROVED_KIND].sort()
+			[
+				VERIFY_EMAIL_KIND,
+				PASSWORD_RESET_KIND,
+				INVITATION_KIND,
+				REGISTRATION_APPROVED_KIND,
+				INVOICE_ISSUED_KIND,
+				PAYMENT_VERIFIED_KIND,
+				PAYMENT_REJECTED_KIND
+			].sort()
 		);
 		expect(
 			applicationEmailTemplates[VERIFY_EMAIL_KIND](
