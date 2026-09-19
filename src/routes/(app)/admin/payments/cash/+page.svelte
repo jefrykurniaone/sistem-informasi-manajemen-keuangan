@@ -19,7 +19,10 @@
 		<p class="text-sm text-muted-foreground">{m.adminPayments_cash_description()}</p>
 	</header>
 
-	<a href={resolve('/admin/payments')} class="w-fit text-sm underline underline-offset-4">
+	<a
+		href={resolve('/admin/payments')}
+		class="inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4"
+	>
 		{m.adminPayments_cash_backLink()}
 	</a>
 

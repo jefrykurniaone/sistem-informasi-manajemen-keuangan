@@ -116,11 +116,19 @@ export const actions: Actions = {
 	}
 };
 
-/** One queue row as the table renders it, with its proof already signed for. */
+/**
+ * One queue row as the table renders it, with its proof already signed for.
+ *
+ * A Tagihan whose remaining amount is zero is left off the checkbox list here, at the screen: it is
+ * settled, so offering it as something to "pay first" reads as a contradiction. The service keeps
+ * answering the full set on purpose — the verification transaction re-reads and re-validates under
+ * its own locks, and an explicitly named settled Tagihan is simply skipped by the planner.
+ */
 async function toRow(payment: PendingPayment, fileStore: FileStore) {
-	const { proofFileKey, ...rest } = payment;
+	const { proofFileKey, openInvoices, ...rest } = payment;
 	return {
 		...rest,
+		openInvoices: openInvoices.filter((invoice) => invoice.remainingAmount > 0),
 		proofUrl: proofFileKey === null ? null : await fileStore.signedLink(proofFileKey)
 	};
 }
