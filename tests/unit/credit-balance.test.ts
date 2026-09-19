@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { rupiah, type Rupiah } from '$lib/money';
 import { allocations } from '$lib/server/db/schema/allocation';
 import { user } from '$lib/server/db/schema/auth';
+import { cashCategories, SYSTEM_CATEGORY_KEY } from '$lib/server/db/schema/cash-category';
+import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
 import { invoices } from '$lib/server/db/schema/invoice';
 import {
 	PAYMENT_METHOD,
@@ -10,6 +13,7 @@ import {
 	payments,
 	type PaymentStatus
 } from '$lib/server/db/schema/payment';
+import { refunds } from '$lib/server/db/schema/refund';
 import { residents } from '$lib/server/db/schema/resident';
 import { units } from '$lib/server/db/schema/unit';
 import { testDatabase } from '$lib/server/db/test-helpers';
@@ -107,6 +111,50 @@ async function allocate(
 		.values({ paymentId, invoiceId: invoice.id, amount, createdAt: new Date(START) });
 }
 
+/**
+ * A Pengembalian of `amount` attributed to `paymentId`, written straight into the tables with the
+ * one cash expense row it points at — this file tests the balance arithmetic, not the refund
+ * service, which has `tests/unit/credit-refund.test.ts` of its own.
+ */
+async function insertRefund(paymentId: string, amount: Rupiah): Promise<void> {
+	const refundedBy = randomUUID();
+	const now = new Date(START);
+	await testDb.db.insert(user).values({
+		id: refundedBy,
+		name: 'Pengurus Pengembalian Saldo',
+		email: `${refundedBy}@komplek.local`,
+		emailVerified: true,
+		createdAt: now,
+		updatedAt: now
+	});
+	const [category] = await testDb.db
+		.select()
+		.from(cashCategories)
+		.where(eq(cashCategories.systemKey, SYSTEM_CATEGORY_KEY.dues));
+	const [cashRow] = await testDb.db
+		.insert(cashTransactions)
+		.values({
+			id: randomUUID(),
+			occurredOn: '2026-02-08',
+			type: 'expense',
+			categoryId: category.id,
+			amount,
+			description: `Pengembalian saldo titipan (pembayaran ${paymentId})`,
+			attachmentKey: null,
+			recordedBy: refundedBy,
+			createdAt: now
+		})
+		.returning();
+	await testDb.db.insert(refunds).values({
+		paymentId,
+		cashTransactionId: cashRow.id,
+		amount,
+		reason: 'Warga pindah.',
+		refundedBy,
+		createdAt: now
+	});
+}
+
 describe('creditBalanceOfUnit', () => {
 	it('is zero for a unit with no payments at all', async () => {
 		const unitId = await insertUnit();
@@ -154,6 +202,28 @@ describe('creditBalanceOfUnit', () => {
 		const paymentId = await insertPayment(unitId, residentId, rupiah(200_000), 'verified');
 		await allocate(unitId, paymentId, rupiah(100_000), '2026-01');
 		await allocate(unitId, paymentId, rupiah(100_000), '2026-02');
+
+		expect(await creditBalanceOfUnit(testDb.db, unitId)).toBe(0);
+	});
+
+	it('subtracts a Pengembalian beside the allocations — verified less allocated less refunded', async () => {
+		// #30's refund term: Rp300.000 verified, Rp100.000 allocated, Rp150.000 returned leaves
+		// Rp50.000 — the refunded money is out of the balance through the very same subtraction.
+		const unitId = await insertUnit();
+		const residentId = await insertResident('Warga Titipan Dikembalikan');
+		const paymentId = await insertPayment(unitId, residentId, rupiah(300_000), 'verified');
+		await allocate(unitId, paymentId, rupiah(100_000), '2026-01');
+		await insertRefund(paymentId, rupiah(150_000));
+
+		expect(await creditBalanceOfUnit(testDb.db, unitId)).toBe(50_000);
+	});
+
+	it('reads zero once a payment is fully consumed by allocation and refund together', async () => {
+		const unitId = await insertUnit();
+		const residentId = await insertResident('Warga Titipan Habis Dikembalikan');
+		const paymentId = await insertPayment(unitId, residentId, rupiah(200_000), 'verified');
+		await allocate(unitId, paymentId, rupiah(80_000), '2026-01');
+		await insertRefund(paymentId, rupiah(120_000));
 
 		expect(await creditBalanceOfUnit(testDb.db, unitId)).toBe(0);
 	});
@@ -215,5 +285,23 @@ describe('lockUnallocatedVerifiedPayments', () => {
 		);
 
 		expect(remainders).toEqual([]);
+	});
+
+	it('subtracts a Pengembalian from the remainder it hands to spenders', async () => {
+		// The other half of #30's invariant: the remainders issuance drains through
+		// `applyCreditToInvoice` already exclude the refunded money, so nothing can spend it twice.
+		const unitId = await insertUnit();
+		const residentId = await insertResident('Warga Sisa Dikembalikan');
+		const paymentId = await insertPayment(unitId, residentId, rupiah(200_000), 'verified');
+		await allocate(unitId, paymentId, rupiah(50_000), '2026-01');
+		await insertRefund(paymentId, rupiah(120_000));
+
+		const remainders = await testDb.db.transaction(async (transaction) =>
+			lockUnallocatedVerifiedPayments(transaction, unitId)
+		);
+
+		expect(remainders).toEqual([
+			expect.objectContaining({ paymentId, amount: 200_000, remainder: 30_000 })
+		]);
 	});
 });

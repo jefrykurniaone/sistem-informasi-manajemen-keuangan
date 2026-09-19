@@ -32,6 +32,7 @@ import {
 	MAXIMUM_RECEIPT_BYTES,
 	recordCashTransaction,
 	recordDuesIncome,
+	recordDuesRefund,
 	type RecordCashTransactionRequest
 } from '$lib/server/services/cash/transaction';
 
@@ -139,7 +140,8 @@ describe('the cash book service layer', () => {
 			'assertCashDescription',
 			'assertMayRecordCashTransactions',
 			'recordCashTransaction',
-			'recordDuesIncome'
+			'recordDuesIncome',
+			'recordDuesRefund'
 		]);
 		expect(Object.keys(correctionModule).sort()).toEqual([
 			'CASH_CORRECTION_RECORDED_ACTION',
@@ -656,6 +658,107 @@ describe('recordDuesIncome — the one door into the system category "Iuran warg
 		const before = await allTransactions();
 
 		const refusal: unknown = await recordDues({ recordedBy: adminId, ...overrides }).catch(
+			(error: unknown) => error
+		);
+
+		expect(refusal).toBeInstanceOf(CashRuleError);
+		expect(refusal).toMatchObject({ rule });
+		expect(await allTransactions()).toEqual(before);
+	});
+});
+
+describe('recordDuesRefund — the one expense door into the system category "Iuran warga"', () => {
+	/** Runs `recordDuesRefund` inside a transaction of its own, the way #30's refund holds one. */
+	async function recordRefund(
+		overrides: Partial<Parameters<typeof recordDuesRefund>[2]> & { readonly recordedBy: string }
+	) {
+		return testDb.db.transaction(async (transaction) =>
+			recordDuesRefund(transaction, new FakeClock(START), {
+				occurredOn: DAY,
+				amount: rupiah(125_000),
+				description: 'Pengembalian saldo titipan Blok D No 1 (pembayaran uji)',
+				...overrides
+			})
+		);
+	}
+
+	it('writes one expense row into the dues category, opposing the category’s own income type', async () => {
+		// The mirror of `recordDuesIncome`: the row is money leaving, in the category whose figures
+		// it must net against — writing `category.type` would record a payout as income. Never a
+		// Koreksi: `correctionOf` stays null, because this row reverses nothing.
+		const superuserId = await insertSuperuser('Pengurus Pengembalian Menulis Kas');
+		const categoryId = await systemCategoryId(SYSTEM_CATEGORY_KEY.dues);
+
+		const row = await recordRefund({ recordedBy: superuserId });
+
+		expect(row).toMatchObject({
+			occurredOn: DAY,
+			type: CASH_CATEGORY_TYPE.expense,
+			categoryId,
+			amount: 125_000,
+			description: 'Pengembalian saldo titipan Blok D No 1 (pembayaran uji)',
+			attachmentKey: null,
+			recordedBy: superuserId,
+			correctionOf: null
+		});
+
+		// No audit row of its own: the refund that calls this writes the single audit row, filed
+		// against the Unit — see the function's doc comment.
+		expect(await auditEntriesFor(testDb.db, row.id)).toHaveLength(0);
+	});
+
+	it('leaves every row that already existed exactly as it was', async () => {
+		// This writer's own append-only witness, beside the module-wide one above: driving the
+		// refund door adds one row and rewrites none.
+		const superuserId = await insertSuperuser('Pengurus Pengembalian Hanya Tambah');
+		const before = await allTransactions();
+
+		await recordRefund({ recordedBy: superuserId });
+
+		const after = await allTransactions();
+		for (const row of before) {
+			expect(after.find((candidate) => candidate.id === row.id)).toEqual(row);
+		}
+		expect(after).toHaveLength(before.length + 1);
+	});
+
+	it('refuses a day inside a locked Periode by name, and writes nothing', async () => {
+		// June, a month no other test in this file locks, so the lock reaches nothing else.
+		const superuserId = await insertSuperuser('Pengurus Pengembalian Bulan Terkunci');
+		await testDb.db.transaction(async (transaction) => {
+			await lockPeriod(transaction, new FakeClock(START), {
+				actorId: superuserId,
+				year: 2026,
+				month: 6,
+				reason: 'Laporan bulan itu sudah terbit.'
+			});
+		});
+		const before = await allTransactions();
+
+		await expect(
+			recordRefund({ recordedBy: superuserId, occurredOn: '2026-06-20' })
+		).rejects.toThrow(PeriodLockedError);
+
+		expect(await allTransactions()).toEqual(before);
+	});
+
+	it.each([
+		{ name: 'a zero amount', overrides: { amount: rupiah(0) }, rule: CASH_RULE.amountNotPositive },
+		{
+			name: 'a day that is not on the calendar',
+			overrides: { occurredOn: '2026-02-31' },
+			rule: CASH_RULE.notACalendarDay
+		},
+		{
+			name: 'an empty keterangan',
+			overrides: { description: '   ' },
+			rule: CASH_RULE.descriptionMissing
+		}
+	])('refuses $name with the same named rule the other doors use', async ({ overrides, rule }) => {
+		const superuserId = await insertSuperuser(`Pengurus Pengembalian Tolak ${rule}`);
+		const before = await allTransactions();
+
+		const refusal: unknown = await recordRefund({ recordedBy: superuserId, ...overrides }).catch(
 			(error: unknown) => error
 		);
 

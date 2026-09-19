@@ -65,6 +65,11 @@ Bagian Pembayaran terverifikasi sebuah Unit yang belum dialokasikan ke Tagihan m
 bukan milik orang.
 _Hindari_: deposit, kelebihan bayar, uang muka
 
+**Pengembalian**:
+Pengeluaran kas yang mengembalikan Saldo Titipan sebuah Unit kepada Warganya, sebagian atau
+seluruhnya. Milik Unit, bukan milik orang.
+_Hindari_: refund, restitusi, penarikan
+
 **Pembebasan**:
 Periode ketika sebuah Unit tidak diterbitkan Tagihan.
 _Hindari_: bebas iuran, exempt
@@ -166,6 +171,7 @@ kolom dari nama properti lewat `casing: 'snake_case'`, jadi nama kolom tidak dit
 | Pembayaran | `Payment` | `payments` |
 | Alokasi | `Allocation` | `allocations` |
 | Saldo Titipan | `CreditBalance` | dihitung, tanpa tabel |
+| Pengembalian | `Refund` | `refunds` |
 | Pembebasan | `Exemption` | `exemptions` |
 | Transaksi Kas | `CashTransaction` | `cash_transactions` |
 | Kategori Kas | `CashCategory` | `cash_categories` |

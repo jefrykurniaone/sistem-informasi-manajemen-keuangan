@@ -3,7 +3,7 @@ import type { Rupiah } from '$lib/money';
 import { ACTION, requirePermission, type DatabaseWriter, type Transaction } from '../../authz';
 import { recordAuditEntry } from '../../audit';
 import type { Database } from '../../db';
-import type { CashCategory } from '../../db/schema/cash-category';
+import { CASH_CATEGORY_TYPE, type CashCategory } from '../../db/schema/cash-category';
 import { cashTransactions, type CashTransaction } from '../../db/schema/cash-transaction';
 import type { Clock } from '../../ports/clock';
 import type { FileStore } from '../../ports/file-store';
@@ -27,11 +27,11 @@ import { requireOpenPeriodFor } from './period';
  * update and of a delete structural, at four levels that each fail independently:
  *
  * 1. **No function here, or in `./correction.ts` or `./balance.ts`, issues `update` or `delete`
- *    against `cash_transactions`.** There are exactly two `insert`s in this file — the manual
- *    recording below, and `recordDuesIncome`, the one door into the system category "Iuran warga" —
- *    and exactly one in `./correction.ts`, and none of the three statements is exported: the only
- *    way into the table is through the guarded functions that own them, so there is no low-level
- *    write a later caller could reach for.
+ *    against `cash_transactions`.** There are exactly three `insert`s in this file — the manual
+ *    recording below, and `recordDuesIncome` and `recordDuesRefund`, the two doors into the system
+ *    category "Iuran warga" — and exactly one in `./correction.ts`, and none of the four statements
+ *    is exported: the only way into the table is through the guarded functions that own them, so
+ *    there is no low-level write a later caller could reach for.
  * 2. **`attachmentKey` is written on the insert, never after it.** The row's id is minted here with
  *    `randomUUID()` rather than left to the column default, precisely so that the receipt's storage
  *    key can be derived from it *before* the row exists. The obvious alternative — insert, store the
@@ -58,8 +58,10 @@ import { requireOpenPeriodFor } from './period';
  *   category" to this ticket as a service rule, and the cheapest way to make a rule true is to give
  *   the caller no way to break it: `RecordCashTransactionRequest` has no `type`, and the insert
  *   writes `category.type`. An admin picks "Perbaikan gerbang" and the row is an expense because
- *   that category is one. A Koreksi is the one row whose type opposes its category's, and it is
- *   built by `./correction.ts`, which is the only place that inversion can happen.
+ *   that category is one. Two kinds of row oppose their category's type, and each is built in
+ *   exactly one place: a Koreksi, built by `./correction.ts`, and a Pengembalian's expense row,
+ *   built by `recordDuesRefund` below — which is why the two are told apart by `correctionOf`,
+ *   set on the first and null on the second.
  * - **Every system category refuses a manual entry, not only "Iuran warga".** The acceptance
  *   criteria names the dues category, because verifying a Pembayaran (#29) must be the only way
  *   money lands there. The same argument applies unchanged to "Saldo awal": #33 holds "there is only
@@ -427,6 +429,81 @@ export async function recordDuesIncome(
 			// The category's own direction, exactly as the manual path writes it. "Iuran warga" is
 			// seeded as income, and `SystemCashCategoryError` in `./category.ts` keeps its type fixed.
 			type: category.type,
+			categoryId: category.id,
+			amount: request.amount,
+			description,
+			attachmentKey: null,
+			recordedBy: request.recordedBy,
+			createdAt: clock.now()
+		})
+		.returning();
+
+	return row;
+}
+
+/** What #30's credit refund hands over for each cash expense row a Pengembalian writes. */
+export interface RecordDuesRefundRequest {
+	/** The day the money was handed back, as `YYYY-MM-DD`. Never the day the row is typed in. */
+	readonly occurredOn: string;
+	/** How much of one payment's remainder is being returned, in whole rupiah. Strictly positive. */
+	readonly amount: Rupiah;
+	/** What this money was for, naming the house and the payment. Data in the book, so Indonesian. */
+	readonly description: string;
+	/** The refunding superuser's account — a `user.id`, which is what `recordedBy` references. */
+	readonly recordedBy: string;
+}
+
+/**
+ * Writes the one kind of cash **expense** the system category "Iuran warga" ever carries outside a
+ * Koreksi: a Pengembalian returning part of a Unit's Saldo Titipan, dated on the day the money was
+ * handed back — the mirror of `recordDuesIncome`, and the second of the two doors into that
+ * category.
+ *
+ * It lives here for the reason `recordDuesIncome` gives: append-only is the *shape* of this module,
+ * and a second writer of `cash_transactions` outside it would dissolve that shape into a
+ * convention. Everything `recordDuesIncome` says about itself holds here unchanged — it takes a
+ * `Transaction` because the row is one part of an indivisible refund (cash row, `refunds` row and
+ * audit row commit together or not at all, see
+ * `src/lib/server/services/dues/credit-refund.ts`); it checks no permission, because whether the
+ * caller may correct dues is `ACTION.correctDues`'s question, answered before this runs; and it
+ * writes no audit row, because the refund records exactly one, filed against the Unit.
+ *
+ * The one deliberate difference: **`type` is written as `expense`, opposing the category's own
+ * `income`.** The direction of an ordinary row is read off its category precisely so a caller
+ * cannot lie about it; here the row *is* money leaving, in the category whose figures it must net
+ * against, exactly as a Koreksi opposes its category so per-category totals stay honest. Writing
+ * `category.type` would record a payout as income. `correctionOf` stays null — this row reverses
+ * nothing; it is the original record of new money movement.
+ *
+ * `requireOpenPeriodFor` runs here, inside the caller's transaction, against `occurredOn` — after
+ * the caller has taken its payment row locks, so the lock order everywhere money is written stays
+ * "the rows the money is about first, the Periode second".
+ *
+ * @throws {CashRuleError} `amountNotPositive`, `notACalendarDay`, or `descriptionMissing`.
+ * @throws {SystemCategoryMissingError} when the migration's seed row is not there.
+ * @throws {PeriodLockedError} when `occurredOn` falls inside a Periode that is locked.
+ */
+export async function recordDuesRefund(
+	transaction: Transaction,
+	clock: Clock,
+	request: RecordDuesRefundRequest
+): Promise<CashTransaction> {
+	const description = request.description.trim();
+	assertPositiveAmount(request.amount);
+	assertCalendarDay(request.occurredOn);
+	assertCashDescription(description);
+
+	const category = await duesCategory(transaction);
+	await requireOpenPeriodFor(transaction, clock, request.occurredOn);
+
+	const [row] = await transaction
+		.insert(cashTransactions)
+		.values({
+			id: randomUUID(),
+			occurredOn: request.occurredOn,
+			// Deliberately not `category.type`: this is money leaving the dues category. See the doc
+			// comment above for why this inversion is right here and a lie everywhere else.
+			type: CASH_CATEGORY_TYPE.expense,
 			categoryId: category.id,
 			amount: request.amount,
 			description,
