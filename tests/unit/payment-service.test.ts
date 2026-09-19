@@ -88,17 +88,18 @@ async function insertUnit(block: string, number: string): Promise<string> {
 	return row.id;
 }
 
-/** A stay: running by default, or ended on the day given. */
+/** A stay: running by default, or ended on the day given, and starting long before the clock. */
 async function insertOccupancy(
 	unitId: string,
 	residentId: string,
-	endedOn: string | null = null
+	endedOn: string | null = null,
+	startedOn: string = '2025-01-01'
 ): Promise<void> {
 	await testDb.db.insert(occupancies).values({
 		unitId,
 		residentId,
 		role: OCCUPANCY_ROLE.owner,
-		startedOn: '2025-01-01',
+		startedOn,
 		endedOn,
 		isPrimaryOccupant: false,
 		createdAt: new Date(START)
@@ -388,6 +389,49 @@ describe('payableUnitsForUser', () => {
 			'invoiceId',
 			'period'
 		]);
+	});
+
+	it('leaves out a Tagihan issued before the payer moved in, and keeps the one inside their stay', async () => {
+		// `docs/spec-iuran-v1.md`: "Warga hanya melihat tagihan yang terbit dalam rentang masa
+		// huninya". A Tagihan from before this resident moved in is the *previous* occupant's
+		// obligation, and offering it in the picker discloses its period and its amount. The two
+		// invoices below differ only in whether their period falls inside the stay, so this test fails
+		// if the occupancy filter is ever dropped — it would then find both.
+		const userId = await insertUser('Warga Tagihan Penghuni Lama');
+		const residentId = await insertResident(userId);
+		const unitId = await insertUnit('I', '4');
+		await insertOccupancy(unitId, residentId, null, '2025-12-01');
+
+		const [previousOccupants, theirOwn] = await testDb.db
+			.insert(invoices)
+			.values([
+				{
+					unitId,
+					period: '2025-10',
+					amount: rupiah(150_000),
+					dueDate: '2025-10-05',
+					issuedAt: new Date(START)
+				},
+				{
+					unitId,
+					period: '2025-12',
+					amount: rupiah(150_000),
+					dueDate: '2025-12-05',
+					issuedAt: new Date(START)
+				}
+			])
+			.returning();
+
+		const offered = await payableUnitsForUser(testDb.db, new FakeClock(START), userId);
+
+		expect(offered).toHaveLength(1);
+		// `firstDayOfPeriod('2025-10')` is 2025-10-01, which is outside the stay that starts on
+		// 2025-12-01; `firstDayOfPeriod('2025-12')` is 2025-12-01, its first day.
+		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).toEqual([theirOwn.id]);
+		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).not.toContain(
+			previousOccupants.id
+		);
+		expect(offered[0].invoices.map((invoice) => invoice.period)).not.toContain('2025-10');
 	});
 
 	it('offers one entry per house even when the payer holds two running stays in it', async () => {
