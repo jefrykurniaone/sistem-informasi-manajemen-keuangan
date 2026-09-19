@@ -617,7 +617,7 @@
 	"payments_rule_notACalendarDay": "That date is not a day on the calendar.",
 	"payments_rule_receivedInTheFuture": "That transfer date has not arrived yet. Enter the day the money actually moved.",
 	"payments_rule_proofMissing": "A photo of the transfer receipt is required.",
-	"payments_rule_proofTooLarge": "The proof photo is too large. The limit is 5 MB.",
+	"payments_rule_proofTooLarge": "The proof photo is too large. The limit is {maximumSize} MB.",
 	"payments_rule_proofNotAnImage": "The proof must be a JPEG, PNG or WebP file that really is an image.",
 	"payments_rule_alreadyDecided": "A pengurus has already decided on that payment, so it can no longer be cancelled.",
 	"payments_new_pageTitle": "Record a payment — Komplek",

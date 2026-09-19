@@ -52,7 +52,7 @@ import { currentDay } from '../occupancy/visibility';
  * | `unitId` | a house the payer was **living in on the day they recorded it** — `isStillRunningOn`'s definition, checked here and never again |
  * | `recordedBy` | the payer's `residents.id`. For a resident-recorded payment this is also the payer; an admin recording a cash payment for somebody else (user story 17) is a different flow |
  * | `amount` | strictly positive whole rupiah. Zero is refused here, not by the database — `payments_amount_check` permits it |
- * | `receivedOn` | a real calendar day, not later than tomorrow in UTC. **This is the day the cash transaction must be dated on**, never the day the row was typed |
+ * | `receivedOn` | a real calendar day, not later than tomorrow in UTC. **This is the day the cash transaction must be dated on**, never the day the row was typed. Bounded above only: see the note below |
  * | `method` | always `transfer`. A resident cannot record `cash`; that is user story 17's admin flow |
  * | `proofFileKey` | always non-null and always present in the `FileStore` — `payments/<id>/proof.<jpg\|png\|webp>`, whose extension was chosen from bytes this module verified |
  * | `status` | always `pending` |
@@ -77,6 +77,14 @@ import { currentDay } from '../occupancy/visibility';
  * - **No Periode row, open or otherwise.** See above.
  * - **No email.** "Pembayaran diverifikasi" is the notification the spec names, and verification is
  *   where it is sent from.
+ * - **No lower bound on `receivedOn`, and that is a decision rather than an omission.** The day is
+ *   refused when it has not arrived (see `assertReceiptDay`) and never for being old. Every floor
+ *   that suggested itself is wrong for a case that really happens: "not before the payer moved in"
+ *   refuses somebody who transfers the first month before they collect the keys, and a fixed system
+ *   start day is a policy number `docs/spec-iuran-v1.md` does not give. So a mistyped year reaches
+ *   #29 as an old `receivedOn`, where it meets the Periode check that dates the cash transaction —
+ *   which is the layer that already has to answer "this month's books are closed" and is therefore
+ *   the right place for it to be caught.
  *
  * Two orderings #29 has to keep, both of them consequences of rows this module leaves behind:
  *
@@ -134,6 +142,18 @@ export const PAYMENT_CANCELLED_ACTION = 'payment_cancelled';
  * production except which of the two refusals a very large upload meets first.
  */
 export const MAXIMUM_PROOF_BYTES = 5 * 1024 * 1024;
+
+/** Bytes in a mebibyte, so the limit can also be stated in the unit a person reads. */
+const BYTES_PER_MEBIBYTE = 1024 * 1024;
+
+/**
+ * `MAXIMUM_PROOF_BYTES` in the unit the messages state it in.
+ *
+ * Exported so that the sentence a resident reads interpolates the same constant the service
+ * enforces. Writing "5 MB" into the message catalogues instead would leave both of them lying the
+ * first time the limit moved.
+ */
+export const MAXIMUM_PROOF_MEBIBYTES = MAXIMUM_PROOF_BYTES / BYTES_PER_MEBIBYTE;
 
 /**
  * The image formats a proof may be in, and the file extension each is stored under.
@@ -354,29 +374,36 @@ export interface CancelPaymentRequest {
  * `occupiedUnitsForUser` and keeps the stays it reports as running. An account with no `residents`
  * row, or one whose stays have all ended, gets an empty list rather than an error — the screen says
  * so, which is a different thing from refusing them.
+ *
+ * **One entry per house, not per stay.** `occupiedUnitsForUser` answers with occupancies, and
+ * `src/lib/server/db/schema/occupancy.ts` deliberately has no unique pair on unit and resident:
+ * the same person can hold two running stays in one house, an owner row beside a tenant row or a
+ * plain duplicate a superuser recorded. Two rows for one house would put a duplicate key into the
+ * form's `{#each}` and list every Tagihan of that house twice, so the stays are folded by `unitId`
+ * here rather than left for each screen to notice.
  */
 export async function payableUnitsForUser(
 	db: DatabaseWriter,
 	clock: Clock,
 	actorUserId: string
 ): Promise<readonly PayableUnit[]> {
-	const running = (await occupiedUnitsForUser(db, clock, actorUserId)).filter(
-		(stay) => stay.isRunning
-	);
-	if (running.length === 0) {
+	const houses = new Map<string, { readonly block: string; readonly number: string }>();
+	for (const stay of await occupiedUnitsForUser(db, clock, actorUserId)) {
+		if (stay.isRunning) {
+			houses.set(stay.unitId, { block: stay.block, number: stay.number });
+		}
+	}
+	if (houses.size === 0) {
 		return [];
 	}
 
-	const invoicesByUnit = await payableInvoicesOf(
-		db,
-		running.map((stay) => stay.unitId)
-	);
+	const invoicesByUnit = await payableInvoicesOf(db, [...houses.keys()]);
 
-	return running.map((stay) => ({
-		unitId: stay.unitId,
-		block: stay.block,
-		number: stay.number,
-		invoices: invoicesByUnit.get(stay.unitId) ?? []
+	return [...houses].map(([unitId, house]) => ({
+		unitId,
+		block: house.block,
+		number: house.number,
+		invoices: invoicesByUnit.get(unitId) ?? []
 	}));
 }
 
@@ -451,6 +478,12 @@ export async function recordPayment(
 		assertReceiptDay(request.receivedOn, clock);
 		const key = proofKeyFor(id, request.proof);
 
+		// Stored inside the transaction, after every check and immediately before the insert — the
+		// order `recordCashTransaction` settled and for its reasons. Storing before the checks would
+		// write a file for a request about to be refused, and storing after the commit would leave a
+		// committed row pointing at a file that is not there yet. What this order can leave behind is
+		// an unreferenced blob, when the insert or the audit row fails after the upload succeeded:
+		// nobody can reach it, because the only key that names it is on a row that was rolled back.
 		await fileStore.store(key, request.proof.content);
 
 		const [row] = await transaction
@@ -556,7 +589,17 @@ export async function cancelOwnPayment(
 	});
 
 	if (cancelled.proofFileKey) {
-		await fileStore.delete(cancelled.proofFileKey);
+		try {
+			await fileStore.delete(cancelled.proofFileKey);
+		} catch {
+			// The withdrawal has already committed and the row is gone, so there is nothing left to
+			// retry: answering the resident with an error would report a failure for something that
+			// succeeded, and a second attempt would be refused because the payment no longer exists.
+			// A file the store would not remove is an unreferenced blob, which is the same cost as the
+			// orphan `recordPayment` can leave, and the audit entry still records the withdrawal.
+			// Swallowed rather than logged because this repository has no logger — the same note
+			// `src/routes/files/[...key]/+server.ts` makes about its own refusals.
+		}
 	}
 	return cancelled;
 }

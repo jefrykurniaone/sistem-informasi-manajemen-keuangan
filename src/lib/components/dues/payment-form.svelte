@@ -107,7 +107,12 @@
 		ticked = isTicked
 			? [...ticked, invoiceId]
 			: ticked.filter((candidate) => candidate !== invoiceId);
-		amount = ticked.length === 0 ? '' : String(tickedTotal());
+		// Unticking the last box leaves the nominal alone rather than clearing it. Somebody paying in
+		// advance types an amount first and may tick a Tagihan to see what a month costs; wiping what
+		// they typed when they untick it again would throw away the only field they had filled in.
+		if (ticked.length > 0) {
+			amount = String(tickedTotal());
+		}
 	}
 
 	/** What the ticked Tagihan of the chosen house come to, in whole rupiah. */

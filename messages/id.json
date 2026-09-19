@@ -617,7 +617,7 @@
 	"payments_rule_notACalendarDay": "Tanggal itu bukan tanggal yang ada di kalender.",
 	"payments_rule_receivedInTheFuture": "Tanggal uang diterima belum tiba. Isi tanggal transfer yang sudah terjadi.",
 	"payments_rule_proofMissing": "Foto bukti transfer wajib diunggah.",
-	"payments_rule_proofTooLarge": "Foto bukti terlalu besar. Batasnya 5 MB.",
+	"payments_rule_proofTooLarge": "Foto bukti terlalu besar. Batasnya {maximumSize} MB.",
 	"payments_rule_proofNotAnImage": "Foto bukti harus berupa berkas JPEG, PNG, atau WebP yang benar-benar gambar.",
 	"payments_rule_alreadyDecided": "Pembayaran itu sudah diputuskan pengurus, jadi tidak bisa dibatalkan lagi.",
 	"payments_new_pageTitle": "Catat pembayaran — Komplek",

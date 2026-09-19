@@ -390,6 +390,26 @@ describe('payableUnitsForUser', () => {
 		]);
 	});
 
+	it('offers one entry per house even when the payer holds two running stays in it', async () => {
+		// `occupancies` has no unique pair on unit and resident, so a superuser can record the same
+		// person twice for one house — an owner row beside a tenant row, or a plain duplicate. Two
+		// entries here would be a duplicate key in the form's `{#each}` and every Tagihan listed twice.
+		const household = await insertHousehold('Warga Dua Masa Huni', 'I', '3');
+		await insertOccupancy(household.unitId, household.residentId);
+		await testDb.db.insert(invoices).values({
+			unitId: household.unitId,
+			period: '2026-01',
+			amount: rupiah(150_000),
+			dueDate: '2026-01-05',
+			issuedAt: new Date(START)
+		});
+
+		const offered = await payableUnitsForUser(testDb.db, new FakeClock(START), household.userId);
+
+		expect(offered).toHaveLength(1);
+		expect(offered[0].invoices).toHaveLength(1);
+	});
+
 	it('offers nothing to somebody whose stay is over', async () => {
 		const userId = await insertUser('Warga Pilih Setelah Pindah');
 		const residentId = await insertResident(userId);
@@ -413,23 +433,30 @@ describe('cancelOwnPayment', () => {
 		);
 		expect(fileStore.keys).toHaveLength(1);
 
-		const cancelled = await cancelOwnPayment(testDb.db, new FakeClock(START), fileStore, {
-			actorUserId: household.userId,
-			paymentId: recorded.id
-		});
+		// An hour later, so that the two audit entries carry different instants. `auditEntriesFor`
+		// orders by `occurredAt` descending, and a frozen clock would give both the same one and leave
+		// the order to whatever the heap happened to return.
+		const cancelled = await cancelOwnPayment(
+			testDb.db,
+			new FakeClock('2026-01-01T01:00:00.000Z'),
+			fileStore,
+			{ actorUserId: household.userId, paymentId: recorded.id }
+		);
 
 		expect(cancelled.id).toBe(recorded.id);
 		expect(await testDb.db.select().from(payments).where(eq(payments.id, recorded.id))).toEqual([]);
 		expect(fileStore.keys).toEqual([]);
 
 		// `audit_log.targetId` is plain text with no foreign key, so the entry outlives the row.
+		// Newest first, which is the order `auditEntriesFor` documents.
 		const entries = await auditEntriesFor(testDb.db, recorded.id);
 		expect(entries.map((entry) => entry.action)).toEqual([
-			PAYMENT_RECORDED_ACTION,
-			PAYMENT_CANCELLED_ACTION
+			PAYMENT_CANCELLED_ACTION,
+			PAYMENT_RECORDED_ACTION
 		]);
-		expect(entries[1]).toMatchObject({
+		expect(entries[0]).toMatchObject({
 			actorId: household.userId,
+			action: PAYMENT_CANCELLED_ACTION,
 			before: { amount: 150_000, status: PAYMENT_STATUS.pending }
 		});
 	});

@@ -7,6 +7,7 @@ import { database } from '$lib/server/db';
 import { systemClock } from '$lib/server/ports/clock';
 import {
 	MAXIMUM_PROOF_BYTES,
+	MAXIMUM_PROOF_MEBIBYTES,
 	PAYMENT_RULE,
 	PaymentRuleError,
 	PROOF_CONTENT_TYPES,
@@ -144,7 +145,10 @@ function ruleMessage(rule: PaymentRule): string {
 		[PAYMENT_RULE.notACalendarDay]: m.payments_rule_notACalendarDay,
 		[PAYMENT_RULE.receivedInTheFuture]: m.payments_rule_receivedInTheFuture,
 		[PAYMENT_RULE.proofMissing]: m.payments_rule_proofMissing,
-		[PAYMENT_RULE.proofTooLarge]: m.payments_rule_proofTooLarge,
+		// The only one carrying a figure, and it comes from the constant the service enforces rather
+		// than from a number written into both catalogues by hand.
+		[PAYMENT_RULE.proofTooLarge]: () =>
+			m.payments_rule_proofTooLarge({ maximumSize: MAXIMUM_PROOF_MEBIBYTES }),
 		[PAYMENT_RULE.proofNotAnImage]: m.payments_rule_proofNotAnImage,
 		[PAYMENT_RULE.alreadyDecided]: m.payments_rule_alreadyDecided
 	};

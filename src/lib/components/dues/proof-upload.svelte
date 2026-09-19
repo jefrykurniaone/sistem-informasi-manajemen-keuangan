@@ -2,9 +2,13 @@
 	/** How many bytes are in a mebibyte, for turning a limit in bytes into the text beside the field. */
 	const BYTES_PER_MEBIBYTE = 1024 * 1024;
 
-	/** A byte count as the megabytes a person reads, with one decimal place. */
+	/**
+	 * A byte count as the megabytes a person reads, to one decimal place and without a trailing
+	 * `.0` — so that the limit reads "5 MB" here exactly as `payments_rule_proofTooLarge` states it,
+	 * while a chosen file still reads "3.7 MB".
+	 */
 	export function megabytes(bytes: number): string {
-		return (bytes / BYTES_PER_MEBIBYTE).toFixed(1);
+		return String(Number((bytes / BYTES_PER_MEBIBYTE).toFixed(1)));
 	}
 </script>
 
