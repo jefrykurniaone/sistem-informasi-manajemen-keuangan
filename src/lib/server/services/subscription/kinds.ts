@@ -31,7 +31,13 @@ export const SUBSCRIPTION_KIND = {
 	/** A new Laporan Bulanan was published. Opt-in, off by default. */
 	monthlyReport: 'monthly-report',
 	/** A new Post was published on the announcement board. Opt-in, off by default. */
-	newPost: 'new-post'
+	newPost: 'new-post',
+	/**
+	 * A new Keluhan was reported, for an admin to review. Opt-in, off by default — #46's own
+	 * acceptance criterion is that this one email an admin may switch off, unlike the reporter's own
+	 * `ownComplaintStatusChanged` above, which stays mandatory.
+	 */
+	newComplaint: 'new-complaint'
 } as const;
 
 /** One of the notification kinds above. */
@@ -63,7 +69,8 @@ export const SUBSCRIPTION_KINDS: readonly SubscriptionKindDefinition[] = [
 	{ kind: SUBSCRIPTION_KIND.paymentVerified, mandatory: true, defaultEnabled: true },
 	{ kind: SUBSCRIPTION_KIND.ownComplaintStatusChanged, mandatory: true, defaultEnabled: true },
 	{ kind: SUBSCRIPTION_KIND.monthlyReport, mandatory: false, defaultEnabled: false },
-	{ kind: SUBSCRIPTION_KIND.newPost, mandatory: false, defaultEnabled: false }
+	{ kind: SUBSCRIPTION_KIND.newPost, mandatory: false, defaultEnabled: false },
+	{ kind: SUBSCRIPTION_KIND.newComplaint, mandatory: false, defaultEnabled: false }
 ];
 
 const DEFINITION_BY_KIND = new Map(

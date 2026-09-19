@@ -16,7 +16,8 @@
 		'payment-verified': m.profile_notifications_kind_paymentVerified_label,
 		'own-complaint-status-changed': m.profile_notifications_kind_ownComplaintStatusChanged_label,
 		'monthly-report': m.profile_notifications_kind_monthlyReport_label,
-		'new-post': m.profile_notifications_kind_newPost_label
+		'new-post': m.profile_notifications_kind_newPost_label,
+		'new-complaint': m.profile_notifications_kind_newComplaint_label
 	};
 
 	const KIND_DESCRIPTION: Record<string, () => string> = {
@@ -25,7 +26,8 @@
 		'own-complaint-status-changed':
 			m.profile_notifications_kind_ownComplaintStatusChanged_description,
 		'monthly-report': m.profile_notifications_kind_monthlyReport_description,
-		'new-post': m.profile_notifications_kind_newPost_description
+		'new-post': m.profile_notifications_kind_newPost_description,
+		'new-complaint': m.profile_notifications_kind_newComplaint_description
 	};
 </script>
 

@@ -18,6 +18,7 @@ import type { Clock } from '../../ports/clock';
 import type { FileStore } from '../../ports/file-store';
 import { storeComplaintAttachments, type ComplaintAttachmentUpload } from './attachment';
 import { complaintAge, isComplaintStale, recordComplaintStatusChange } from './history';
+import { notifyComplaintStatusChanged, notifyNewComplaint } from './notification';
 import {
 	assertComplaintTransition,
 	COMPLAINT_ACTOR,
@@ -132,6 +133,22 @@ export interface CreateComplaintRequest {
 }
 
 /**
+ * What a caller may hand `createComplaint` instead of the production `new-complaint` notifier.
+ *
+ * The one field is for a test only, the same shape `PublishPostSettings` in `../post/index.ts`
+ * takes for `notifyNewPost`: production code never has a reason to pass it, so every existing
+ * caller of `createComplaint` keeps compiling unchanged against this argument being optional.
+ */
+export interface CreateComplaintSettings {
+	/**
+	 * Replaces `notifyNewComplaint` for this call. A test hands this a spy or a no-op so it can
+	 * assert on the decision to notify without a real `Database` write; production code never sets
+	 * it, so `createComplaint` always queues through the real recipient list otherwise.
+	 */
+	readonly notify?: (db: Database, clock: Clock, complaint: Complaint) => Promise<void>;
+}
+
+/**
  * Reports a new Keluhan — user stories 1 through 3 of `docs/spec-keluhan-v1.md`, and the acceptance
  * criterion `writes:` had no service layer for at all until the orchestrator's correction to this
  * ticket added this function and `./attachment.ts`.
@@ -149,10 +166,16 @@ export interface CreateComplaintRequest {
  * and a row that never commits can at worst leave an unreferenced blob behind, never a Lampiran row
  * pointing at a file that is not there.
  *
- * **This function queues no email.** "Keluhan baru mengantre satu email ke setiap admin" is #46's
- * acceptance criterion, and #46 is blocked on this ticket landing first — see this module's own doc
- * comment.
+ * **The `new-complaint` email is queued here, after the transaction commits.** #46's acceptance
+ * criterion — "keluhan baru mengantrekan satu email kepada setiap pemegang peran admin yang
+ * menyalakan langganan keluhan baru" — is `notifyNewComplaint` in `./notification.ts`, called with
+ * the plain database rather than `transaction`, the same ordering `publishPost` in `../post/index.ts`
+ * uses for its own `new-post` email: a Keluhan whose commit is rolled back for some other reason
+ * must never have already promised an email that announces it.
  *
+ * @param settings `notify` replaces `notifyNewComplaint` for this call — a test hands it a spy or a
+ *   no-op so it can assert on the decision to notify without a real email being queued; production
+ *   code never sets it, so every existing caller keeps compiling unchanged.
  * @throws {ComplaintRuleError} `actorNotRegistered` when `actorId` has no `residents` row to
  *   attribute the complaint to.
  * @throws {TypeError} when the title, category or description is empty after trimming, or
@@ -166,7 +189,8 @@ export async function createComplaint(
 	db: Database,
 	clock: Clock,
 	fileStore: FileStore,
-	request: CreateComplaintRequest
+	request: CreateComplaintRequest,
+	settings: CreateComplaintSettings = {}
 ): Promise<Complaint> {
 	const title = request.title.trim();
 	const category = request.category.trim();
@@ -183,7 +207,7 @@ export async function createComplaint(
 	// Minted here, before the row exists — see this function's doc comment.
 	const id = randomUUID();
 
-	return db.transaction(async (transaction) => {
+	const created = await db.transaction(async (transaction) => {
 		const reporterId = await requireResidentId(transaction, request.actorId);
 
 		// Checked and stored before the row is inserted: a batch refused by `./attachment.ts`'s rules
@@ -232,6 +256,11 @@ export async function createComplaint(
 
 		return row;
 	});
+
+	const notify = settings.notify ?? notifyNewComplaint;
+	await notify(db, clock, created);
+
+	return created;
 }
 
 /**
@@ -418,11 +447,38 @@ export interface ChangeComplaintStatusRequest {
 }
 
 /**
+ * What a caller may hand `changeComplaintStatus` instead of the production
+ * `own-complaint-status-changed` notifier. The same shape `CreateComplaintSettings` takes, for the
+ * same reason.
+ */
+export interface ChangeComplaintStatusSettings {
+	/**
+	 * Replaces `notifyComplaintStatusChanged` for this call. A test hands this a spy or a no-op so
+	 * it can assert on the decision to notify without a real `Database` write; production code
+	 * never sets it, so `changeComplaintStatus` always queues to the reporter otherwise.
+	 */
+	readonly notify?: (
+		db: Database,
+		clock: Clock,
+		complaint: Complaint,
+		note: string | null
+	) => Promise<void>;
+}
+
+/**
  * Moves a complaint as the pengurus — stories 15 and 16, and story 18's refusal of everything else.
  *
  * `withdrawn` is not reachable from here however the request is built: the state machine says that
  * edge belongs to `COMPLAINT_ACTOR.reporter`, and this function only ever asks for the handler's.
  *
+ * **The `own-complaint-status-changed` email is queued here, after the transaction commits**, the
+ * same ordering `createComplaint` uses for `new-complaint` above — see that function's doc comment.
+ * `withdrawComplaint` below shares `moveComplaint` with this function but never queues this email:
+ * #46's acceptance criterion is explicit that a reporter withdrawing their own complaint must not
+ * be emailed about it.
+ *
+ * @param settings `notify` replaces `notifyComplaintStatusChanged` for this call — see
+ *   `ChangeComplaintStatusSettings`.
  * @throws {PermissionDeniedError} when `actorId` may not handle complaints.
  * @throws {ComplaintRuleError} `actorNotRegistered`, `rejectionNeedsReason` for a rejection with no
  *   reason, or `reasonWithoutRejection` for a reason on anything else.
@@ -432,8 +488,11 @@ export interface ChangeComplaintStatusRequest {
 export async function changeComplaintStatus(
 	db: Database,
 	clock: Clock,
-	request: ChangeComplaintStatusRequest
+	request: ChangeComplaintStatusRequest,
+	settings: ChangeComplaintStatusSettings = {}
 ): Promise<ComplaintWithAge> {
+	const note = trimmedOrNull(request.note);
+
 	const row = await db.transaction(async (transaction) => {
 		await requirePermission(transaction, request.actorId, ACTION.handleComplaints);
 		const actorResidentId = await requireResidentId(transaction, request.actorId);
@@ -454,10 +513,13 @@ export async function changeComplaintStatus(
 			to: request.to,
 			actorUserId: request.actorId,
 			actorResidentId,
-			note: trimmedOrNull(request.note),
+			note,
 			rejectionReason: rejectionReasonFor(request.to, request.rejectionReason)
 		});
 	});
+
+	const notify = settings.notify ?? notifyComplaintStatusChanged;
+	await notify(db, clock, row, note);
 
 	return withAge(clock, row);
 }
