@@ -10,6 +10,7 @@ import {
 	type JobRegistry
 } from '../scheduler';
 import { invitationTemplates } from './templates/invitation';
+import { newPostTemplates } from './templates/new-post';
 import { passwordResetTemplates } from './templates/password-reset';
 import { registrationApprovedTemplates } from './templates/registration-approved';
 import { verifyEmailTemplates } from './templates/verify-email';
@@ -70,7 +71,8 @@ export const applicationEmailTemplates: EmailTemplates = {
 	...verifyEmailTemplates,
 	...passwordResetTemplates,
 	...invitationTemplates,
-	...registrationApprovedTemplates
+	...registrationApprovedTemplates,
+	...newPostTemplates
 };
 
 /** What a drain job may have handed to it instead of the production wiring. */

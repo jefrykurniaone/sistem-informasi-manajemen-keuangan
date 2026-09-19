@@ -862,5 +862,10 @@
 	"complaintDetail_withdrawnMessage": "Keluhan Anda sudah ditarik.",
 	"complaintDetail_withdrawRefused": "Keluhan ini sudah tidak bisa ditarik lagi.",
 	"complaintDetail_invalidForm": "Permintaan tidak valid.",
-	"complaintDetail_createdMessage": "Keluhan Anda sudah dikirim."
+	"complaintDetail_createdMessage": "Keluhan Anda sudah dikirim.",
+	"emailNewPost_subject": "Terbitan baru: {title}",
+	"emailNewPost_greeting": "Halo,",
+	"emailNewPost_intro": "Ada terbitan baru di papan pengumuman komplek Anda: {title}",
+	"emailNewPost_linkLabel": "Baca selengkapnya:",
+	"emailNewPost_footer": "Anda menerima email ini karena mengaktifkan notifikasi terbitan baru di preferensi profil Anda."
 }

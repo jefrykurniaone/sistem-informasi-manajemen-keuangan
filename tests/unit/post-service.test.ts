@@ -3,11 +3,14 @@ import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { PermissionDeniedError } from '$lib/errors';
 import { auditEntriesFor } from '$lib/server/audit';
+import { readOrigin } from '$lib/server/auth';
 import { user } from '$lib/server/db/schema/auth';
 import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
+import { emailQueue } from '$lib/server/db/schema/email';
 import { POST_STATUS, POST_TYPE, posts } from '$lib/server/db/schema/post';
 import { residents } from '$lib/server/db/schema/resident';
 import { testDatabase } from '$lib/server/db/test-helpers';
+import { NEW_POST_KIND } from '$lib/server/email/templates/new-post';
 import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
 import {
 	archivePost,
@@ -31,6 +34,8 @@ import {
 	updatePost,
 	type PostContent
 } from '$lib/server/services/post';
+import { setSubscriptionPreference } from '$lib/server/services/subscription';
+import { SUBSCRIPTION_KIND } from '$lib/server/services/subscription/kinds';
 
 /**
  * The Post service: who may write one, the type and status rules `docs/spec-konten-v1.md` left out
@@ -81,6 +86,33 @@ async function insertAccount(name: string, role?: Role): Promise<string> {
 /** An admin who may manage Posts and has somewhere to be attributed to. */
 async function insertAdmin(name: string): Promise<string> {
 	return insertAccount(name, ROLE.admin);
+}
+
+/** Switches `userId`'s own new-post Langganan on or off — for the publish-queues-email tests below. */
+async function subscribeToNewPost(
+	userId: string,
+	clock: FakeClock,
+	enabled: boolean
+): Promise<void> {
+	const [resident] = await testDb.db.select().from(residents).where(eq(residents.userId, userId));
+	await setSubscriptionPreference(testDb.db, clock, {
+		callerUserId: userId,
+		residentId: resident.id,
+		kind: SUBSCRIPTION_KIND.newPost,
+		enabled
+	});
+}
+
+/** The address `userId` signs in with, for asserting on who a queued email was addressed to. */
+async function emailOf(userId: string): Promise<string> {
+	const [row] = await testDb.db.select({ email: user.email }).from(user).where(eq(user.id, userId));
+	return row.email;
+}
+
+/** Every `new-post` queue row belonging to `postTitle`, since this file's schema is shared across tests. */
+async function newPostRowsFor(postTitle: string) {
+	const rows = await testDb.db.select().from(emailQueue).where(eq(emailQueue.kind, NEW_POST_KIND));
+	return rows.filter((row) => row.payload.title === postTitle);
 }
 
 /** The content of a kegiatan, overridable field by field. */
@@ -668,5 +700,146 @@ describe('permission', () => {
 		});
 
 		expect(created.status).toBe(POST_STATUS.draft);
+	});
+});
+
+describe('publishing queues the new-post email — #41', () => {
+	// This describe block's own tests are the only ones in the file that call
+	// `subscribeToNewPost`, and a subscription row outlives the test that wrote it — the schema is
+	// shared for the whole file, per `testDatabase()`'s contract. So a test that needs to prove
+	// "nobody was notified" runs first, before any sibling test leaves a resident subscribed behind
+	// it, and every other test below asserts on its own subscriber's rows by recipient rather than
+	// on the total row count for a title, which a later, unrelated subscriber would also appear in
+	// — correctly: a resident who is subscribed is notified about every Post published after they
+	// subscribed, not only about the one the test that subscribed them happened to be about.
+	it('is opt-in and off by default: nobody is notified when nobody has switched it on', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Terbit Sunyi'));
+		const clock = new FakeClock(START);
+		await insertAccount(unique('Warga Diam Saja'));
+		const created = await createPost(testDb.db, clock, {
+			actorId: adminId,
+			...announcementContent()
+		});
+
+		await publishPost(testDb.db, clock, { actorId: adminId, postId: created.id });
+
+		expect(await newPostRowsFor(created.title)).toEqual([]);
+	});
+
+	it('queues one email to a resident subscribed to new-post, and none to one who is not', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Kirim Email'));
+		const clock = new FakeClock(START);
+		const subscriberId = await insertAccount(unique('Warga Ikut Notifikasi'));
+		await subscribeToNewPost(subscriberId, clock, true);
+		const othersId = await insertAccount(unique('Warga Tanpa Notifikasi'));
+		const created = await createPost(testDb.db, clock, {
+			actorId: adminId,
+			...announcementContent()
+		});
+
+		await publishPost(testDb.db, clock, { actorId: adminId, postId: created.id });
+
+		const recipients = (await newPostRowsFor(created.title)).map((row) => row.recipient);
+		expect(recipients).toContain(await emailOf(subscriberId));
+		expect(recipients).not.toContain(await emailOf(othersId));
+	});
+
+	it('carries the title, the summary and an absolute link to the public page — never the body', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Isi Email'));
+		const clock = new FakeClock(START);
+		const subscriberId = await insertAccount(unique('Warga Baca Isi Email'));
+		await subscribeToNewPost(subscriberId, clock, true);
+		const created = await createPost(testDb.db, clock, {
+			actorId: adminId,
+			...announcementContent({
+				bodyMarkdown: 'Isi lengkap yang tidak boleh pernah muncul di email.'
+			})
+		});
+
+		await publishPost(testDb.db, clock, { actorId: adminId, postId: created.id });
+
+		const subscriberEmail = await emailOf(subscriberId);
+		const own = (await newPostRowsFor(created.title)).find(
+			(candidate) => candidate.recipient === subscriberEmail
+		);
+		if (!own) {
+			throw new Error('Expected a queued row for the subscribed resident, and found none.');
+		}
+		expect(own.payload).toMatchObject({
+			title: created.title,
+			summary: created.summary,
+			url: `${readOrigin()}/posts/${created.id}`,
+			locale: 'id'
+		});
+		expect(JSON.stringify(own.payload)).not.toContain(created.bodyMarkdown);
+	});
+
+	it('does not queue a second email when an already-published Post is edited', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Sunting Terbit'));
+		const clock = new FakeClock(START);
+		const subscriberId = await insertAccount(unique('Warga Amati Sunting'));
+		await subscribeToNewPost(subscriberId, clock, true);
+		const created = await createPost(testDb.db, clock, {
+			actorId: adminId,
+			...announcementContent()
+		});
+		await publishPost(testDb.db, clock, { actorId: adminId, postId: created.id });
+
+		await updatePost(testDb.db, clock, {
+			actorId: adminId,
+			postId: created.id,
+			...announcementContent({ title: created.title, summary: 'Ringkasan yang sudah disunting.' })
+		});
+
+		const subscriberEmail = await emailOf(subscriberId);
+		const mine = (await newPostRowsFor(created.title)).filter(
+			(row) => row.recipient === subscriberEmail
+		);
+		expect(mine).toHaveLength(1);
+	});
+
+	it('does not queue a second email when an archived Post is published again', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Terbit Ulang Email'));
+		const clock = new FakeClock(START);
+		const subscriberId = await insertAccount(unique('Warga Amati Terbit Ulang'));
+		await subscribeToNewPost(subscriberId, clock, true);
+		const created = await createPost(testDb.db, clock, {
+			actorId: adminId,
+			...announcementContent()
+		});
+		await publishPost(testDb.db, clock, { actorId: adminId, postId: created.id });
+		await archivePost(testDb.db, clock, { actorId: adminId, postId: created.id });
+
+		await publishPost(testDb.db, clock, { actorId: adminId, postId: created.id });
+
+		const subscriberEmail = await emailOf(subscriberId);
+		const mine = (await newPostRowsFor(created.title)).filter(
+			(row) => row.recipient === subscriberEmail
+		);
+		expect(mine).toHaveLength(1);
+	});
+
+	it('lets a test replace the notifier, so a publish can be asserted on without a real email write', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Suntik Notifikasi'));
+		const clock = new FakeClock(START);
+		const created = await createPost(testDb.db, clock, {
+			actorId: adminId,
+			...announcementContent()
+		});
+		let notifiedPostId: string | undefined;
+
+		await publishPost(
+			testDb.db,
+			clock,
+			{ actorId: adminId, postId: created.id },
+			{
+				notify: async (_db, _clock, post) => {
+					notifiedPostId = post.id;
+				}
+			}
+		);
+
+		expect(notifiedPostId).toBe(created.id);
+		expect(await newPostRowsFor(created.title)).toEqual([]);
 	});
 });

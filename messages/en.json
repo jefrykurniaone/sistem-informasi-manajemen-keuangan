@@ -862,5 +862,10 @@
 	"complaintDetail_withdrawnMessage": "Your complaint has been withdrawn.",
 	"complaintDetail_withdrawRefused": "This complaint can no longer be withdrawn.",
 	"complaintDetail_invalidForm": "Invalid request.",
-	"complaintDetail_createdMessage": "Your complaint has been sent."
+	"complaintDetail_createdMessage": "Your complaint has been sent.",
+	"emailNewPost_subject": "New post: {title}",
+	"emailNewPost_greeting": "Hello,",
+	"emailNewPost_intro": "There is a new post on your complex's announcement board: {title}",
+	"emailNewPost_linkLabel": "Read more:",
+	"emailNewPost_footer": "You are receiving this email because you turned on new-post notifications in your profile preferences."
 }
