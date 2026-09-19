@@ -5,6 +5,7 @@ import type { Database } from '../../db';
 import { CASH_CATEGORY_TYPE, type CashCategoryType } from '../../db/schema/cash-category';
 import { cashTransactions, type CashTransaction } from '../../db/schema/cash-transaction';
 import type { Clock } from '../../ports/clock';
+import { requireOpenPeriodFor } from './period';
 import { assertCashDescription } from './transaction';
 
 /**
@@ -49,10 +50,13 @@ import { assertCashDescription } from './transaction';
  *   changes, and a new row is created *about* another one. Filing it under the original is what
  *   makes `auditEntriesFor(db, originalId)` answer "this line was corrected, by whom, when, and
  *   why" — which is the question anybody reading a corrected line actually has.
- * - **Where #35's period check goes.** Marked `PERIOD LOCK` below, inside the same transaction that
- *   holds the row lock, against `original.occurredOn` — the date the new row will carry. This
- *   ticket does not enforce it; the reasoning is in its pull request, and
- *   `./transaction.ts` carries the matching seam.
+ * - **The period check runs against `original.occurredOn`, not against today.** It sits inside the
+ *   same transaction that holds the row lock, and the date it asks about is the date the new row
+ *   will carry — which is the point above, carried through to the rule that acts on it. The
+ *   consequence is the one the spec's machinery is built for and is deliberate: correcting a line in
+ *   a month whose Laporan Bulanan has been published waits for the superuser's unlock, instead of
+ *   moving a number a resident has already read. `./period.ts` owns what a locked month means and
+ *   what a missing `periods` row means; `./transaction.ts` carries the matching call.
  */
 
 /** The audit log's `action` for a Koreksi, filed against the transaction it corrects. */
@@ -111,6 +115,8 @@ export interface RecordCashCorrectionRequest {
  * @throws {CashRuleError} `descriptionMissing` when the reason is empty after trimming.
  * @throws {CashTransactionNotFoundError} when `transactionId` names no transaction.
  * @throws {CashTransactionAlreadyCorrectedError} when it has already been corrected.
+ * @throws {PeriodLockedError} when the corrected row's own `occurredOn` falls inside a Periode that
+ *   is locked. The Koreksi waits for the unlock; it is never re-dated into an open month.
  */
 export async function recordCashCorrection(
 	db: Database,
@@ -129,8 +135,11 @@ export async function recordCashCorrection(
 			throw new CashTransactionAlreadyCorrectedError(original.id, existing.id);
 		}
 
-		// PERIOD LOCK — #35 refuses `original.occurredOn` inside a locked Periode here, inside the
-		// transaction that already holds the row lock, so the two rules are decided together.
+		// Against `original.occurredOn`, because that is the date the new row will carry — not
+		// `clock.now()`. Inside the transaction that already holds the original's row lock, so the
+		// two rules are decided together and in one lock order: the corrected row first, the Periode
+		// second, everywhere money is written.
+		await requireOpenPeriodFor(transaction, clock, original.occurredOn);
 
 		const [row] = await transaction
 			.insert(cashTransactions)

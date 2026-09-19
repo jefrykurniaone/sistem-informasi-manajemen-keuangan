@@ -70,7 +70,14 @@ const ACTIONS_NOT_SUPERUSER_ONLY: Readonly<Partial<Record<Action, readonly Role[
 	// either: it adds a reversing row and leaves the row it corrects exactly as it was, which is what
 	// keeps an append-only cash book out of Superuser's "mengubah masa lalu" sentence. Recording the
 	// Saldo awal stays `recordOpeningBalance`, and stays Superuser's.
-	[ACTION.recordCashTransactions]: [ROLE.admin]
+	[ACTION.recordCashTransactions]: [ROLE.admin],
+	// Both, the second entry here that is not a single set. The period screen's only button is
+	// superuser-only — `CONTEXT.md` names "pembukaan kunci Periode" in Superuser's sentence — so the
+	// list is deliberately readable by somebody who may not press it: an admin is refused by a locked
+	// month when recording a Transaksi Kas, and an admin is who publishes the Laporan Bulanan that
+	// locks one. Superuser alone would answer 403 to the role that causes every lock on the screen.
+	// `ACTION.unlockPeriods` itself needs no entry, because it really is superuser-only.
+	[ACTION.readPeriods]: [ROLE.admin, ROLE.superuser]
 };
 
 /** Which roles `action` is expected to be permitted to. Superuser alone unless stated otherwise. */

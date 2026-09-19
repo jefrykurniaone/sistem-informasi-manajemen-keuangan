@@ -216,7 +216,45 @@ export const ACTION = {
 	 * whether a unit is exempt on a given day is deliberately not covered here: the issuance job
 	 * that reads it has no session at all, so `isUnitExemptOn` takes no caller and checks nothing.
 	 */
-	manageExemptions: 'manageExemptions'
+	manageExemptions: 'manageExemptions',
+	/**
+	 * Seeing the list of Periode with each month's status and the Laporan Bulanan published inside
+	 * it. See `src/lib/server/services/cash/period.ts`.
+	 *
+	 * **Held by `admin` and `superuser` both**, which makes it the second read in this table split
+	 * away from the writes on its screen — `readAllComplaints` was the first, and for the same kind
+	 * of reason. The screen has exactly one button, and that button is superuser-only, so the usual
+	 * "a list is only useful to whoever may act on it" reasoning does not reach: the other reader is
+	 * the Admin, who needs the list for two things Superuser's sentence has nothing to do with.
+	 * An admin records a Transaksi Kas, and when a locked month refuses one, "which months are
+	 * locked" is the question they are left holding; an admin also publishes a Laporan Bulanan
+	 * (`CONTEXT.md` puts "menerbitkan Laporan Bulanan" on Admin), and publishing is what locks a
+	 * month in the first place. One action held by `superuser` alone would answer 403 to the role
+	 * that causes every lock on the screen.
+	 *
+	 * Reading whether one date falls in a locked month is deliberately not covered here and is not
+	 * an action at all: `isDateInLockedPeriod` takes no caller, for the reason
+	 * `listActiveCashCategories` records — the screen around it is already guarded by whatever
+	 * action it needs.
+	 */
+	readPeriods: 'readPeriods',
+	/**
+	 * Reopening a locked Periode, with a reason that goes to the audit log. See
+	 * `src/lib/server/services/cash/period.ts`.
+	 *
+	 * `CONTEXT.md` names it in Superuser's own sentence — "mengelola Warga dan peran, Unit dan Masa
+	 * Huni, Tarif, Pembebasan, pembatalan Tagihan, dan **pembukaan kunci Periode**" — and
+	 * `docs/spec-kas-laporan-v1.md` user story 15 asks for exactly that, so this is superuser-only
+	 * and an `admin` who is not also a superuser cannot reopen a month. It is the clearest case in
+	 * this table of "mengubah masa lalu": residents have already read the numbers the lock froze.
+	 *
+	 * **Locking is deliberately not covered here, and has no action of its own.** A Periode is
+	 * locked by publishing its Laporan Bulanan, which `CONTEXT.md` puts on Admin, so guarding that
+	 * transition with this superuser-only action would refuse the role that performs it. `lockPeriod`
+	 * takes a `Transaction` and checks nothing, reachable only from a service that already checked
+	 * the action entitling it to publish — see the argument recorded on that function.
+	 */
+	unlockPeriods: 'unlockPeriods'
 } as const;
 
 /** One of the actions above. */
@@ -287,7 +325,9 @@ const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.manageCashCategories]: new Set([ROLE.superuser]),
 	[ACTION.recordOpeningBalance]: new Set([ROLE.superuser]),
 	[ACTION.manageRegistrations]: new Set([ROLE.superuser]),
-	[ACTION.manageExemptions]: new Set([ROLE.superuser])
+	[ACTION.manageExemptions]: new Set([ROLE.superuser]),
+	[ACTION.readPeriods]: new Set([ROLE.admin, ROLE.superuser]),
+	[ACTION.unlockPeriods]: new Set([ROLE.superuser])
 };
 
 /**

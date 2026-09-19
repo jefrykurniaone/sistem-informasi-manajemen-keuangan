@@ -8,6 +8,7 @@ import { cashTransactions, type CashTransaction } from '../../db/schema/cash-tra
 import type { Clock } from '../../ports/clock';
 import type { FileStore } from '../../ports/file-store';
 import { CashCategoryNotFoundError, findCashCategoryById } from './category';
+import { requireOpenPeriodFor } from './period';
 
 /**
  * Recording a Transaksi Kas by hand: the admin's line of the buku kas, dated on the day money
@@ -81,16 +82,19 @@ import { CashCategoryNotFoundError, findCashCategoryById } from './category';
  *   a browser and would be a path fragment picked by whoever sent it. It is the convention
  *   `payments/<paymentId>/proof.jpg` and `posts/<postId>/cover.<ext>` already follow: a key the
  *   caller can rebuild is a key it can delete without storing anything extra.
- * - **Where #35's period check goes.** `docs/spec-kas-laporan-v1.md` user story 14 refuses a
+ * - **The period check, and where it sits.** `docs/spec-kas-laporan-v1.md` user story 14 refuses a
  *   transaction dated inside a locked Periode, and
  *   `src/lib/server/db/schema/cash-transaction.ts` settles that this is a service rule rather than a
- *   constraint. It is **not** enforced here, and the reasoning is recorded in this ticket's pull
- *   request: enforcing it means deciding what a missing `periods` row means and who creates one,
- *   which is the period lifecycle #35 owns, and the spec's own test for it ("ditolak; setelah dibuka
- *   kunci, transaksi yang sama diterima") cannot be written until an unlock exists. What this module
- *   does provide is the seam: the comment marked `PERIOD LOCK` below sits in the one place a check
- *   belongs — inside the recording transaction, after the category is known and before the insert —
- *   and `./correction.ts` carries the matching one.
+ *   constraint. #34 left the seam and #35 filled it: `requireOpenPeriodFor` is called inside the
+ *   recording transaction, after the category is known and before the insert, against
+ *   `request.occurredOn` — the day the money moved, never the day the row is typed in.
+ *   `./correction.ts` carries the matching call against the *corrected* row's date. What a missing
+ *   `periods` row means, who creates one, and how the race to create it is resolved are all settled
+ *   in `./period.ts`; this module only names the moment the question is asked.
+ *
+ *   The refusal is `PeriodLockedError`, not a member of `CASH_RULE`, and that is a surface
+ *   consequence rather than a preference: `CASH_RULE` is mapped by an exhaustive `Record` on the two
+ *   cash screens, which #35's `writes:` does not include.
  */
 
 /** The audit log's `action` for a Transaksi Kas an admin recorded by hand. */
@@ -282,6 +286,8 @@ export async function assertMayRecordCashTransactions(
  *   a deactivated one, `amountNotPositive` for zero or less, `notACalendarDay` for a date that is
  *   not one, `descriptionMissing` for an empty keterangan, and `receiptTooLarge` or
  *   `receiptNotAnImage` for an attachment that is neither small enough nor really an image.
+ * @throws {PeriodLockedError} when `occurredOn` falls inside a Periode that is locked. The month's
+ *   row is created, open, when it does not exist yet — see `./period.ts`.
  */
 export async function recordCashTransaction(
 	db: Database,
@@ -306,8 +312,11 @@ export async function recordCashTransaction(
 
 		const category = await requireRecordableCategory(transaction, request.categoryId);
 
-		// PERIOD LOCK — #35 refuses `request.occurredOn` inside a locked Periode here, inside this
-		// transaction, where the check and the insert cannot be separated by another writer.
+		// The Periode this row is dated into: created when the month has none, share-locked until
+		// this transaction ends, and refused by name when it is locked. Here, inside this
+		// transaction, is what keeps the check and the insert from being separated by another
+		// writer — see `./period.ts` for why `for share` is the right strength.
+		await requireOpenPeriodFor(transaction, clock, request.occurredOn);
 
 		if (storedReceipt) {
 			await fileStore.store(storedReceipt.key, storedReceipt.content);

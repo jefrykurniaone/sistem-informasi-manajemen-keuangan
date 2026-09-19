@@ -23,6 +23,7 @@ import {
 } from '$lib/server/services/cash/category';
 import * as correctionModule from '$lib/server/services/cash/correction';
 import { recordCashCorrection } from '$lib/server/services/cash/correction';
+import { lockPeriod, PeriodLockedError, unlockPeriod } from '$lib/server/services/cash/period';
 import * as transactionModule from '$lib/server/services/cash/transaction';
 import {
 	CASH_RULE,
@@ -347,6 +348,48 @@ describe('recordCashTransaction', () => {
 		}).catch((error: unknown) => error);
 
 		expect(refusal).toMatchObject({ rule: CASH_RULE.descriptionMissing });
+	});
+
+	it('refuses a day inside a locked Periode, and takes the same line once the month is reopened', async () => {
+		// #35's rule seen from this side. The check sits inside the recording transaction, after the
+		// category is known and before the insert, and it reads `occurredOn` — the day money moved —
+		// rather than the clock. August is used here rather than this file's `DAY` so that locking a
+		// month cannot reach the tests around it.
+		const adminId = await insertAdmin('Pengurus Catat Periode Terkunci');
+		const superuserId = await insertSuperuser('Pengurus Buka Kunci Catat');
+		const category = await addCategory('Perbaikan talang air');
+		await testDb.db.transaction((transaction) =>
+			lockPeriod(transaction, new FakeClock(START), {
+				actorId: adminId,
+				year: 2026,
+				month: 8,
+				reason: 'Laporan Bulanan revisi 1 terbit.'
+			})
+		);
+
+		await expect(
+			record({ actorId: adminId, categoryId: category.id, occurredOn: '2026-08-13' })
+		).rejects.toThrow(PeriodLockedError);
+		expect(
+			await testDb.db
+				.select()
+				.from(cashTransactions)
+				.where(eq(cashTransactions.categoryId, category.id))
+		).toHaveLength(0);
+
+		await unlockPeriod(testDb.db, new FakeClock(START), {
+			actorId: superuserId,
+			year: 2026,
+			month: 8,
+			reason: 'Nota bulan itu baru ditemukan dan harus masuk.'
+		});
+		const accepted = await record({
+			actorId: adminId,
+			categoryId: category.id,
+			occurredOn: '2026-08-13'
+		});
+
+		expect(accepted.occurredOn).toBe('2026-08-13');
 	});
 
 	it('refuses a superuser who is not also an admin, and a resident, and writes nothing', async () => {
