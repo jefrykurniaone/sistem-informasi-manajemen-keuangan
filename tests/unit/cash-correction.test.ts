@@ -20,6 +20,7 @@ import {
 	recordCashCorrection
 } from '$lib/server/services/cash/correction';
 import { getOpeningBalance, recordOpeningBalance } from '$lib/server/services/cash/opening-balance';
+import { lockPeriod, PeriodLockedError, unlockPeriod } from '$lib/server/services/cash/period';
 import { CashRuleError, recordCashTransaction } from '$lib/server/services/cash/transaction';
 
 /**
@@ -328,6 +329,58 @@ describe('recordCashCorrection', () => {
 				.from(cashTransactions)
 				.where(eq(cashTransactions.correctionOf, original.id))
 		).toHaveLength(0);
+	});
+
+	it('waits for the unlock when the line it corrects sits inside a locked Periode', async () => {
+		// The Koreksi carries the corrected line's own `occurredOn`, so the month it has to answer to
+		// is that line's month. A correction of a published month therefore waits for the superuser's
+		// unlock instead of quietly moving a number residents have already read. August is used rather
+		// than this file's `DAY` so that locking a month cannot reach the tests around it.
+		const adminId = await insertAdmin('Pengurus Koreksi Bulan Terkunci');
+		const superuserId = await insertSuperuser('Pengurus Buka Kunci Bulan Koreksi');
+		const category = await addCategory('Perbaikan talang koreksi');
+		const original = await recordCashTransaction(
+			testDb.db,
+			new FakeClock(START),
+			new FakeFileStore(new FakeClock(START)),
+			{
+				actorId: adminId,
+				occurredOn: '2026-08-13',
+				categoryId: category.id,
+				amount: AMOUNT,
+				description: 'Perbaikan talang belakang'
+			}
+		);
+		await testDb.db.transaction((transaction) =>
+			lockPeriod(transaction, new FakeClock(START), {
+				actorId: adminId,
+				year: 2026,
+				month: 8,
+				reason: 'Laporan Bulanan revisi 1 terbit.'
+			})
+		);
+
+		await expect(
+			recordCashCorrection(testDb.db, new FakeClock(START), {
+				actorId: adminId,
+				transactionId: original.id,
+				reason: 'Nominalnya salah ketik.'
+			})
+		).rejects.toThrow(PeriodLockedError);
+
+		await unlockPeriod(testDb.db, new FakeClock(START), {
+			actorId: superuserId,
+			year: 2026,
+			month: 8,
+			reason: 'Nota bulan itu baru ditemukan dan harus masuk.'
+		});
+		const correction = await recordCashCorrection(testDb.db, new FakeClock(START), {
+			actorId: adminId,
+			transactionId: original.id,
+			reason: 'Nominalnya salah ketik.'
+		});
+
+		expect(correction).toMatchObject({ occurredOn: '2026-08-13', correctionOf: original.id });
 	});
 
 	it('blocks a concurrent correction behind its lock, rather than letting it act on a stale read', async () => {
