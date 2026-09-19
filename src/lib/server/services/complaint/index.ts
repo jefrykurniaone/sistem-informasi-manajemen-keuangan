@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, type SQL } from 'drizzle-orm';
 import { PermissionDeniedError } from '$lib/errors';
 import { recordAuditEntry } from '../../audit';
@@ -5,13 +6,17 @@ import { ACTION, requirePermission, type DatabaseWriter } from '../../authz';
 import type { Database } from '../../db';
 import {
 	COMPLAINT_STATUS,
+	COMPLAINT_VISIBILITIES,
 	COMPLAINT_VISIBILITY,
+	complaintAttachments,
 	complaints,
 	type Complaint,
 	type ComplaintStatus,
 	type ComplaintVisibility
 } from '../../db/schema/complaint';
 import type { Clock } from '../../ports/clock';
+import type { FileStore } from '../../ports/file-store';
+import { storeComplaintAttachments, type ComplaintAttachmentUpload } from './attachment';
 import { complaintAge, isComplaintStale, recordComplaintStatusChange } from './history';
 import {
 	assertComplaintTransition,
@@ -43,6 +48,27 @@ export {
 	type ComplaintReplyWithAuthor
 } from './reply';
 export { complaintWorklistSummary, type ComplaintWorklistSummary } from './worklist';
+/**
+ * `./attachment.ts` is re-exported here for the same reason `./reply.ts` and `./worklist.ts` are:
+ * one module surface for every Keluhan service function. It reads `./visibility.ts` directly and
+ * imports nothing back from this module — `createComplaint` below imports `storeComplaintAttachments`
+ * straight from `./attachment.ts` rather than through this re-export, which is what keeps this file
+ * from importing itself.
+ */
+export {
+	ATTACHMENT_CONTENT_TYPES,
+	COMPLAINT_ATTACHMENT_RULE,
+	ComplaintAttachmentRuleError,
+	MAX_ATTACHMENTS_PER_COMPLAINT,
+	MAXIMUM_ATTACHMENT_BYTES,
+	MAXIMUM_ATTACHMENT_MEBIBYTES,
+	listComplaintAttachments,
+	storeComplaintAttachments,
+	type ComplaintAttachmentRule,
+	type ComplaintAttachmentSummary,
+	type ComplaintAttachmentUpload,
+	type StoredComplaintAttachment
+} from './attachment';
 
 /**
  * **The Keluhan service: the rules that make a complaint trustworthy.**
@@ -66,19 +92,15 @@ export { complaintWorklistSummary, type ComplaintWorklistSummary } from './workl
  *
  * ## What it deliberately does not own
  *
- * - **There is no `createComplaint` here yet.** Reporting one comes with the Lampiran limit of
- *   three, the category the form offers and the email to every admin, none of which is in this
- *   ticket's surface; it belongs with the screens. Tests in this ticket insert `complaints` rows
- *   directly for the same reason `tests/unit/post-service.test.ts` inserts `residents` rows
- *   directly — the row is the fixture, not the thing under test.
  * - **There is no `deleteComplaint`, and there must never be one.** `withdrawn` is what a reporter
  *   taking a complaint back means, and it keeps the history that says so. Same rule the Unit and
  *   Post services state about their own deletes.
  * - **No paging on `listComplaints`.** `listPosts` has it because the admin Post screen needed it,
  *   and the screen's ticket is where that decision belongs; the admin queue's sort — longest wait
  *   first — is the part this ticket's acceptance criteria name, and it is here.
- * - **No email.** Both messages this spec asks for are queued by the ticket that owns the screens;
- *   this module writes the audit row and the history row a notification would be derived from.
+ * - **No email.** `createComplaint` below writes the row, its Lampiran and its audit entry; queuing
+ *   the "keluhan baru" message to every admin is #46, which waits on #44 landing first — see this
+ *   module's own doc comment on `createComplaint`.
  *
  * ## Permission, in two halves
  *
@@ -89,10 +111,128 @@ export { complaintWorklistSummary, type ComplaintWorklistSummary } from './workl
  * all the same, so a route never learns a second error class for a refusal of the caller.
  */
 
+/** The audit log's `action` for a Keluhan reported for the first time. */
+export const COMPLAINT_CREATED_ACTION = 'complaint_created';
 /** The audit log's `action` for a Keluhan that moved between statuses, withdrawals included. */
 export const COMPLAINT_STATUS_CHANGED_ACTION = 'complaint_status_changed';
 /** The audit log's `action` for a Keluhan whose visibility was lowered. */
 export const COMPLAINT_VISIBILITY_CHANGED_ACTION = 'complaint_visibility_changed';
+
+/** Who is reporting, what they wrote, and the photographs they attached. */
+export interface CreateComplaintRequest {
+	/** The signed-in account. Resolved to a `residents` row before anything is written. */
+	readonly actorId: string;
+	readonly title: string;
+	readonly category: string;
+	readonly description: string;
+	/** `private` by default in every screen this ticket builds; a resident may choose `public`. */
+	readonly visibility: ComplaintVisibility;
+	/** At most `MAX_ATTACHMENTS_PER_COMPLAINT` — see `./attachment.ts`. */
+	readonly attachments: readonly ComplaintAttachmentUpload[];
+}
+
+/**
+ * Reports a new Keluhan — user stories 1 through 3 of `docs/spec-keluhan-v1.md`, and the acceptance
+ * criterion `writes:` had no service layer for at all until the orchestrator's correction to this
+ * ticket added this function and `./attachment.ts`.
+ *
+ * A fresh complaint always starts `new` with `statusChangedAt` equal to `createdAt` — the same
+ * starting point `./history.ts`'s doc comment describes — and carries no `complaint_status_changes`
+ * row, because nothing has moved yet.
+ *
+ * **The id is minted before the row exists**, the same move `recordPayment` makes in
+ * `../dues/payment.ts`: it is what lets every attachment's storage key be built and stored *before*
+ * `complaints.id` is written, so `complaint_attachments.fileKey` never depends on an update that
+ * happens later. Attachments are stored inside the same transaction that inserts the complaint and
+ * its Lampiran rows, in the order checks, then storage, then the insert — `recordPayment`'s order,
+ * extended to a batch of files: a request refused by a rule is refused before any byte is written,
+ * and a row that never commits can at worst leave an unreferenced blob behind, never a Lampiran row
+ * pointing at a file that is not there.
+ *
+ * **This function queues no email.** "Keluhan baru mengantre satu email ke setiap admin" is #46's
+ * acceptance criterion, and #46 is blocked on this ticket landing first — see this module's own doc
+ * comment.
+ *
+ * @throws {ComplaintRuleError} `actorNotRegistered` when `actorId` has no `residents` row to
+ *   attribute the complaint to.
+ * @throws {TypeError} when the title, category or description is empty after trimming, or
+ *   `visibility` is not one of `COMPLAINT_VISIBILITIES` — both are mistakes a correct screen never
+ *   makes, the same split `validatePostContent` in `../post/index.ts` draws between a screen bug and
+ *   a domain rule.
+ * @throws {ComplaintAttachmentRuleError} `tooMany`, `attachmentTooLarge` or `attachmentNotAnImage` —
+ *   see `./attachment.ts`.
+ */
+export async function createComplaint(
+	db: Database,
+	clock: Clock,
+	fileStore: FileStore,
+	request: CreateComplaintRequest
+): Promise<Complaint> {
+	const title = request.title.trim();
+	const category = request.category.trim();
+	const description = request.description.trim();
+	if (title === '' || category === '' || description === '') {
+		throw new TypeError('A complaint needs a non-empty title, category and description.');
+	}
+	if (!COMPLAINT_VISIBILITIES.includes(request.visibility)) {
+		throw new TypeError(
+			`"${request.visibility}" is not one of ${COMPLAINT_VISIBILITIES.join(', ')}.`
+		);
+	}
+
+	// Minted here, before the row exists — see this function's doc comment.
+	const id = randomUUID();
+
+	return db.transaction(async (transaction) => {
+		const reporterId = await requireResidentId(transaction, request.actorId);
+
+		// Checked and stored before the row is inserted: a batch refused by `./attachment.ts`'s rules
+		// leaves nothing behind for this complaint to point at.
+		const attachments = await storeComplaintAttachments(fileStore, id, request.attachments);
+
+		const now = clock.now();
+		const [row] = await transaction
+			.insert(complaints)
+			.values({
+				id,
+				reporterId,
+				title,
+				category,
+				description,
+				status: COMPLAINT_STATUS.new,
+				visibility: request.visibility,
+				rejectionReason: null,
+				createdAt: now,
+				statusChangedAt: now
+			})
+			.returning();
+
+		if (attachments.length > 0) {
+			await transaction.insert(complaintAttachments).values(
+				attachments.map((attachment) => ({
+					id: attachment.id,
+					complaintId: row.id,
+					fileKey: attachment.fileKey,
+					createdAt: now
+				}))
+			);
+		}
+
+		await recordAuditEntry(transaction, clock, {
+			actorId: request.actorId,
+			action: COMPLAINT_CREATED_ACTION,
+			targetId: row.id,
+			after: {
+				title: row.title,
+				category: row.category,
+				visibility: row.visibility,
+				attachmentCount: attachments.length
+			}
+		});
+
+		return row;
+	});
+}
 
 /**
  * The refusal `PermissionDeniedError` carries when somebody who is not the reporter tries to
