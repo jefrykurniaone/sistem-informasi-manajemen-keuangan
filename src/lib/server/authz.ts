@@ -254,7 +254,19 @@ export const ACTION = {
 	 * takes a `Transaction` and checks nothing, reachable only from a service that already checked
 	 * the action entitling it to publish — see the argument recorded on that function.
 	 */
-	unlockPeriods: 'unlockPeriods'
+	unlockPeriods: 'unlockPeriods',
+	/**
+	 * Seeing which houses are behind on iuran: every Unit's arrears total on the daftar penunggak,
+	 * and the full Tagihan history of one Unit. See `src/lib/server/services/dues/queries.ts`. One
+	 * action for both, the same reasoning as `manageJobs`: the per-unit history is only reachable
+	 * from the list, and both are the same fact — who owes what — read at two grains.
+	 *
+	 * `docs/spec-iuran-v1.md:220` says the daftar penunggak "hanya bisa dibuka oleh admin", so this
+	 * is `admin`'s alone, not `superuser`'s — the same reading that put `managePosts`,
+	 * `handleComplaints` and `recordCashTransactions` there. `isAllowed` has no inheritance, so a
+	 * superuser who is not also an admin is refused here too, which is what the spec asks for.
+	 */
+	readOverdue: 'readOverdue'
 } as const;
 
 /** One of the actions above. */
@@ -327,7 +339,8 @@ const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.manageRegistrations]: new Set([ROLE.superuser]),
 	[ACTION.manageExemptions]: new Set([ROLE.superuser]),
 	[ACTION.readPeriods]: new Set([ROLE.admin, ROLE.superuser]),
-	[ACTION.unlockPeriods]: new Set([ROLE.superuser])
+	[ACTION.unlockPeriods]: new Set([ROLE.superuser]),
+	[ACTION.readOverdue]: new Set([ROLE.admin])
 };
 
 /**

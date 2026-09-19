@@ -77,7 +77,12 @@ const ACTIONS_NOT_SUPERUSER_ONLY: Readonly<Partial<Record<Action, readonly Role[
 	// month when recording a Transaksi Kas, and an admin is who publishes the Laporan Bulanan that
 	// locks one. Superuser alone would answer 403 to the role that causes every lock on the screen.
 	// `ACTION.unlockPeriods` itself needs no entry, because it really is superuser-only.
-	[ACTION.readPeriods]: [ROLE.admin, ROLE.superuser]
+	[ACTION.readPeriods]: [ROLE.admin, ROLE.superuser],
+	// `docs/spec-iuran-v1.md:220` puts the daftar penunggak on Admin alone — "hanya bisa dibuka oleh
+	// admin" — the same reading that put `managePosts`, `handleComplaints` and
+	// `recordCashTransactions` there: none of them change the past or who may do what, which is what
+	// keeps them out of Superuser's sentence in `CONTEXT.md`.
+	[ACTION.readOverdue]: [ROLE.admin]
 };
 
 /** Which roles `action` is expected to be permitted to. Superuser alone unless stated otherwise. */
