@@ -1,13 +1,19 @@
-import { asc } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { asc, eq } from 'drizzle-orm';
 import type { PoolClient } from 'pg';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { rupiah, type Rupiah } from '$lib/money';
 import { createConnection, readDatabaseUrl } from '$lib/server/db';
+import { user } from '$lib/server/db/schema/auth';
 import { duesRates } from '$lib/server/db/schema/dues-rate';
+import { emailQueue } from '$lib/server/db/schema/email';
 import { invoices, type Invoice } from '$lib/server/db/schema/invoice';
+import { OCCUPANCY_ROLE, occupancies } from '$lib/server/db/schema/occupancy';
+import { residents } from '$lib/server/db/schema/resident';
 import { jobRuns } from '$lib/server/db/schema/scheduler';
 import { units } from '$lib/server/db/schema/unit';
 import { testDatabase } from '$lib/server/db/test-helpers';
+import { INVOICE_ISSUED_KIND } from '$lib/server/email/templates/invoice-issued';
 import { FakeClock } from '$lib/server/ports/fakes';
 import { JOB_OUTCOME, runJob } from '$lib/server/scheduler';
 import {
@@ -49,9 +55,11 @@ const SETTLE_MILLISECONDS = 250;
 
 beforeEach(async () => {
 	await testDb.db.delete(invoices);
+	await testDb.db.delete(occupancies);
 	await testDb.db.delete(units);
 	await testDb.db.delete(duesRates);
 	await testDb.db.delete(jobRuns);
+	await testDb.db.delete(emailQueue);
 });
 
 /** Makes every block this file writes different from every other one. */
@@ -69,6 +77,33 @@ async function insertUnit(): Promise<string> {
 		})
 		.returning();
 	return row.id;
+}
+
+/** A resident recorded as `unitId`'s active, running primary occupant. */
+async function insertPrimaryOccupant(unitId: string, name: string): Promise<void> {
+	const userId = randomUUID();
+	const now = new Date(DURING_PERIOD);
+	await testDb.db.insert(user).values({
+		id: userId,
+		name,
+		email: `${userId}@komplek.local`,
+		emailVerified: true,
+		createdAt: now,
+		updatedAt: now
+	});
+	const [resident] = await testDb.db
+		.insert(residents)
+		.values({ userId, createdAt: now })
+		.returning();
+	await testDb.db.insert(occupancies).values({
+		unitId,
+		residentId: resident.id,
+		role: OCCUPANCY_ROLE.owner,
+		startedOn: '2026-01-01',
+		endedOn: null,
+		isPrimaryOccupant: true,
+		createdAt: now
+	});
 }
 
 /** A Tarif written straight into `dues_rates`. */
@@ -285,5 +320,22 @@ describe('two instances issuing the same Periode at once', () => {
 			await running?.catch(() => undefined);
 			await other.release();
 		}
+	});
+});
+
+describe('running issuance more than once, and the invoice-issued email', () => {
+	it('queues the email only for Tagihan actually inserted by the run that reaches them', async () => {
+		await insertRate(MONTHLY_RATE, '2026-01-01');
+		const unit = await insertUnit();
+		await insertPrimaryOccupant(unit, 'Warga Email Sekali');
+
+		await issue(PERIOD);
+		await issue(PERIOD, LATER_IN_PERIOD);
+
+		const rows = await testDb.db
+			.select()
+			.from(emailQueue)
+			.where(eq(emailQueue.kind, INVOICE_ISSUED_KIND));
+		expect(rows).toHaveLength(1);
 	});
 });

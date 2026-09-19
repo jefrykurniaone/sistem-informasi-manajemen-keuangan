@@ -6,13 +6,16 @@ import { allocations } from '$lib/server/db/schema/allocation';
 import { user } from '$lib/server/db/schema/auth';
 import { ROLE, userRoles } from '$lib/server/db/schema/authz';
 import { duesRates } from '$lib/server/db/schema/dues-rate';
+import { emailQueue } from '$lib/server/db/schema/email';
 import { exemptions } from '$lib/server/db/schema/exemption';
 import { invoices, type Invoice } from '$lib/server/db/schema/invoice';
+import { OCCUPANCY_ROLE, occupancies } from '$lib/server/db/schema/occupancy';
 import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '$lib/server/db/schema/payment';
 import { residents } from '$lib/server/db/schema/resident';
 import { jobRuns, JOB_RUN_STATUS } from '$lib/server/db/schema/scheduler';
 import { units } from '$lib/server/db/schema/unit';
 import { testDatabase } from '$lib/server/db/test-helpers';
+import { INVOICE_ISSUED_KIND } from '$lib/server/email/templates/invoice-issued';
 import { FakeClock } from '$lib/server/ports/fakes';
 import { creditBalanceOfUnit } from '$lib/server/services/dues/credit-balance';
 import {
@@ -27,6 +30,7 @@ import {
 	describeIssuance,
 	issueInvoicesForPeriod,
 	NoDuesRateError,
+	NOTIFICATION_SKIP_REASON,
 	UNIT_SKIP_REASON,
 	type InvoiceIssuanceSummary
 } from '$lib/server/services/dues/issuance';
@@ -80,9 +84,11 @@ beforeEach(async () => {
 	await testDb.db.delete(payments);
 	await testDb.db.delete(invoices);
 	await testDb.db.delete(exemptions);
+	await testDb.db.delete(occupancies);
 	await testDb.db.delete(units);
 	await testDb.db.delete(duesRates);
 	await testDb.db.delete(jobRuns);
+	await testDb.db.delete(emailQueue);
 });
 
 /** Makes every block this file writes different from every other one. */
@@ -126,6 +132,52 @@ async function insertSuperuser(name: string): Promise<{ userId: string; resident
 		.values({ userId, createdAt: now })
 		.returning();
 	return { userId, residentId: resident.id };
+}
+
+/**
+ * A resident recorded as `unitId`'s active, running primary occupant — the recipient
+ * `notifyInvoiceIssued` looks for. Written straight into `occupancies`, bypassing the service that
+ * guards the primary-occupant slot; nothing in this file's tests needs that guard.
+ */
+async function insertPrimaryOccupant(
+	unitId: string,
+	name: string,
+	startedOn = '2026-01-01'
+): Promise<{ residentId: string; email: string }> {
+	const userId = randomUUID();
+	const email = `${userId}@komplek.local`;
+	const now = new Date(DURING_PERIOD);
+	await testDb.db.insert(user).values({
+		id: userId,
+		name,
+		email,
+		emailVerified: true,
+		createdAt: now,
+		updatedAt: now
+	});
+	const [resident] = await testDb.db
+		.insert(residents)
+		.values({ userId, createdAt: now })
+		.returning();
+	await testDb.db.insert(occupancies).values({
+		unitId,
+		residentId: resident.id,
+		role: OCCUPANCY_ROLE.owner,
+		startedOn,
+		endedOn: null,
+		isPrimaryOccupant: true,
+		createdAt: now
+	});
+	return { residentId: resident.id, email };
+}
+
+/** Every `invoice-issued` row the queue holds, oldest first. */
+async function invoiceIssuedEmails() {
+	return testDb.db
+		.select()
+		.from(emailQueue)
+		.where(eq(emailQueue.kind, INVOICE_ISSUED_KIND))
+		.orderBy(asc(emailQueue.createdAt), asc(emailQueue.id));
 }
 
 /** A Pembebasan written straight into `exemptions`, bypassing the service that guards overlaps. */
@@ -583,5 +635,88 @@ describe('saldo titipan consuming a freshly issued Tagihan', () => {
 
 		expect(summary.skipped.map((skip) => skip.reason)).toContain(UNIT_SKIP_REASON.exempt);
 		expect(await creditBalanceOfUnit(testDb.db, unit.id)).toBe(300_000);
+	});
+});
+
+describe('queuing the invoice-issued email', () => {
+	it('queues one email to the active primary occupant, with the amount and due date', async () => {
+		await insertRate(MONTHLY_RATE, '2026-01-01');
+		const unit = await insertUnit();
+		const occupant = await insertPrimaryOccupant(unit.id, 'Warga Penanggung Jawab');
+
+		await issue(PERIOD);
+
+		const rows = await invoiceIssuedEmails();
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({
+			recipient: occupant.email,
+			kind: INVOICE_ISSUED_KIND,
+			payload: { period: PERIOD, amount: MONTHLY_RATE, dueDate: DUE_DATE, locale: 'id' }
+		});
+	});
+
+	it('still issues the Tagihan for a unit with no active primary occupant, and records the skip', async () => {
+		await insertRate(MONTHLY_RATE, '2026-01-01');
+		const unit = await insertUnit();
+
+		const summary = await issue(PERIOD);
+
+		expect(summary.issuedCount).toBe(1);
+		expect(summary.skipped).toEqual([]);
+		expect(summary.skippedNotifications).toEqual([
+			{
+				unitId: unit.id,
+				block: unit.block,
+				number: '1',
+				reason: NOTIFICATION_SKIP_REASON.noActivePrimaryOccupant
+			}
+		]);
+		expect(await invoiceIssuedEmails()).toEqual([]);
+	});
+
+	it('skips the email for a unit whose primary occupant has already moved out', async () => {
+		await insertRate(MONTHLY_RATE, '2026-01-01');
+		const unit = await insertUnit();
+		const userId = randomUUID();
+		const now = new Date(DURING_PERIOD);
+		await testDb.db.insert(user).values({
+			id: userId,
+			name: 'Warga Sudah Pindah',
+			email: `${userId}@komplek.local`,
+			emailVerified: true,
+			createdAt: now,
+			updatedAt: now
+		});
+		const [resident] = await testDb.db
+			.insert(residents)
+			.values({ userId, createdAt: now })
+			.returning();
+		await testDb.db.insert(occupancies).values({
+			unitId: unit.id,
+			residentId: resident.id,
+			role: OCCUPANCY_ROLE.owner,
+			startedOn: '2025-01-01',
+			endedOn: '2026-02-01',
+			isPrimaryOccupant: true,
+			createdAt: now
+		});
+
+		const summary = await issue(PERIOD);
+
+		expect(summary.skippedNotifications.map((skip) => skip.unitId)).toEqual([unit.id]);
+		expect(await invoiceIssuedEmails()).toEqual([]);
+	});
+
+	it('queues no second email when a period already issued is run again', async () => {
+		await insertRate(MONTHLY_RATE, '2026-01-01');
+		const unit = await insertUnit();
+		await insertPrimaryOccupant(unit.id, 'Warga Dua Kali Terbit');
+
+		await issue(PERIOD);
+		const second = await issue(PERIOD, '2026-03-08T03:00:00.000Z');
+
+		expect(second.issuedCount).toBe(0);
+		expect(second.skippedNotifications).toEqual([]);
+		expect(await invoiceIssuedEmails()).toHaveLength(1);
 	});
 });

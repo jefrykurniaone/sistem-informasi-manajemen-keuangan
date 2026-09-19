@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { PermissionDeniedError } from '$lib/errors';
 import { rupiah, type Rupiah } from '$lib/money';
@@ -9,11 +9,14 @@ import { user } from '$lib/server/db/schema/auth';
 import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
 import { cashCategories, SYSTEM_CATEGORY_KEY } from '$lib/server/db/schema/cash-category';
 import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
+import { emailQueue } from '$lib/server/db/schema/email';
 import { invoices } from '$lib/server/db/schema/invoice';
 import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '$lib/server/db/schema/payment';
 import { residents } from '$lib/server/db/schema/resident';
 import { units } from '$lib/server/db/schema/unit';
 import { testDatabase } from '$lib/server/db/test-helpers';
+import { PAYMENT_REJECTED_KIND } from '$lib/server/email/templates/payment-rejected';
+import { PAYMENT_VERIFIED_KIND } from '$lib/server/email/templates/payment-verified';
 import type { Clock } from '$lib/server/ports/clock';
 import { FakeClock } from '$lib/server/ports/fakes';
 import { lockPeriod, PeriodLockedError } from '$lib/server/services/cash/period';
@@ -217,6 +220,30 @@ async function allocationsOf(paymentId: string) {
 async function paymentRow(paymentId: string) {
 	const [row] = await testDb.db.select().from(payments).where(eq(payments.id, paymentId));
 	return row;
+}
+
+/** The account email behind a `residents.id` — what a notification's recipient is checked against. */
+async function emailOfResident(residentId: string): Promise<string> {
+	const [row] = await testDb.db
+		.select({ email: user.email })
+		.from(residents)
+		.innerJoin(user, eq(user.id, residents.userId))
+		.where(eq(residents.id, residentId));
+	return row.email;
+}
+
+/**
+ * Every queued email of `kind` addressed to `recipient`, oldest first. Scoped by recipient rather
+ * than read whole: this file's tests share one schema and never truncate `email_queue` between them,
+ * and every test's recorder or admin has an address of its own (built from a fresh `randomUUID()`),
+ * so scoping by address is what keeps one test's assertions from seeing another's rows.
+ */
+async function emailsTo(recipient: string, kind: string) {
+	return testDb.db
+		.select()
+		.from(emailQueue)
+		.where(and(eq(emailQueue.recipient, recipient), eq(emailQueue.kind, kind)))
+		.orderBy(asc(emailQueue.createdAt), asc(emailQueue.id));
 }
 
 describe('verifyPayment', () => {
@@ -760,5 +787,115 @@ describe('listPendingPayments', () => {
 		const residentId = await insertUser('Warga Baca Antrean');
 
 		await expect(listPendingPayments(testDb.db, residentId)).rejects.toThrow(PermissionDeniedError);
+	});
+});
+
+describe('the payment-verified email', () => {
+	it('queues one email to the payment recorder, naming the amount and the invoices it settled', async () => {
+		const admin = await insertAdmin('Pengurus Verifikasi Email');
+		const payer = await insertPayer('Warga Terima Email Verifikasi');
+		await insertInvoice(payer.unitId, '2026-01');
+		const paymentId = await insertPendingPayment(payer.unitId, payer.residentId, rupiah(150_000));
+
+		await verifyPayment(testDb.db, new FakeClock(START), { actorId: admin.userId, paymentId });
+
+		const recipient = await emailOfResident(payer.residentId);
+		const rows = await emailsTo(recipient, PAYMENT_VERIFIED_KIND);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({
+			kind: PAYMENT_VERIFIED_KIND,
+			payload: {
+				amount: 150_000,
+				settlements: [{ period: '2026-01', amount: 100_000 }],
+				locale: 'id'
+			}
+		});
+	});
+
+	it('records no settlement when the whole amount becomes saldo titipan', async () => {
+		const admin = await insertAdmin('Pengurus Verifikasi Titipan Email');
+		const payer = await insertPayer('Warga Titipan Email');
+		const paymentId = await insertPendingPayment(payer.unitId, payer.residentId, rupiah(150_000));
+
+		await verifyPayment(testDb.db, new FakeClock(START), { actorId: admin.userId, paymentId });
+
+		const recipient = await emailOfResident(payer.residentId);
+		const rows = await emailsTo(recipient, PAYMENT_VERIFIED_KIND);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({ payload: { amount: 150_000, settlements: [] } });
+	});
+
+	it('addresses the email to the admin who recorded a cash payment, since they are its recorder', async () => {
+		const admin = await insertAdmin('Pengurus Tunai Email');
+		const payer = await insertPayer('Warga Tunai Email');
+		await insertInvoice(payer.unitId, '2026-01');
+
+		const outcome = await recordCashPayment(testDb.db, new FakeClock(START), {
+			actorId: admin.userId,
+			unitId: payer.unitId,
+			amount: rupiah(100_000),
+			receivedOn: RECEIVED_ON
+		});
+
+		const recipient = await emailOfResident(admin.residentId);
+		const rows = await emailsTo(recipient, PAYMENT_VERIFIED_KIND);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({ payload: { amount: outcome.payment.amount } });
+	});
+
+	it('queues nothing when a payment already decided is asked for again', async () => {
+		const admin = await insertAdmin('Pengurus Verifikasi Dua Kali Email');
+		const payer = await insertPayer('Warga Verifikasi Dua Kali Email');
+		const paymentId = await insertPendingPayment(payer.unitId, payer.residentId, rupiah(100_000));
+		await verifyPayment(testDb.db, new FakeClock(START), { actorId: admin.userId, paymentId });
+
+		await verifyPayment(testDb.db, new FakeClock(START), {
+			actorId: admin.userId,
+			paymentId
+		}).catch(() => undefined);
+
+		const recipient = await emailOfResident(payer.residentId);
+		expect(await emailsTo(recipient, PAYMENT_VERIFIED_KIND)).toHaveLength(1);
+	});
+});
+
+describe('the payment-rejected email', () => {
+	it('queues one email to the payment recorder, naming the rejection reason', async () => {
+		const admin = await insertAdmin('Pengurus Tolak Email');
+		const payer = await insertPayer('Warga Terima Email Penolakan');
+		const paymentId = await insertPendingPayment(payer.unitId, payer.residentId, rupiah(100_000));
+
+		await rejectPayment(testDb.db, new FakeClock(START), {
+			actorId: admin.userId,
+			paymentId,
+			reason: 'Nominalnya tidak cocok dengan mutasi bank.'
+		});
+
+		const recipient = await emailOfResident(payer.residentId);
+		const rows = await emailsTo(recipient, PAYMENT_REJECTED_KIND);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({
+			kind: PAYMENT_REJECTED_KIND,
+			payload: {
+				amount: 100_000,
+				reason: 'Nominalnya tidak cocok dengan mutasi bank.',
+				locale: 'id'
+			}
+		});
+	});
+
+	it('never queues a payment-verified email for a rejected payment', async () => {
+		const admin = await insertAdmin('Pengurus Tolak Bukan Verifikasi');
+		const payer = await insertPayer('Warga Tolak Bukan Verifikasi');
+		const paymentId = await insertPendingPayment(payer.unitId, payer.residentId, rupiah(100_000));
+
+		await rejectPayment(testDb.db, new FakeClock(START), {
+			actorId: admin.userId,
+			paymentId,
+			reason: 'Bukti tidak jelas.'
+		});
+
+		const recipient = await emailOfResident(payer.residentId);
+		expect(await emailsTo(recipient, PAYMENT_VERIFIED_KIND)).toHaveLength(0);
 	});
 });
