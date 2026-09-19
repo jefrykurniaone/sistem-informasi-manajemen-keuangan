@@ -94,23 +94,39 @@ describe('complaintWorklistSummary', () => {
 	// the next one counts June. Each test therefore reads its own baseline first and asserts the
 	// *change* its own fixtures made, rather than an absolute count nothing else in the file touched.
 
-	it('counts complaints created in the calendar month the clock is in', async () => {
-		const reporterUserId = await insertAccount(unique('Warga Bulan Ini'));
-		const adminUserId = await insertAccount(unique('Pengurus Bulan Ini'), ROLE.admin);
-		const clock = new FakeClock('2026-06-15T12:00:00.000Z');
-		const before = await complaintWorklistSummary(testDb.db, clock, adminUserId);
+	// One fixture per case, each with its own before/after delta, so a one-sided boundary mistake
+	// cannot cancel against another fixture the way a single `toBe(2)` over four inserts could — see
+	// this ticket's hand-back. Months are UTC, matching `currentDay(clock)` in
+	// `../occupancy/visibility.ts`, so these four instants are exactly the ones that matter:
+	// the last instant of May, the first and last instants of June, and the first instant of July.
+	// The fifth case is the one that actually distinguishes UTC from this machine's own zone
+	// (`Asia/Jakarta`, UTC+7): `2026-06-30T20:00:00.000Z` is 03:00 on 1 July in Jakarta, so a
+	// local-time implementation would wrongly drop it from June.
+	it.each([
+		{ createdAt: '2026-05-31T23:59:59.999Z', expected: 0, label: 'the last instant of May' },
+		{ createdAt: '2026-06-01T00:00:00.000Z', expected: 1, label: 'the first instant of June' },
+		{ createdAt: '2026-06-30T23:59:59.999Z', expected: 1, label: 'the last instant of June' },
+		{ createdAt: '2026-07-01T00:00:00.000Z', expected: 0, label: 'the first instant of July' },
+		{
+			createdAt: '2026-06-30T20:00:00.000Z',
+			expected: 1,
+			label: 'inside June in UTC, inside July in Asia/Jakarta'
+		}
+	])(
+		'counts a complaint created at $label ($createdAt) as $expected',
+		async ({ createdAt, expected }) => {
+			const reporterUserId = await insertAccount(unique('Warga Batas Bulan'));
+			const adminUserId = await insertAccount(unique('Pengurus Batas Bulan'), ROLE.admin);
+			const clock = new FakeClock('2026-06-15T12:00:00.000Z');
+			const before = await complaintWorklistSummary(testDb.db, clock, adminUserId);
 
-		// Inside June.
-		await insertComplaint(reporterUserId, { createdAt: '2026-06-01T00:00:00.000Z' });
-		await insertComplaint(reporterUserId, { createdAt: '2026-06-30T23:59:59.999Z' });
-		// The last instant of May and the first instant of July: both outside.
-		await insertComplaint(reporterUserId, { createdAt: '2026-05-31T23:59:59.999Z' });
-		await insertComplaint(reporterUserId, { createdAt: '2026-07-01T00:00:00.000Z' });
+			await insertComplaint(reporterUserId, { createdAt });
 
-		const after = await complaintWorklistSummary(testDb.db, clock, adminUserId);
+			const after = await complaintWorklistSummary(testDb.db, clock, adminUserId);
 
-		expect(after.openedThisMonth - before.openedThisMonth).toBe(2);
-	});
+			expect(after.openedThisMonth - before.openedThisMonth).toBe(expected);
+		}
+	);
 
 	it('counts as resolved only what is resolved and moved into that status this month', async () => {
 		const reporterUserId = await insertAccount(unique('Warga Selesai Bulan Ini'));
