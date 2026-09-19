@@ -445,5 +445,7 @@
 	"adminExemptions_dateOrder": "The end date {endedOn} cannot be earlier than the start date {startedOn}.",
 	"adminExemptions_actorNotRegistered": "Your account has no resident record yet, so the exemption cannot be attributed to you.",
 	"adminExemptions_overlapOpen": "This unit already has an exemption in force since {startedOn} with no end, so this period overlaps it.",
-	"adminExemptions_overlapScheduled": "This unit already has an exemption in force from {startedOn} to {endedOn}, so this period overlaps it."
+	"adminExemptions_overlapScheduled": "This unit already has an exemption in force from {startedOn} to {endedOn}, so this period overlaps it.",
+	"adminExemptions_endOverlapOpen": "That end date would make this exemption overlap another exemption of the same unit, in force since {startedOn} with no end.",
+	"adminExemptions_endOverlapScheduled": "That end date would make this exemption overlap another exemption of the same unit, in force from {startedOn} to {endedOn}."
 }

@@ -445,5 +445,7 @@
 	"adminExemptions_dateOrder": "Tanggal selesai {endedOn} tidak boleh lebih awal dari tanggal mulai {startedOn}.",
 	"adminExemptions_actorNotRegistered": "Akun Anda belum punya data warga, jadi pembebasan tidak bisa dicatat atas nama Anda.",
 	"adminExemptions_overlapOpen": "Unit ini sudah punya pembebasan yang berlaku sejak {startedOn} tanpa batas akhir, jadi periode ini bertindih.",
-	"adminExemptions_overlapScheduled": "Unit ini sudah punya pembebasan yang berlaku {startedOn} sampai {endedOn}, jadi periode ini bertindih."
+	"adminExemptions_overlapScheduled": "Unit ini sudah punya pembebasan yang berlaku {startedOn} sampai {endedOn}, jadi periode ini bertindih.",
+	"adminExemptions_endOverlapOpen": "Tanggal selesai itu membuat pembebasan ini bertindih dengan pembebasan lain pada unit yang sama, yang berlaku sejak {startedOn} tanpa batas akhir.",
+	"adminExemptions_endOverlapScheduled": "Tanggal selesai itu membuat pembebasan ini bertindih dengan pembebasan lain pada unit yang sama, yang berlaku {startedOn} sampai {endedOn}."
 }

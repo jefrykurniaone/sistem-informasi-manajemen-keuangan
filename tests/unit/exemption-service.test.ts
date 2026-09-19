@@ -497,6 +497,112 @@ describe('endExemption', () => {
 			})
 		).rejects.toThrow(PermissionDeniedError);
 	});
+
+	describe('the overlap rule', () => {
+		it('refuses extending an exemption to overlap a later exemption granted afterward', async () => {
+			// The exact reproduction the hand-back described: grant B, grant C after it with no
+			// overlap, then push B's end date past C's start through the end form alone.
+			const superuserId = await insertSuperuser('Pengurus Akhir Tabrakan');
+			const { unitId } = await insertUnit();
+			const clock = new FakeClock(START);
+			const grantedB = await grantExemption(testDb.db, clock, {
+				actorId: superuserId,
+				unitId,
+				startedOn: '2026-09-01',
+				endedOn: '2026-09-30',
+				reason: 'Rumah B kosong'
+			});
+			await grantExemption(testDb.db, clock, {
+				actorId: superuserId,
+				unitId,
+				startedOn: '2026-10-15',
+				endedOn: '2026-10-31',
+				reason: 'Rumah C kosong'
+			});
+
+			const failure = endExemption(testDb.db, clock, {
+				actorId: superuserId,
+				exemptionId: grantedB.id,
+				endedOn: '2026-11-30'
+			});
+
+			await expect(failure).rejects.toThrow(ExemptionOverlapError);
+			const [unchanged] = await testDb.db
+				.select()
+				.from(exemptions)
+				.where(eq(exemptions.id, grantedB.id));
+			expect(unchanged.endedOn).toBe('2026-09-30');
+		});
+
+		it('accepts an end date that does not reach a later exemption of the same unit', async () => {
+			const superuserId = await insertSuperuser('Pengurus Akhir Aman');
+			const { unitId } = await insertUnit();
+			const exemptionId = await insertExemption(unitId, '2026-09-01', '2026-09-30', superuserId);
+			await insertExemption(unitId, '2026-10-15', '2026-10-31', superuserId);
+
+			const ended = await endExemption(testDb.db, new FakeClock(START), {
+				actorId: superuserId,
+				exemptionId,
+				endedOn: '2026-10-01'
+			});
+
+			expect(ended.endedOn).toBe('2026-10-01');
+		});
+
+		it('accepts shortening an exemption even when another exemption exists on the same unit', async () => {
+			const superuserId = await insertSuperuser('Pengurus Akhir Pendek');
+			const { unitId } = await insertUnit();
+			const exemptionId = await insertExemption(unitId, '2026-01-01', '2026-06-30', superuserId);
+			await insertExemption(unitId, '2026-10-01', null, superuserId);
+
+			const ended = await endExemption(testDb.db, new FakeClock(START), {
+				actorId: superuserId,
+				exemptionId,
+				endedOn: '2026-03-01'
+			});
+
+			expect(ended.endedOn).toBe('2026-03-01');
+		});
+
+		it('refuses ending into an overlap created by a second connection mid-flight', async () => {
+			// The same reasoning as grantExemption's own race test above: two calls raced through
+			// Promise.allSettled would prove nothing, because nothing would make one of them land
+			// inside the other's window. A second connection holding an open transaction does, and
+			// only because endExemption takes the unit's row lock before reading its exemptions again.
+			const superuserId = await insertSuperuser('Pengurus Akhir Adu Cepat');
+			const { unitId } = await insertUnit();
+			const exemptionId = await insertExemption(unitId, '2026-01-01', '2026-01-31', superuserId);
+			const residentId = await residentIdOf(superuserId);
+
+			const other = createConnection(readDatabaseUrl('TEST_DATABASE_URL'), {
+				options: `-c search_path=${testDb.schemaName}`
+			});
+			const client = await other.pool.connect();
+			try {
+				await client.query('begin');
+				await client.query('select id from units where id = $1 for update', [unitId]);
+				await client.query(
+					`insert into exemptions (unit_id, started_on, ended_on, reason, created_by, created_at)
+					 values ($1, $2, $3, $4, $5, $6)`,
+					[unitId, '2026-03-01', null, 'Ditulis dari koneksi lain', residentId, new Date(START)]
+				);
+
+				const blocked = rejection(
+					endExemption(testDb.db, new FakeClock(START), {
+						actorId: superuserId,
+						exemptionId,
+						endedOn: '2026-04-01'
+					})
+				);
+				await client.query('commit');
+
+				expect(await blocked).toBeInstanceOf(ExemptionOverlapError);
+			} finally {
+				client.release();
+				await other.close();
+			}
+		});
+	});
 });
 
 describe('listActiveExemptions', () => {

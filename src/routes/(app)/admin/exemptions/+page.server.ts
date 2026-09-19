@@ -107,7 +107,7 @@ export const actions: Actions = {
 			});
 			return { message: m.adminExemptions_endSuccess({ date: ended.endedOn ?? endedOn }) };
 		} catch (caught) {
-			return failFromServiceError(caught);
+			return failFromServiceError(caught, 'end');
 		}
 	}
 };
@@ -140,20 +140,17 @@ function readGrantInput(form: FormData): GrantInput | undefined {
  * Every case here is something the superuser was entitled to try and the rules said no to, which is
  * a `fail(400, …)` rather than a 403 — the same split `src/routes/(app)/admin/dues-rates/+page.server.ts`
  * follows.
+ *
+ * `context` picks the wording for `ExemptionOverlapError`: `grantExemption` and `endExemption` both
+ * throw it, but "the period you asked to grant overlaps" and "the later end date you asked for would
+ * overlap" are different sentences to read on a rejected form, so `end` gets its own message key.
  */
-function failFromServiceError(caught: unknown): ActionFailure<{ message: string }> {
+function failFromServiceError(
+	caught: unknown,
+	context: 'grant' | 'end' = 'grant'
+): ActionFailure<{ message: string }> {
 	if (caught instanceof ExemptionOverlapError) {
-		return fail(
-			400,
-			caught.endedOn === null
-				? { message: m.adminExemptions_overlapOpen({ startedOn: caught.startedOn }) }
-				: {
-						message: m.adminExemptions_overlapScheduled({
-							startedOn: caught.startedOn,
-							endedOn: caught.endedOn
-						})
-					}
-		);
+		return fail(400, { message: overlapMessage(caught, context) });
 	}
 	if (caught instanceof ExemptionDateOrderError) {
 		return fail(400, {
@@ -178,6 +175,21 @@ function failFromServiceError(caught: unknown): ActionFailure<{ message: string 
 		return fail(400, { message: m.adminExemptions_invalidForm() });
 	}
 	throwAsRouteError(caught);
+}
+
+/** The message for `ExemptionOverlapError`, worded for whichever action threw it. */
+function overlapMessage(caught: ExemptionOverlapError, context: 'grant' | 'end'): string {
+	if (context === 'end') {
+		return caught.endedOn === null
+			? m.adminExemptions_endOverlapOpen({ startedOn: caught.startedOn })
+			: m.adminExemptions_endOverlapScheduled({
+					startedOn: caught.startedOn,
+					endedOn: caught.endedOn
+				});
+	}
+	return caught.endedOn === null
+		? m.adminExemptions_overlapOpen({ startedOn: caught.startedOn })
+		: m.adminExemptions_overlapScheduled({ startedOn: caught.startedOn, endedOn: caught.endedOn });
 }
 
 /**

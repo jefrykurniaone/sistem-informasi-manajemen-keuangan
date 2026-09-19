@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, isNull, lte, or, type SQL } from 'drizzle-orm';
+import { and, asc, eq, gte, isNull, lte, ne, or, type SQL } from 'drizzle-orm';
 import { recordAuditEntry } from '../../audit';
 import { ACTION, requirePermission, type DatabaseWriter, type Transaction } from '../../authz';
 import type { Database } from '../../db';
@@ -33,6 +33,16 @@ import { UnitNotFoundError } from '../unit';
  * second connection holding an open transaction, the same technique
  * `tests/unit/occupancy-service.test.ts` uses — two calls raced through `Promise.allSettled` would
  * prove nothing, because nothing would make one of them land inside the other's window.
+ *
+ * **`endExemption` takes the same unit lock, for the same reason.** The acceptance criterion is a
+ * statement about the table's contents — "dua pembebasan yang periodenya bertindih pada satu unit
+ * ditolak" — not about one entry point, and moving an exemption's `endedOn` later changes the period
+ * it covers exactly as much as granting a new one does. `endExemption` therefore locks the unit
+ * `existing.unitId` names, then calls `assertNoOverlap` against the exemption's own new period,
+ * excluding the row being ended from its own conflict search. Locking the unit rather than only the
+ * exemption row being ended is also what makes a concurrent `grantExemption` and `endExemption` on
+ * the same unit mutually exclusive — the exemption row lock alone would not stop a fresh insert that
+ * has no existing row to lock.
  *
  * ## `createdBy` is a `residents.id`, not the caller's `actorId`
  *
@@ -264,10 +274,15 @@ export interface EndExemptionRequest {
  * A request that asks for the end date the exemption already has changes nothing and writes no audit
  * row, the same idiom `deactivateUnit` and `endOccupancy` follow.
  *
+ * Also refuses when the new end date would make this exemption overlap another exemption of the
+ * same unit — see this module's doc comment for why that check belongs here as much as it belongs to
+ * `grantExemption`.
+ *
  * @throws {PermissionDeniedError} when `actorId` does not hold `superuser`.
  * @throws {TypeError} when `endedOn` is not a real `YYYY-MM-DD` day.
  * @throws {ExemptionNotFoundError} when `exemptionId` names no exemption.
  * @throws {ExemptionDateOrderError} when `endedOn` is earlier than the day the exemption started.
+ * @throws {ExemptionOverlapError} naming the exemption the new period would overlap.
  */
 export async function endExemption(
 	db: Database,
@@ -286,6 +301,14 @@ export async function endExemption(
 		if (existing.endedOn === request.endedOn) {
 			return existing;
 		}
+
+		await lockUnit(transaction, existing.unitId);
+		await assertNoOverlap(
+			transaction,
+			existing.unitId,
+			{ from: existing.startedOn, to: request.endedOn },
+			existing.id
+		);
 
 		const [row] = await transaction
 			.update(exemptions)
@@ -424,12 +447,18 @@ async function lockExemption(transaction: Transaction, exemptionId: string): Pro
  * Throws unless no other exemption of `unitId` covers any day in `range` — only correct while the
  * unit's row lock is held, see this module's doc comment.
  *
+ * `excludeExemptionId`, when given, leaves that row out of the search. `endExemption` passes the
+ * exemption it is changing: without this, checking a running exemption's own new period against
+ * "every exemption of this unit" would always find the row being changed itself, since its old period
+ * necessarily overlaps its new one.
+ *
  * @throws {ExemptionOverlapError} naming the exemption that already covers part of `range`.
  */
 async function assertNoOverlap(
 	transaction: Transaction,
 	unitId: string,
-	range: { from: string; to: string | null }
+	range: { from: string; to: string | null },
+	excludeExemptionId?: string
 ): Promise<void> {
 	const [conflict] = await transaction
 		.select({
@@ -442,6 +471,7 @@ async function assertNoOverlap(
 		.where(
 			and(
 				eq(exemptions.unitId, unitId),
+				excludeExemptionId === undefined ? undefined : ne(exemptions.id, excludeExemptionId),
 				// The existing exemption has not ended before this range starts …
 				or(isNull(exemptions.endedOn), gte(exemptions.endedOn, range.from)),
 				// … and it started before this range ends. An open-ended range has no such bound.
