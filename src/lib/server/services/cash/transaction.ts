@@ -109,15 +109,35 @@ export const MAXIMUM_RECEIPT_BYTES = 256 * 1024;
  *
  * The extension comes from here rather than from the uploaded file's name, which arrives from a
  * browser form and becomes part of a storage key — and a storage key is a path.
+ *
+ * ## A `Map`, not an object literal, because the key is the caller's to choose
+ *
+ * `receipt.contentType` is `File.type` read off a multipart form, so it is a claim under the
+ * sender's control exactly as the bytes are — and an object literal inherits from
+ * `Object.prototype`, so a lookup in one answers for names nobody put in it. `'constructor'` would
+ * come back as `Object` and `'__proto__'` as `Object.prototype`: both truthy, so both sail past the
+ * `if (!extension)` guard in `receiptKeyFor` and past the `?? []` in `hasSignatureOf`, and the
+ * second of those then throws `TypeError: signature.every is not a function`. That is a 500 where
+ * this module's contract says a named `receiptNotAnImage` refusal, reachable from a forged upload.
+ *
+ * `Map.get` has no prototype chain behind it, so every content type outside the three entries below
+ * is `undefined` and both guards fire as written. **Do not turn either of these two maps back into
+ * an object literal.** `tests/unit/cash-transaction.test.ts` holds the refusal for those names.
  */
-const RECEIPT_EXTENSIONS: Readonly<Record<string, string>> = {
-	'image/jpeg': 'jpg',
-	'image/png': 'png',
-	'image/webp': 'webp'
-};
+const RECEIPT_EXTENSIONS: ReadonlyMap<string, string> = new Map([
+	['image/jpeg', 'jpg'],
+	['image/png', 'png'],
+	['image/webp', 'webp']
+]);
 
 /** Every content type a receipt may be uploaded as, for a screen that builds an `accept` list. */
-export const RECEIPT_CONTENT_TYPES: readonly string[] = Object.keys(RECEIPT_EXTENSIONS);
+export const RECEIPT_CONTENT_TYPES: readonly string[] = [...RECEIPT_EXTENSIONS.keys()];
+
+/** Where a magic-number check looks in a file, and the bytes it expects to find there. */
+interface ByteSignature {
+	readonly offset: number;
+	readonly bytes: readonly number[];
+}
 
 /**
  * How a file of each accepted type really begins.
@@ -129,21 +149,30 @@ export const RECEIPT_CONTENT_TYPES: readonly string[] = Object.keys(RECEIPT_EXTE
  * of believing its type. `WEBP` is checked at offset 8, after the `RIFF` container header and the
  * four-byte length that follows it.
  *
+ * A `Map` for the reason `RECEIPT_EXTENSIONS` is one, and the two have to agree: a content type that
+ * got an extension but no signature would be accepted unchecked, because `every` over an empty list
+ * is `true`.
+ *
  * A near-copy of `COVER_IMAGE_SIGNATURES` in `src/lib/server/services/post/index.ts`, and
  * deliberately a copy: importing a `POST_*` constant into the cash book would make a receipt's
  * accepted formats a consequence of what an announcement's cover image happens to allow, and the two
- * are free to diverge.
+ * are free to diverge. They have now diverged in the container, and that file is not this ticket's
+ * to change.
  */
-const RECEIPT_SIGNATURES: Readonly<
-	Record<string, readonly { readonly offset: number; readonly bytes: readonly number[] }[]>
-> = {
-	'image/jpeg': [{ offset: 0, bytes: [0xff, 0xd8, 0xff] }],
-	'image/png': [{ offset: 0, bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] }],
-	'image/webp': [
-		{ offset: 0, bytes: [0x52, 0x49, 0x46, 0x46] },
-		{ offset: 8, bytes: [0x57, 0x45, 0x42, 0x50] }
+const RECEIPT_SIGNATURES: ReadonlyMap<string, readonly ByteSignature[]> = new Map<
+	string,
+	readonly ByteSignature[]
+>([
+	['image/jpeg', [{ offset: 0, bytes: [0xff, 0xd8, 0xff] }]],
+	['image/png', [{ offset: 0, bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] }]],
+	[
+		'image/webp',
+		[
+			{ offset: 0, bytes: [0x52, 0x49, 0x46, 0x46] },
+			{ offset: 8, bytes: [0x57, 0x45, 0x42, 0x50] }
+		]
 	]
-};
+]);
 
 /** The shape `occurredOn` has to arrive in: a calendar day, as PostgreSQL's `date` writes one. */
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -411,7 +440,7 @@ function receiptKeyFor(transactionId: string, receipt: CashReceiptUpload): strin
 		);
 	}
 
-	const extension = RECEIPT_EXTENSIONS[receipt.contentType];
+	const extension = RECEIPT_EXTENSIONS.get(receipt.contentType);
 	if (!extension) {
 		throw new CashRuleError(
 			CASH_RULE.receiptNotAnImage,
@@ -430,7 +459,7 @@ function receiptKeyFor(transactionId: string, receipt: CashReceiptUpload): strin
 
 /** Whether `content` really begins the way a file of `contentType` begins. */
 function hasSignatureOf(content: Uint8Array, contentType: string): boolean {
-	const signature = RECEIPT_SIGNATURES[contentType] ?? [];
+	const signature = RECEIPT_SIGNATURES.get(contentType) ?? [];
 	return signature.every((part) =>
 		part.bytes.every((byte, index) => content[part.offset + index] === byte)
 	);

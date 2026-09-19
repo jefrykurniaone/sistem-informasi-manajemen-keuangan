@@ -467,6 +467,43 @@ describe('the receipt on a Transaksi Kas', () => {
 
 		expect(fileStore.keys).toEqual([]);
 	});
+
+	it.each(['constructor', '__proto__', 'toString'])(
+		'refuses the content type "%s", which names a property of Object.prototype and not a format',
+		async (contentType) => {
+			// `File.type` is whatever the client sent, so the content type is as much the sender's to
+			// choose as the bytes are. Looked up in an *object literal* each of these answers with
+			// something truthy inherited from `Object.prototype` — `constructor` with `Object`,
+			// `__proto__` with `Object.prototype` — which defeats both the `if (!extension)` guard and
+			// the `?? []` fallback, and ends as `TypeError: signature.every is not a function`: a 500
+			// where the contract here says a named refusal. `RECEIPT_EXTENSIONS` and `RECEIPT_SIGNATURES`
+			// are `Map`s so that `get` answers `undefined` and the guards fire. This test is what keeps
+			// them from being written back as literals.
+			const adminId = await insertAdmin(`Pengurus Catat Nota ${contentType}`);
+			const category = await addCategory(`Perbaikan selasar ${contentType}`);
+			const fileStore = new FakeFileStore(new FakeClock(START));
+
+			const refusal: unknown = await record(
+				{
+					actorId: adminId,
+					categoryId: category.id,
+					// Real JPEG bytes, so the only thing wrong with this upload is the name of its format.
+					receipt: { contentType, content: JPEG }
+				},
+				fileStore
+			).catch((error: unknown) => error);
+
+			expect(refusal).toBeInstanceOf(CashRuleError);
+			expect(refusal).toMatchObject({ rule: CASH_RULE.receiptNotAnImage });
+			expect(fileStore.keys).toEqual([]);
+			expect(
+				await testDb.db
+					.select()
+					.from(cashTransactions)
+					.where(eq(cashTransactions.categoryId, category.id))
+			).toHaveLength(0);
+		}
+	);
 });
 
 describe('the amount a cash book line carries', () => {
