@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import UnlockPeriodDialog, {
 		type UnlockablePeriod
 	} from '$lib/components/cash/unlock-period-dialog.svelte';
@@ -20,6 +21,10 @@
 	 * The unlock button is only drawn for a superuser, and only on a locked month. Drawing it is not
 	 * the authorization — `unlockPeriod` refuses an admin whoever posts the form — it only keeps the
 	 * screen from offering something the next click would refuse.
+	 *
+	 * An open month carries a link to the publishing screen instead of a lock button, because
+	 * locking a Periode is what publishing its Laporan Bulanan does to it rather than an action of
+	 * its own — see this screen's server module.
 	 */
 
 	let { data, form }: PageProps = $props();
@@ -87,6 +92,15 @@
 							</li>
 						{/each}
 					</ul>
+				{/if}
+
+				{#if data.mayPublish && !summary.isLocked}
+					<a
+						class="inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4"
+						href={resolve(`/admin/reports?period=${summary.period}`)}
+					>
+						{m.adminPeriods_publishReportLink()}
+					</a>
 				{/if}
 
 				{#if data.mayUnlock && summary.isLocked}

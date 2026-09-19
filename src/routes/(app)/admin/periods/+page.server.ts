@@ -1,6 +1,7 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import * as m from '$lib/paraglide/messages';
 import { PermissionDeniedError } from '$lib/errors';
+import { ACTION, isAllowed, rolesOf } from '$lib/server/authz';
 import { AUTH_PATHS } from '$lib/server/auth';
 import { database } from '$lib/server/db';
 import { PERIOD_STATUS } from '$lib/server/db/schema/period';
@@ -34,6 +35,20 @@ import type { Actions, PageServerLoad } from './$types';
  * but no `periods` row yet is on this list with a null id — it is open, so its unlock button is
  * never drawn — and keying the whole surface on `(year, month)` means no screen ever has to invent
  * an id for a row that does not exist.
+ *
+ * ## There is still no lock button here, and there was never going to be one
+ *
+ * Locking a Periode is not a thing anybody does on its own: it is what publishing that month's
+ * Laporan Bulanan does to it (`docs/spec-kas-laporan-v1.md` user story 13, and the argument recorded
+ * on `lockPeriod`). So an open month carries a *link* to `/admin/reports`, where the month is
+ * previewed and then published — and publishing is what locks it.
+ *
+ * `mayPublish` decides whether the link is drawn, and it is read here rather than returned by
+ * `listPeriods`: `src/lib/server/services/cash/period.ts` is outside this ticket's surface, and
+ * `isAllowed` over the roles this screen already needs answers the question without a second service
+ * function. Drawing the link is not authorization — `/admin/reports` refuses with a 403 on its own
+ * and `publishReport` refuses again — it only keeps the screen from offering a superuser something
+ * the next click would turn down.
  */
 
 /** The form field carrying the year of the month being reopened. */
@@ -50,8 +65,10 @@ export const load: PageServerLoad = async ({ locals }) => {
 		redirect(303, AUTH_PATHS.login);
 	}
 
+	const db = database();
+	const userId = locals.user.id;
 	try {
-		const listing = await listPeriods(database(), locals.user.id);
+		const [listing, roles] = await Promise.all([listPeriods(db, userId), rolesOf(db, userId)]);
 		return {
 			// `status` and the row's id are turned into the two booleans the screen actually asks —
 			// "is it locked" and "does the row exist yet" — here rather than in the component.
@@ -67,7 +84,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 				transactionCount: summary.transactionCount,
 				reports: summary.reports
 			})),
-			mayUnlock: listing.mayUnlock
+			mayUnlock: listing.mayUnlock,
+			mayPublish: isAllowed(roles, ACTION.publishReports)
 		};
 	} catch (caught) {
 		throwAsRouteError(caught);

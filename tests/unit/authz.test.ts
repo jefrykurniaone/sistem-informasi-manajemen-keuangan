@@ -87,7 +87,12 @@ const ACTIONS_NOT_SUPERUSER_ONLY: Readonly<Partial<Record<Action, readonly Role[
 	// reading that put `managePosts`, `handleComplaints`, `recordCashTransactions` and `readOverdue`
 	// there: verifying a payment records what happened rather than changing the past or anybody's
 	// rights. See the argument recorded next to the action in `src/lib/server/authz.ts`.
-	[ACTION.verifyPayments]: [ROLE.admin]
+	[ACTION.verifyPayments]: [ROLE.admin],
+	// `CONTEXT.md` ends Admin's own sentence with "dan menerbitkan Laporan Bulanan" and leaves it off
+	// Superuser, so a superuser who is not also an admin cannot publish one. Publishing adds a
+	// numbered document and closes a month; the direction that changes the past is reopening one, and
+	// that is `unlockPeriods`, which really is superuser-only and therefore needs no entry here.
+	[ACTION.publishReports]: [ROLE.admin]
 };
 
 /** Which roles `action` is expected to be permitted to. Superuser alone unless stated otherwise. */
