@@ -21,8 +21,10 @@ import {
 	registerEmailJobs
 } from '$lib/server/email/jobs';
 import { enqueueEmail } from '$lib/server/email/queue';
+import { COMPLAINT_STATUS_CHANGED_KIND } from '$lib/server/email/templates/complaint-status-changed';
 import { INVITATION_KIND } from '$lib/server/email/templates/invitation';
 import { INVOICE_ISSUED_KIND } from '$lib/server/email/templates/invoice-issued';
+import { NEW_COMPLAINT_KIND } from '$lib/server/email/templates/new-complaint';
 import { NEW_POST_KIND } from '$lib/server/email/templates/new-post';
 import {
 	PASSWORD_RESET_KIND,
@@ -282,7 +284,9 @@ describe('applicationEmailTemplates', () => {
 				INVOICE_ISSUED_KIND,
 				PAYMENT_VERIFIED_KIND,
 				PAYMENT_REJECTED_KIND,
-				NEW_POST_KIND
+				NEW_POST_KIND,
+				NEW_COMPLAINT_KIND,
+				COMPLAINT_STATUS_CHANGED_KIND
 			].sort()
 		);
 		expect(

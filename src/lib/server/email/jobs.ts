@@ -9,8 +9,10 @@ import {
 	type JobDefinition,
 	type JobRegistry
 } from '../scheduler';
+import { complaintStatusChangedTemplates } from './templates/complaint-status-changed';
 import { invitationTemplates } from './templates/invitation';
 import { invoiceIssuedTemplates } from './templates/invoice-issued';
+import { newComplaintTemplates } from './templates/new-complaint';
 import { newPostTemplates } from './templates/new-post';
 import { passwordResetTemplates } from './templates/password-reset';
 import { paymentRejectedTemplates } from './templates/payment-rejected';
@@ -78,7 +80,9 @@ export const applicationEmailTemplates: EmailTemplates = {
 	...invoiceIssuedTemplates,
 	...paymentVerifiedTemplates,
 	...paymentRejectedTemplates,
-	...newPostTemplates
+	...newPostTemplates,
+	...newComplaintTemplates,
+	...complaintStatusChangedTemplates
 };
 
 /** What a drain job may have handed to it instead of the production wiring. */
