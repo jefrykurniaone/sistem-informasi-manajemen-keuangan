@@ -82,7 +82,12 @@ const ACTIONS_NOT_SUPERUSER_ONLY: Readonly<Partial<Record<Action, readonly Role[
 	// admin" — the same reading that put `managePosts`, `handleComplaints` and
 	// `recordCashTransactions` there: none of them change the past or who may do what, which is what
 	// keeps them out of Superuser's sentence in `CONTEXT.md`.
-	[ACTION.readOverdue]: [ROLE.admin]
+	[ACTION.readOverdue]: [ROLE.admin],
+	// `CONTEXT.md` ends Admin's own sentence with "dan menerbitkan Laporan Bulanan" and leaves it off
+	// Superuser, so a superuser who is not also an admin cannot publish one. Publishing adds a
+	// numbered document and closes a month; the direction that changes the past is reopening one, and
+	// that is `unlockPeriods`, which really is superuser-only and therefore needs no entry here.
+	[ACTION.publishReports]: [ROLE.admin]
 };
 
 /** Which roles `action` is expected to be permitted to. Superuser alone unless stated otherwise. */

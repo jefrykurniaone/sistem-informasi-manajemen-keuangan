@@ -266,7 +266,32 @@ export const ACTION = {
 	 * `handleComplaints` and `recordCashTransactions` there. `isAllowed` has no inheritance, so a
 	 * superuser who is not also an admin is refused here too, which is what the spec asks for.
 	 */
-	readOverdue: 'readOverdue'
+	readOverdue: 'readOverdue',
+	/**
+	 * Previewing the Laporan Bulanan of a month and publishing a revision of it — which also locks
+	 * the month. See `src/lib/server/services/report/publication.ts`.
+	 *
+	 * One action for the preview and the publication, the same reasoning as `manageJobs`: a preview
+	 * is only useful to whoever may press the button under it, and `docs/spec-kas-laporan-v1.md`
+	 * user stories 12 and 13 are the same person on the same screen. **Reading a published report is
+	 * deliberately not covered here and is not an action at all**: every signed-in Warga reads one,
+	 * so an entry here would be a permission nobody is ever refused; the session check at the route
+	 * is the guard, the reasoning `listActiveCashCategories` records.
+	 *
+	 * It is **`admin`'s, not `superuser`'s**, by the same reading that put `managePosts`,
+	 * `handleComplaints` and `recordCashTransactions` there: `CONTEXT.md` ends Admin's own sentence
+	 * with "dan menerbitkan Laporan Bulanan", and Superuser's list — residents and roles, Unit and
+	 * Masa Huni, Tarif, Pembebasan, cancelling a Tagihan, unlocking a Periode — does not contain it.
+	 * Publishing adds a numbered document and closes a month; it changes nothing that has already
+	 * happened, which is what keeps it out of Superuser's sentence. The direction that *does* change
+	 * the past is reopening a month, and that is `unlockPeriods`, superuser's.
+	 *
+	 * **Locking a Periode still has no action of its own**, and this one is not it. `lockPeriod`
+	 * takes a `Transaction` and checks nothing, reachable only from the publication that has already
+	 * checked this action — see the argument recorded beside `ACTION.unlockPeriods` and on
+	 * `lockPeriod` itself.
+	 */
+	publishReports: 'publishReports'
 } as const;
 
 /** One of the actions above. */
@@ -340,7 +365,8 @@ const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.manageExemptions]: new Set([ROLE.superuser]),
 	[ACTION.readPeriods]: new Set([ROLE.admin, ROLE.superuser]),
 	[ACTION.unlockPeriods]: new Set([ROLE.superuser]),
-	[ACTION.readOverdue]: new Set([ROLE.admin])
+	[ACTION.readOverdue]: new Set([ROLE.admin]),
+	[ACTION.publishReports]: new Set([ROLE.admin])
 };
 
 /**
