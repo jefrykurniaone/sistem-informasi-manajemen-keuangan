@@ -67,13 +67,19 @@ import type { RequestHandler } from './$types';
 /**
  * The media type each stored extension is served as. Every entry mirrors an extension a storing
  * service actually writes today; an extension not listed is served as a download, not guessed at.
+ *
+ * A `Map`, deliberately not an object literal: the lookup key is derived from the request, and an
+ * object literal inherits from `Object.prototype`, so `literal['constructor']` returns a function
+ * and `literal['__proto__']` returns an object — both truthy, so the `??` fallback would never
+ * fire and the inherited value would be coerced into a garbage `Content-Type` header. A `Map` has
+ * no prototype chain behind `get`, so every extension outside these four is `undefined`.
  */
-const CONTENT_TYPES_BY_EXTENSION: Readonly<Record<string, string>> = {
-	jpg: 'image/jpeg',
-	jpeg: 'image/jpeg',
-	png: 'image/png',
-	webp: 'image/webp'
-};
+const CONTENT_TYPES_BY_EXTENSION: ReadonlyMap<string, string> = new Map([
+	['jpg', 'image/jpeg'],
+	['jpeg', 'image/jpeg'],
+	['png', 'image/png'],
+	['webp', 'image/webp']
+]);
 
 /** What an extension outside the map is served as: opaque bytes, downloaded rather than rendered. */
 const FALLBACK_CONTENT_TYPE = 'application/octet-stream';
@@ -133,5 +139,5 @@ function contentTypeOf(key: string): string {
 		return FALLBACK_CONTENT_TYPE;
 	}
 	const extension = fileName.slice(dotAt + 1).toLowerCase();
-	return CONTENT_TYPES_BY_EXTENSION[extension] ?? FALLBACK_CONTENT_TYPE;
+	return CONTENT_TYPES_BY_EXTENSION.get(extension) ?? FALLBACK_CONTENT_TYPE;
 }

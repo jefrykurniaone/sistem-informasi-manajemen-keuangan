@@ -154,6 +154,26 @@ describe('GET /files/[...key]', () => {
 		expect(response.headers.get('content-disposition')).toBe('attachment; filename="report.bin"');
 	});
 
+	it.each(['constructor', '__proto__'])(
+		'serves an extension named after the prototype property "%s" as an opaque download, never an inherited value',
+		async (extension) => {
+			// After lowercasing, these are the two `Object.prototype` names a key's charset can spell.
+			// On an object-literal map, indexing with either returns an inherited function or object —
+			// truthy, so the octet-stream fallback would never fire and the value would be coerced
+			// into a garbage Content-Type header. The map is a `Map` precisely so this stays pinned.
+			const key = `proto/evil.${extension}`;
+			await minting.store(key, CONTENT);
+
+			const response = await respondTo(await minting.signedLink(key, FIFTEEN_MINUTES));
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get('content-type')).toBe('application/octet-stream');
+			expect(response.headers.get('content-disposition')).toBe(
+				`attachment; filename="evil.${extension}"`
+			);
+		}
+	);
+
 	it('refuses a signature with one character changed with 403, not 200 and not 404', async () => {
 		await minting.store('tampered/proof.jpg', CONTENT);
 		const link = await minting.signedLink('tampered/proof.jpg', FIFTEEN_MINUTES);
