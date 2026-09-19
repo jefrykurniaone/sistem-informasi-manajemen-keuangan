@@ -51,6 +51,15 @@
 		<dd>{CREATED_AT_FORMAT.format(data.unit.createdAt)}</dd>
 	</dl>
 
+	<div>
+		<a
+			class="inline-flex h-11 items-center rounded-md border border-border px-4 text-sm font-medium"
+			href={resolve(`/admin/units/${data.unit.id}/finance`)}
+		>
+			{m.unitFinance_linkFromUnit()}
+		</a>
+	</div>
+
 	<form method="POST" action={data.unit.isActive ? '?/deactivate' : '?/reactivate'}>
 		<Button type="submit" variant={data.unit.isActive ? 'outline' : 'default'}>
 			{data.unit.isActive ? m.adminUnits_deactivateSubmit() : m.adminUnits_reactivateSubmit()}

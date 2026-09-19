@@ -3,6 +3,7 @@ import { rupiah, type Rupiah } from '$lib/money';
 import type { DatabaseWriter, Transaction } from '../../authz';
 import { allocations } from '../../db/schema/allocation';
 import { PAYMENT_STATUS, payments } from '../../db/schema/payment';
+import { refunds } from '../../db/schema/refund';
 
 /**
  * Saldo Titipan: the part of a Unit's verified money that answers no Tagihan yet. `CONTEXT.md`
@@ -17,7 +18,9 @@ import { PAYMENT_STATUS, payments } from '../../db/schema/payment';
  * For one Unit:
  *
  * ```
- * saldo titipan = Σ amount of its verified payments − Σ amount of those payments' allocations
+ * saldo titipan = Σ amount of its verified payments
+ *               − Σ amount of those payments' allocations
+ *               − Σ amount of those payments' refunds
  * ```
  *
  * Three consequences, each of which some caller depends on:
@@ -33,16 +36,21 @@ import { PAYMENT_STATUS, payments } from '../../db/schema/payment';
  * - **Releasing an allocation (#30) restores the balance with no write here.** The row's deletion
  *   *is* the restoration, because the balance is this subtraction and nothing else.
  *
- * User story 23's pengembalian — a superuser returning a departing Unit's balance as a cash
- * expense — is not built yet by any ticket that has landed; when it lands, the returned money must
- * join this formula (verified = allocations + saldo titipan + pengembalian, the invariant
- * `tests/unit/unit-money-invariant.test.ts` states with pengembalian at zero). Until then there is
- * deliberately no term for it here rather than a guess at how it will be stored.
+ * The refund term is user story 23's Pengembalian, landed by #30: `refunds` rows attribute
+ * returned money to the Pembayaran whose remainder it consumed
+ * (`src/lib/server/db/schema/refund.ts` records why per-payment attribution is the only shape that
+ * works), so a refund reduces both this balance and the per-payment remainders below through the
+ * very same subtraction that allocations use. That is what keeps
+ * `verified = allocations + saldo titipan + refunds` — the invariant
+ * `tests/unit/unit-money-invariant.test.ts` runs — true with no second bookkeeping: money a refund
+ * returned is money `lockUnallocatedVerifiedPayments` no longer offers, so the next issuance
+ * cannot spend it a second time.
  *
  * ## Who writes, who reads
  *
- * Nothing here writes anything. `./allocation.ts` is the one writer of `allocations` rows, and
- * `./verification.ts` and `./issuance.ts` are its two callers. The reads here take no `actorId` and
+ * Nothing here writes anything. `./allocation.ts` is the one writer of `allocations` rows, with
+ * `./verification.ts` and `./issuance.ts` as its two callers, and
+ * `./credit-refund.ts` is the one writer of `refunds` rows. The reads here take no `actorId` and
  * check no permission, the same shape `duesRateOn` and `isUnitExemptOn` have and for the same
  * reason: issuance calls them from a scheduled job that has no session, and every screen that shows
  * the number is guarded by its own action or by row ownership before it asks.
@@ -53,7 +61,7 @@ export interface PaymentRemainder {
 	readonly paymentId: string;
 	/** The payment's full amount, in whole rupiah. */
 	readonly amount: Rupiah;
-	/** How much of it is not yet allocated — its contribution to the Unit's saldo titipan. */
+	/** What is neither allocated nor refunded yet — its contribution to the Unit's saldo titipan. */
 	readonly remainder: Rupiah;
 }
 
@@ -77,12 +85,20 @@ export async function creditBalanceOfUnit(db: DatabaseWriter, unitId: string): P
 					select ${payments.id} from ${payments}
 					where ${payments.unitId} = ${unitId} and ${payments.status} = ${PAYMENT_STATUS.verified}
 				)
+			), 0)::text`,
+			refunded: sql<string>`coalesce((
+				select sum(${refunds.amount})
+				from ${refunds}
+				where ${refunds.paymentId} in (
+					select ${payments.id} from ${payments}
+					where ${payments.unitId} = ${unitId} and ${payments.status} = ${PAYMENT_STATUS.verified}
+				)
 			), 0)::text`
 		})
 		.from(payments)
 		.where(and(eq(payments.unitId, unitId), eq(payments.status, PAYMENT_STATUS.verified)));
 
-	return rupiah(Number(row.verified) - Number(row.allocated));
+	return rupiah(Number(row.verified) - Number(row.allocated) - Number(row.refunded));
 }
 
 /**
@@ -120,15 +136,16 @@ export async function lockUnallocatedVerifiedPayments(
 		return [];
 	}
 
-	const allocated = await allocatedAmountsByPayment(
-		transaction,
-		rows.map((row) => row.paymentId)
-	);
+	const paymentIds = rows.map((row) => row.paymentId);
+	const allocated = await allocatedAmountsByPayment(transaction, paymentIds);
+	const refunded = await refundedAmountsByPayment(transaction, paymentIds);
 
 	return rows.map((row) => ({
 		paymentId: row.paymentId,
 		amount: row.amount,
-		remainder: rupiah(row.amount - (allocated.get(row.paymentId) ?? 0))
+		remainder: rupiah(
+			row.amount - (allocated.get(row.paymentId) ?? 0) - (refunded.get(row.paymentId) ?? 0)
+		)
 	}));
 }
 
@@ -154,6 +171,32 @@ export async function allocatedAmountsByPayment(
 		.from(allocations)
 		.where(inArray(allocations.paymentId, paymentIds))
 		.groupBy(allocations.paymentId);
+
+	return new Map(rows.map((row) => [row.paymentId, rupiah(Number(row.total))]));
+}
+
+/**
+ * How much of each of `paymentIds` has already been refunded, keyed by payment id and absent for
+ * one never refunded — the exact counterpart of `allocatedAmountsByPayment`, because a
+ * Pengembalian spends a payment's remainder the same way an Alokasi does and every reader of a
+ * remainder must subtract both or over-count the money.
+ */
+export async function refundedAmountsByPayment(
+	db: DatabaseWriter,
+	paymentIds: readonly string[]
+): Promise<ReadonlyMap<string, Rupiah>> {
+	if (paymentIds.length === 0) {
+		return new Map();
+	}
+
+	const rows = await db
+		.select({
+			paymentId: refunds.paymentId,
+			total: sql<string>`coalesce(sum(${refunds.amount}), 0)::text`
+		})
+		.from(refunds)
+		.where(inArray(refunds.paymentId, paymentIds))
+		.groupBy(refunds.paymentId);
 
 	return new Map(rows.map((row) => [row.paymentId, rupiah(Number(row.total))]));
 }

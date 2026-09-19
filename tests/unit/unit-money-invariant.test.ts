@@ -8,11 +8,13 @@ import { ROLE, userRoles } from '$lib/server/db/schema/authz';
 import { duesRates } from '$lib/server/db/schema/dues-rate';
 import { invoices } from '$lib/server/db/schema/invoice';
 import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '$lib/server/db/schema/payment';
+import { refunds } from '$lib/server/db/schema/refund';
 import { residents } from '$lib/server/db/schema/resident';
 import { units } from '$lib/server/db/schema/unit';
 import { testDatabase } from '$lib/server/db/test-helpers';
 import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
 import { creditBalanceOfUnit } from '$lib/server/services/dues/credit-balance';
+import { refundCredit } from '$lib/server/services/dues/credit-refund';
 import { issueInvoicesForPeriod } from '$lib/server/services/dues/issuance';
 import { cancelOwnPayment } from '$lib/server/services/dues/payment';
 import { openInvoicesOfUnit } from '$lib/server/services/dues/allocation';
@@ -27,22 +29,24 @@ import {
  * setelah rangkaian aksi acak yang panjang, bukan hanya pada satu skenario yang dipilih tangan":
  *
  * ```
- * Σ verified payments of a Unit = Σ allocations of those payments + saldo titipan (+ pengembalian)
+ * Σ verified payments of a Unit = Σ allocations of those payments + saldo titipan + Σ pengembalian
  * ```
  *
- * Pengembalian (user story 23) has no landed implementation, so its term is identically zero here;
- * the ticket that builds it extends this file's `invariantHoldsFor` with the refund sum.
+ * The refund term is real since #30 landed Pengembalian (user story 23): the sequence below
+ * returns random parts of a Unit's balance through the real `refundCredit`, and the sum of its
+ * `refunds` rows is the term the equation carries — no longer identically zero.
  *
  * The action sequence is driven by a **seeded** linear congruential generator, so a failure replays
  * exactly by re-running the file — a random sequence that cannot be reproduced proves nothing about
  * the run that failed. The actions are the real service calls, never direct writes: verification
  * with and without explicit invoice choices, rejection, an admin's cash payment, the payer's own
- * cancellation, and monthly issuance with its automatic saldo titipan consumption.
+ * cancellation, a superuser's refund of part of the balance, and monthly issuance with its
+ * automatic saldo titipan consumption.
  *
  * Beyond the headline equation, three supporting invariants are asserted after every action,
  * because each is a way the equation could hold while the books were still wrong:
  *
- * - no payment is over-spent: its allocations never sum past its amount;
+ * - no payment is over-spent: its allocations **plus its refunds** never sum past its amount;
  * - no invoice is over-allocated: its allocations never sum past its amount;
  * - every allocation joins a *verified* payment to a *standing* invoice **of the same Unit**.
  */
@@ -113,6 +117,15 @@ async function insertAdmin(): Promise<string> {
 	return userId;
 }
 
+/** The refunding superuser. No residents row: `refunds.refundedBy` references `user.id`. */
+async function insertSuperuser(): Promise<string> {
+	const userId = await insertUser('Pengurus Invarian Pengembalian');
+	await testDb.db
+		.insert(userRoles)
+		.values({ userId, role: ROLE.superuser, createdAt: new Date(START) });
+	return userId;
+}
+
 /** One house with one payer living in it. */
 async function insertHousehold(number: string): Promise<Household> {
 	const payerUserId = await insertUser(`Warga Invarian ${number}`);
@@ -179,15 +192,28 @@ async function assertInvariants(unitId: string, step: string): Promise<void> {
 							paymentRows.map((row) => row.id)
 						)
 					);
+	const refundRows =
+		paymentRows.length === 0
+			? []
+			: await testDb.db
+					.select()
+					.from(refunds)
+					.where(
+						inArray(
+							refunds.paymentId,
+							paymentRows.map((row) => row.id)
+						)
+					);
 
 	const verifiedSum = paymentRows
 		.filter((row) => row.status === PAYMENT_STATUS.verified)
 		.reduce((sum, row) => sum + row.amount, 0);
 	const allocatedSum = allocationRows.reduce((sum, row) => sum + row.amount, 0);
 	const credit = await creditBalanceOfUnit(testDb.db, unitId);
-	const refunds = 0; // Pengembalian has no implementation yet; see this file's doc comment.
+	// The real Pengembalian term, summed from the rows #30's refund action writes below.
+	const refundedSum = refundRows.reduce((sum, row) => sum + row.amount, 0);
 
-	expect(verifiedSum, step).toBe(allocatedSum + credit + refunds);
+	expect(verifiedSum, step).toBe(allocatedSum + credit + refundedSum);
 	expect(credit, step).toBeGreaterThanOrEqual(0);
 
 	const paymentById = new Map(paymentRows.map((row) => [row.id, row]));
@@ -203,11 +229,27 @@ async function assertInvariants(unitId: string, step: string): Promise<void> {
 			(allocatedByInvoice.get(allocation.invoiceId) ?? 0) + allocation.amount
 		);
 	}
+	const refundedByPayment = new Map<string, number>();
+	for (const refund of refundRows) {
+		refundedByPayment.set(
+			refund.paymentId,
+			(refundedByPayment.get(refund.paymentId) ?? 0) + refund.amount
+		);
+		// A refund only ever consumes verified money.
+		expect(paymentById.get(refund.paymentId)?.status, step).toBe(PAYMENT_STATUS.verified);
+	}
 	for (const [paymentId, total] of allocatedByPayment) {
 		const payment = paymentById.get(paymentId);
 		expect(payment, step).toBeDefined();
 		expect(payment?.status, step).toBe(PAYMENT_STATUS.verified);
 		expect(total, step).toBeLessThanOrEqual(payment?.amount ?? 0);
+	}
+	// No payment is over-spent by its two spenders together: allocations plus refunds never
+	// exceed the payment's amount.
+	for (const [paymentId, payment] of paymentById) {
+		const spent =
+			(allocatedByPayment.get(paymentId) ?? 0) + (refundedByPayment.get(paymentId) ?? 0);
+		expect(spent, step).toBeLessThanOrEqual(payment.amount);
 	}
 	const invoiceById = new Map(invoiceRows.map((row) => [row.id, row]));
 	for (const [invoiceId, total] of allocatedByInvoice) {
@@ -224,6 +266,7 @@ describe('the unit money invariant, over a long random action sequence', () => {
 		const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)];
 
 		const adminId = await insertAdmin();
+		const superuserId = await insertSuperuser();
 		const households = [await insertHousehold('1'), await insertHousehold('2')];
 		await testDb.db
 			.insert(duesRates)
@@ -235,7 +278,7 @@ describe('the unit money invariant, over a long random action sequence', () => {
 
 		for (let step = 1; step <= ACTION_COUNT; step += 1) {
 			const household = pick(households);
-			const action = Math.floor(random() * 6);
+			const action = Math.floor(random() * 7);
 			const label = `step ${step}, action ${action}, unit ${household.unitId}`;
 
 			switch (action) {
@@ -292,6 +335,22 @@ describe('the unit money invariant, over a long random action sequence', () => {
 							unitId: household.unitId,
 							amount: rupiah(pick(AMOUNTS)),
 							receivedOn: pick(RECEIPT_DAYS)
+						});
+					}
+					break;
+				}
+				case 5: {
+					// #30: the superuser returns a random part of the unit's saldo titipan. The real
+					// service, under the same payment locks every spender takes; skipped while the
+					// balance is empty, because a refund of nothing is refused by name.
+					const balance = await creditBalanceOfUnit(testDb.db, household.unitId);
+					if (balance > 0) {
+						await refundCredit(testDb.db, clock, {
+							actorId: superuserId,
+							unitId: household.unitId,
+							amount: rupiah(Math.floor(random() * balance) + 1),
+							occurredOn: pick(RECEIPT_DAYS),
+							reason: 'Sebagian saldo titipan dikembalikan kepada warganya.'
 						});
 					}
 					break;

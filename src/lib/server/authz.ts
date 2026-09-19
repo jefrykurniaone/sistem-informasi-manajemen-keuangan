@@ -308,7 +308,29 @@ export const ACTION = {
 	 * checked this action — see the argument recorded beside `ACTION.unlockPeriods` and on
 	 * `lockPeriod` itself.
 	 */
-	publishReports: 'publishReports'
+	publishReports: 'publishReports',
+	/**
+	 * The three dues corrections, and the screen they live on: cancelling a Tagihan, releasing an
+	 * Alokasi so its money becomes Saldo Titipan again, and returning a Unit's Saldo Titipan to its
+	 * Warga as a cash expense. See `src/lib/server/services/dues/invoice-void.ts`,
+	 * `allocation-release.ts`, `credit-refund.ts` and `corrections-history.ts`.
+	 *
+	 * One action for all three writes and the reads beside them, not three. The reasoning
+	 * `manageJobs` records covers the reads — the unit finance screen is only useful to whoever may
+	 * press its buttons — and the three writes are one sentence of `CONTEXT.md`: Superuser is "peran
+	 * yang memegang setiap tindakan yang mengubah masa lalu", its list names "pembatalan Tagihan"
+	 * outright, and releasing an allocation or refunding the balance re-decides where money that
+	 * already moved is standing, which is the same sentence. User stories 20 through 23 of
+	 * `docs/spec-iuran-v1.md` all begin "sebagai superuser". The split that `importResidents` and
+	 * `recordOpeningBalance` justify — a later spec widening one action must not silently widen
+	 * another — has no purchase here, because no later spec could hand an `admin` one of these three
+	 * without handing them the power to rewrite the dues past, which is the one thing the role split
+	 * exists to withhold.
+	 *
+	 * It is `superuser`'s alone, and `isAllowed` has no inheritance, so an `admin` who is not also a
+	 * superuser is refused all three — the acceptance criterion verbatim.
+	 */
+	correctDues: 'correctDues'
 } as const;
 
 /** One of the actions above. */
@@ -384,7 +406,8 @@ const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.unlockPeriods]: new Set([ROLE.superuser]),
 	[ACTION.readOverdue]: new Set([ROLE.admin]),
 	[ACTION.verifyPayments]: new Set([ROLE.admin]),
-	[ACTION.publishReports]: new Set([ROLE.admin])
+	[ACTION.publishReports]: new Set([ROLE.admin]),
+	[ACTION.correctDues]: new Set([ROLE.superuser])
 };
 
 /**
