@@ -19,12 +19,18 @@
 	 * attachment field — user stories 1 through 3 of `docs/spec-keluhan-v1.md`.
 	 *
 	 * Unlike `dues/payment.ts`'s screen, which has no `payment-form.svelte` of its own, this ticket's
-	 * `writes:` names `complaint-form.svelte` directly, so the whole `<form>` — method, encoding and
-	 * submit button included — lives here rather than in `+page.svelte`. `+page.svelte` renders the
-	 * page's header and any submitted-form message, then this component, and nothing else.
+	 * `writes:` names `complaint-form.svelte` directly, so the whole `<form>` — method, encoding,
+	 * action and submit button included — lives here rather than in `+page.svelte`. `+page.svelte`
+	 * renders the page's header and any submitted-form message, then this component, and nothing else.
 	 *
 	 * `enctype="multipart/form-data"` is required for the attachment field to post any bytes at all;
 	 * without it a browser posts only the file names.
+	 *
+	 * **`action="?/create"` is required.** `+page.server.ts` exports only a named action, `create`,
+	 * with no `default`; a `<form>` with no `action` posts to the page itself, which SvelteKit answers
+	 * with a 404 because no action matches. `reply-thread.svelte`'s `action="?/reply"` and
+	 * `[id]/+page.svelte`'s `action="?/withdraw"` already carry this the same way — this form is the
+	 * one that was missing it.
 	 */
 	interface Props {
 		/** What to show in each field — the values just posted, when this is a `fail()` re-render. */
@@ -40,7 +46,7 @@
 	const uid = $props.id();
 </script>
 
-<form method="POST" enctype="multipart/form-data" class="flex flex-col gap-4">
+<form method="POST" action="?/create" enctype="multipart/form-data" class="flex flex-col gap-4">
 	<div class="flex flex-col gap-1.5">
 		<label class="text-sm font-medium" for="complaint-title-{uid}">
 			{m.complaintsNew_titleLabel()}
