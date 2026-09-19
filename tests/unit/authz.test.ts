@@ -64,7 +64,13 @@ const ACTIONS_NOT_SUPERUSER_ONLY: Readonly<Partial<Record<Action, readonly Role[
 	// readable by "pemegang peran admin atau superuser", and user story 19 — "sebagai superuser,
 	// saya ingin melihat siapa mengubah status apa dan kapan" — is a read of the Riwayat Status by
 	// somebody the spec never asks to handle a complaint. See `PERMISSIONS`.
-	[ACTION.readAllComplaints]: [ROLE.admin, ROLE.superuser]
+	[ACTION.readAllComplaints]: [ROLE.admin, ROLE.superuser],
+	// `CONTEXT.md` puts "mencatat Transaksi Kas" on Admin and leaves it off Superuser, the same
+	// reading that put `managePosts` and `handleComplaints` there. A Koreksi does not change the past
+	// either: it adds a reversing row and leaves the row it corrects exactly as it was, which is what
+	// keeps an append-only cash book out of Superuser's "mengubah masa lalu" sentence. Recording the
+	// Saldo awal stays `recordOpeningBalance`, and stays Superuser's.
+	[ACTION.recordCashTransactions]: [ROLE.admin]
 };
 
 /** Which roles `action` is expected to be permitted to. Superuser alone unless stated otherwise. */

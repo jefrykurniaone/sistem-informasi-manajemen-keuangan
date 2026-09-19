@@ -120,6 +120,25 @@ export const ACTION = {
 	 */
 	importResidents: 'importResidents',
 	/**
+	 * Reading the buku kas with its running balance, recording a Transaksi Kas by hand, and
+	 * recording a Koreksi of one. See `src/lib/server/services/cash/transaction.ts`,
+	 * `correction.ts` and `balance.ts`. One action for the read and the two writes, the same
+	 * reasoning as `manageJobs`: the cash book is only useful to whoever may add a line to it, and
+	 * the correction button lives on the row it corrects.
+	 *
+	 * Named after `CONTEXT.md`'s own verb — Admin "mencatat Transaksi Kas" — and **it is `admin`'s,
+	 * not `superuser`'s**, by the same reading that put `managePosts` and `handleComplaints` there.
+	 * Superuser's list is "setiap tindakan yang mengubah masa lalu atau mengubah siapa boleh apa",
+	 * and a Koreksi does neither: it *adds* a reversing row and leaves the row it corrects exactly as
+	 * it was. That an append-only book never changes its past is what keeps recording out of
+	 * Superuser's sentence, and it is why the two halves can share one action.
+	 *
+	 * Recording the Saldo awal is deliberately not covered here: it is `recordOpeningBalance` above,
+	 * `superuser`'s, because the spec puts it there twice. The two are the only writers of
+	 * `cash_transactions` that a person drives, and they are held by different roles on purpose.
+	 */
+	recordCashTransactions: 'recordCashTransactions',
+	/**
 	 * Seeing the admin list of Undangan, sending one, and sending one again. See
 	 * `src/lib/server/services/invitation/index.ts`. One action for the read and the writes, the same
 	 * reasoning as `manageJobs`: the list is only useful to whoever may act on it, and sending an
@@ -249,6 +268,7 @@ const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.handleComplaints]: new Set([ROLE.admin]),
 	[ACTION.readAllComplaints]: new Set([ROLE.admin, ROLE.superuser]),
 	[ACTION.importResidents]: new Set([ROLE.superuser]),
+	[ACTION.recordCashTransactions]: new Set([ROLE.admin]),
 	[ACTION.manageInvitations]: new Set([ROLE.superuser]),
 	[ACTION.manageDuesRates]: new Set([ROLE.superuser]),
 	[ACTION.manageCashCategories]: new Set([ROLE.superuser]),
