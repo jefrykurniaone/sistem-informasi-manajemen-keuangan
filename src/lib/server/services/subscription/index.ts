@@ -11,6 +11,7 @@ import {
 	isMandatorySubscriptionKind,
 	subscriptionKindDefinition
 } from './kinds';
+import { verifyUnsubscribeToken, type UnsubscribeTokenRejection } from './unsubscribe-token';
 
 /**
  * Langganan: whether one resident wants one kind of notification. This is the only place
@@ -24,6 +25,13 @@ import {
  * for their own row. `assertOwnResident` below reads the same shape `requirePermission` in
  * `src/lib/server/authz.ts` throws, `PermissionDeniedError`, so a route still translates it to
  * `error(403, …)` without a second error type to know about.
+ *
+ * **There is one write that has no caller session at all**, added by #37: `disableSubscriptionByToken`
+ * below, which the unsubscribe link in a notification email leads to. It cannot go through
+ * `setSubscriptionPreference`'s owner check, because the whole point of that link is that it works
+ * out of an inbox without signing in — what stands in for the check is the signed token itself, and
+ * `./unsubscribe-token.ts` is where the argument for that lives. It is still refused for a mandatory
+ * kind, by the same `MandatorySubscriptionKindError`, and it can only ever switch a kind *off*.
  *
  * **Nothing here creates a `residents` row.** `ensureDefaultSubscriptions` takes a `residents.id`
  * that already exists — #20 (undangan) and #21 (persetujuan pendaftaran) call it right after they
@@ -147,6 +155,95 @@ export async function setSubscriptionPreference(
 				set: { enabled: request.enabled }
 			});
 	});
+}
+
+/**
+ * Why an unsubscribe token was refused. The first two come from `./unsubscribe-token.ts`; the third
+ * is this module's own, for a token that verifies but names a `residents` row that is no longer
+ * there.
+ */
+export type UnsubscribeRefusal = UnsubscribeTokenRejection | 'unknownResident';
+
+/** Thrown by `disableSubscriptionByToken` when the token is not one this application issued. */
+export class UnsubscribeTokenError extends Error {
+	override readonly name = 'UnsubscribeTokenError';
+
+	/** Which check refused it. Useful in a log; never shown to whoever presented the token. */
+	readonly refusal: UnsubscribeRefusal;
+
+	constructor(refusal: UnsubscribeRefusal) {
+		super(`The unsubscribe token was refused (${refusal}).`);
+		this.refusal = refusal;
+	}
+}
+
+/** Who was unsubscribed from what, once a token has been believed. */
+export interface UnsubscribeOutcome {
+	readonly residentId: string;
+	readonly kind: string;
+}
+
+/** What `disableSubscriptionByToken` may have handed to it instead of the production wiring. */
+export interface DisableSubscriptionByTokenSettings {
+	/**
+	 * The raw `BETTER_AUTH_SECRET` the token was signed with. Defaults to the one in the
+	 * environment; a test passes its own so it never depends on which secret the machine has.
+	 */
+	readonly secret?: string;
+}
+
+/**
+ * Switches one notification kind off for whoever a signed unsubscribe token names, with no session
+ * involved — the one-click "berhenti berlangganan" link every Langganan email carries.
+ *
+ * Exactly one row is written, for exactly the resident and the kind inside the token, so a link can
+ * never reach another resident's preferences or another kind of notification. Replaying the same
+ * token writes `enabled: false` over `enabled: false`, which is why the token needs no revocation —
+ * see `./unsubscribe-token.ts`, decision 6.
+ *
+ * @throws {UnsubscribeTokenError} when the token is malformed, its signature does not match, or the
+ *   resident it names no longer exists. A route answers all three the same way: a page saying the
+ *   link is not valid, never which check refused it.
+ * @throws {MandatorySubscriptionKindError} when the token names a kind that cannot be switched off.
+ *   No token this application mints ever does — mandatory kinds carry no unsubscribe link — so this
+ *   is the backstop for a token minted by a later caller that should not have.
+ */
+export async function disableSubscriptionByToken(
+	db: Database,
+	clock: Clock,
+	token: string,
+	settings: DisableSubscriptionByTokenSettings = {}
+): Promise<UnsubscribeOutcome> {
+	const verification = settings.secret
+		? verifyUnsubscribeToken(token, settings.secret)
+		: verifyUnsubscribeToken(token);
+	if (!verification.valid) {
+		throw new UnsubscribeTokenError(verification.reason);
+	}
+	const { residentId, kind } = verification;
+	if (isMandatorySubscriptionKind(kind)) {
+		throw new MandatorySubscriptionKindError(kind);
+	}
+
+	await db.transaction(async (transaction) => {
+		const [row] = await transaction
+			.select({ id: residents.id })
+			.from(residents)
+			.where(eq(residents.id, residentId))
+			.limit(1);
+		if (!row) {
+			throw new UnsubscribeTokenError('unknownResident');
+		}
+		await transaction
+			.insert(subscriptions)
+			.values({ residentId, kind, enabled: false, createdAt: clock.now() })
+			.onConflictDoUpdate({
+				target: [subscriptions.residentId, subscriptions.kind],
+				set: { enabled: false }
+			});
+	});
+
+	return { residentId, kind };
 }
 
 /** One resident subscribed to a notification kind, as the sender needs it. */

@@ -23,6 +23,7 @@ import {
 import { enqueueEmail } from '$lib/server/email/queue';
 import { INVITATION_KIND } from '$lib/server/email/templates/invitation';
 import { INVOICE_ISSUED_KIND } from '$lib/server/email/templates/invoice-issued';
+import { MONTHLY_REPORT_KIND } from '$lib/server/email/templates/monthly-report';
 import { NEW_POST_KIND } from '$lib/server/email/templates/new-post';
 import {
 	PASSWORD_RESET_KIND,
@@ -31,6 +32,7 @@ import {
 import { PAYMENT_REJECTED_KIND } from '$lib/server/email/templates/payment-rejected';
 import { PAYMENT_VERIFIED_KIND } from '$lib/server/email/templates/payment-verified';
 import { REGISTRATION_APPROVED_KIND } from '$lib/server/email/templates/registration-approved';
+import { MONTHLY_REPORT_REVISED_KIND } from '$lib/server/email/templates/report-revised';
 import { VERIFY_EMAIL_KIND, verifyEmailPayload } from '$lib/server/email/templates/verify-email';
 import { FakeClock, FakeEmailSender } from '$lib/server/ports/fakes';
 import {
@@ -282,7 +284,9 @@ describe('applicationEmailTemplates', () => {
 				INVOICE_ISSUED_KIND,
 				PAYMENT_VERIFIED_KIND,
 				PAYMENT_REJECTED_KIND,
-				NEW_POST_KIND
+				NEW_POST_KIND,
+				MONTHLY_REPORT_KIND,
+				MONTHLY_REPORT_REVISED_KIND
 			].sort()
 		);
 		expect(
