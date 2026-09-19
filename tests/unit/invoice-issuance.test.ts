@@ -2,16 +2,19 @@ import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { rupiah, type Rupiah } from '$lib/money';
+import { allocations } from '$lib/server/db/schema/allocation';
 import { user } from '$lib/server/db/schema/auth';
 import { ROLE, userRoles } from '$lib/server/db/schema/authz';
 import { duesRates } from '$lib/server/db/schema/dues-rate';
 import { exemptions } from '$lib/server/db/schema/exemption';
 import { invoices, type Invoice } from '$lib/server/db/schema/invoice';
+import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '$lib/server/db/schema/payment';
 import { residents } from '$lib/server/db/schema/resident';
 import { jobRuns, JOB_RUN_STATUS } from '$lib/server/db/schema/scheduler';
 import { units } from '$lib/server/db/schema/unit';
 import { testDatabase } from '$lib/server/db/test-helpers';
 import { FakeClock } from '$lib/server/ports/fakes';
+import { creditBalanceOfUnit } from '$lib/server/services/dues/credit-balance';
 import {
 	applicationJobs,
 	JOB_OUTCOME,
@@ -72,6 +75,9 @@ const EXEMPTION_REASON = 'Rumah kosong sedang direnovasi';
  * schema, see `src/lib/server/db/test-helpers.ts`, so it cannot reach another file's rows.
  */
 beforeEach(async () => {
+	// Children before parents: an allocation points at an invoice and a payment, a payment at a unit.
+	await testDb.db.delete(allocations);
+	await testDb.db.delete(payments);
 	await testDb.db.delete(invoices);
 	await testDb.db.delete(exemptions);
 	await testDb.db.delete(units);
@@ -424,5 +430,158 @@ describe('the invoice issuance job', () => {
 			currentPeriod: '2026-04',
 			lastRun: { period: '2026-04', status: JOB_RUN_STATUS.succeeded }
 		});
+	});
+});
+
+/** One resident with the bare account behind them — a payer for the saldo titipan tests. */
+async function insertResidentRow(name: string): Promise<string> {
+	const userId = randomUUID();
+	const now = new Date(DURING_PERIOD);
+	await testDb.db.insert(user).values({
+		id: userId,
+		name,
+		email: `${userId}@komplek.local`,
+		emailVerified: true,
+		createdAt: now,
+		updatedAt: now
+	});
+	const [resident] = await testDb.db
+		.insert(residents)
+		.values({ userId, createdAt: now })
+		.returning();
+	return resident.id;
+}
+
+/** A verified Pembayaran written straight into `payments` — money already in the cash book. */
+async function insertVerifiedPayment(
+	unitId: string,
+	residentId: string,
+	amount: Rupiah,
+	receivedOn: string
+): Promise<string> {
+	const [row] = await testDb.db
+		.insert(payments)
+		.values({
+			unitId,
+			recordedBy: residentId,
+			amount,
+			receivedOn,
+			method: PAYMENT_METHOD.transfer,
+			proofFileKey: null,
+			status: PAYMENT_STATUS.verified,
+			verifiedBy: residentId,
+			verifiedAt: new Date(DURING_PERIOD),
+			createdAt: new Date(DURING_PERIOD)
+		})
+		.returning();
+	return row.id;
+}
+
+/** Every allocation pointing at one invoice. */
+async function allocationsTo(invoiceId: string) {
+	return testDb.db.select().from(allocations).where(eq(allocations.invoiceId, invoiceId));
+}
+
+/** The one invoice a unit holds for a period, or a loud failure when the run never issued it. */
+async function invoiceOf(unitId: string, period: string): Promise<Invoice> {
+	const rows = await testDb.db.select().from(invoices).where(eq(invoices.unitId, unitId));
+	const match = rows.find((invoice) => invoice.period === period);
+	if (!match) {
+		throw new Error(`No invoice exists for unit ${unitId} in ${period}.`);
+	}
+	return match;
+}
+
+describe('saldo titipan consuming a freshly issued Tagihan', () => {
+	it('pays three months issued in a row out of one prepayment, then runs dry', async () => {
+		// The acceptance criterion's own story: a warga pays three months ahead, the money waits as
+		// saldo titipan, and each issuance settles its Tagihan on the spot until the balance is gone.
+		await insertRate(MONTHLY_RATE, '2026-01-01');
+		const unit = await insertUnit();
+		const residentId = await insertResidentRow('Warga Bayar Tiga Bulan Di Muka');
+		const paymentId = await insertVerifiedPayment(
+			unit.id,
+			residentId,
+			rupiah(450_000),
+			'2026-02-20'
+		);
+		expect(await creditBalanceOfUnit(testDb.db, unit.id)).toBe(450_000);
+
+		for (const period of ['2026-03', '2026-04', '2026-05']) {
+			await issue(period);
+			const invoice = await invoiceOf(unit.id, period);
+			const rows = await allocationsTo(invoice.id);
+			expect(rows).toHaveLength(1);
+			expect(rows[0]).toMatchObject({ paymentId, amount: 150_000 });
+		}
+		expect(await creditBalanceOfUnit(testDb.db, unit.id)).toBe(0);
+
+		// The fourth month finds nothing left, and the Tagihan stands unpaid like any other.
+		await issue('2026-06');
+		const unpaid = await invoiceOf(unit.id, '2026-06');
+		expect(await allocationsTo(unpaid.id)).toHaveLength(0);
+	});
+
+	it('leaves a partial allocation when the balance covers only part of the new Tagihan', async () => {
+		await insertRate(MONTHLY_RATE, '2026-01-01');
+		const unit = await insertUnit();
+		const residentId = await insertResidentRow('Warga Titipan Kurang');
+		await insertVerifiedPayment(unit.id, residentId, rupiah(200_000), '2026-02-20');
+
+		await issue('2026-03');
+		await issue('2026-04');
+
+		const march = await invoiceOf(unit.id, '2026-03');
+		expect((await allocationsTo(march.id))[0]).toMatchObject({ amount: 150_000 });
+		const april = await invoiceOf(unit.id, '2026-04');
+		expect((await allocationsTo(april.id))[0]).toMatchObject({ amount: 50_000 });
+		expect(await creditBalanceOfUnit(testDb.db, unit.id)).toBe(0);
+	});
+
+	it('spends the oldest money first when two payments hold the balance', async () => {
+		await insertRate(MONTHLY_RATE, '2026-01-01');
+		const unit = await insertUnit();
+		const residentId = await insertResidentRow('Warga Dua Setoran');
+		const older = await insertVerifiedPayment(unit.id, residentId, rupiah(100_000), '2026-01-05');
+		const newer = await insertVerifiedPayment(unit.id, residentId, rupiah(100_000), '2026-02-05');
+
+		await issue(PERIOD);
+
+		const invoice = await invoiceOf(unit.id, PERIOD);
+		const byPayment = new Map(
+			(await allocationsTo(invoice.id)).map((row) => [row.paymentId, row.amount])
+		);
+		expect(byPayment.get(older)).toBe(100_000);
+		expect(byPayment.get(newer)).toBe(50_000);
+	});
+
+	it('consumes nothing twice on a second run of the same period', async () => {
+		await insertRate(MONTHLY_RATE, '2026-01-01');
+		const unit = await insertUnit();
+		const residentId = await insertResidentRow('Warga Titipan Sekali Pakai');
+		await insertVerifiedPayment(unit.id, residentId, rupiah(450_000), '2026-02-20');
+
+		await issue(PERIOD);
+		await issue(PERIOD);
+
+		const invoice = await invoiceOf(unit.id, PERIOD);
+		const rows = await allocationsTo(invoice.id);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({ amount: 150_000 });
+		expect(await creditBalanceOfUnit(testDb.db, unit.id)).toBe(300_000);
+	});
+
+	it('touches no balance of a unit the run skipped as exempt', async () => {
+		await insertRate(MONTHLY_RATE, '2026-01-01');
+		const unit = await insertUnit();
+		const residentId = await insertResidentRow('Warga Bebas Bertitipan');
+		const { residentId: granterId } = await insertSuperuser('Pengurus Pembebasan Titipan');
+		await insertExemption(unit.id, '2026-01-01', null, granterId);
+		await insertVerifiedPayment(unit.id, residentId, rupiah(300_000), '2026-02-20');
+
+		const summary = await issue(PERIOD);
+
+		expect(summary.skipped.map((skip) => skip.reason)).toContain(UNIT_SKIP_REASON.exempt);
+		expect(await creditBalanceOfUnit(testDb.db, unit.id)).toBe(300_000);
 	});
 });

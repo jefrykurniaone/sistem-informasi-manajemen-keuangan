@@ -5,6 +5,7 @@ import type { Database } from '../../db';
 import { duesRates } from '../../db/schema/dues-rate';
 import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
+import { applyCreditToInvoice } from './allocation';
 import { isUnitExemptOn } from './exemption';
 import { dueDateOfPeriod, firstDayOfPeriod, issueInvoice } from './invoice';
 import { duesRateOn } from './rate';
@@ -295,8 +296,18 @@ interface IssuancePlan {
 }
 
 /**
- * One house, in one transaction: the Tarif read under a share lock, the Pembebasan, and the insert,
- * committing together or not at all.
+ * One house, in one transaction: the Tarif read under a share lock, the Pembebasan, the insert, and
+ * the Unit's saldo titipan consuming the new Tagihan — committing together or not at all.
+ *
+ * The credit application is `docs/spec-iuran-v1.md:138-142`'s "saat tagihan baru terbit, saldo
+ * titipan Unit dipakai otomatis untuk melunasinya", and it runs **inside this same per-Unit
+ * transaction**, immediately after the insert, never as a second pass over the run: a crash between
+ * the two would otherwise leave a Tagihan standing unpaid beside a balance that was meant for it,
+ * and the partial-month recovery of point 2 above would never revisit it, because the row exists.
+ * `applyCreditToInvoice` in `./allocation.ts` owns the arithmetic and the payment row locks; a Unit
+ * that was skipped — exempt, or already issued — is deliberately not touched, so a re-run consumes
+ * nothing twice. No cash moves here and no Periode is consulted: the money being consumed entered
+ * the buku kas when its Pembayaran was verified.
  *
  * @throws {NoDuesRateError} when the Tarif disappeared between this run's opening check and this
  *   transaction — which can only happen before the run's first Tagihan is committed, so the run has
@@ -326,8 +337,12 @@ async function issueForUnit(
 			dueDate: plan.dueDate,
 			issuedAt: clock.now()
 		});
+		if (!issued) {
+			return { reason: UNIT_SKIP_REASON.alreadyIssued };
+		}
 
-		return issued ? { amount: issued.amount } : { reason: UNIT_SKIP_REASON.alreadyIssued };
+		await applyCreditToInvoice(transaction, clock, issued);
+		return { amount: issued.amount };
 	});
 }
 

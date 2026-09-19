@@ -31,6 +31,7 @@ import {
 	CashRuleError,
 	MAXIMUM_RECEIPT_BYTES,
 	recordCashTransaction,
+	recordDuesIncome,
 	type RecordCashTransactionRequest
 } from '$lib/server/services/cash/transaction';
 
@@ -137,7 +138,8 @@ describe('the cash book service layer', () => {
 			'RECEIPT_CONTENT_TYPES',
 			'assertCashDescription',
 			'assertMayRecordCashTransactions',
-			'recordCashTransaction'
+			'recordCashTransaction',
+			'recordDuesIncome'
 		]);
 		expect(Object.keys(correctionModule).sort()).toEqual([
 			'CASH_CORRECTION_RECORDED_ACTION',
@@ -181,14 +183,24 @@ describe('the cash book service layer', () => {
 		await expect(
 			record({ actorId: adminId, categoryId: category.id, amount: rupiah(0) })
 		).rejects.toThrow(CashRuleError);
+		// The third writer: #29's verification door into "Iuran warga", driven directly here so the
+		// witness covers every insert this module owns.
+		await testDb.db.transaction(async (transaction) =>
+			recordDuesIncome(transaction, new FakeClock(START), {
+				occurredOn: DAY,
+				amount: rupiah(200_000),
+				description: 'Iuran warga Blok W No 1 (pembayaran saksi hanya-tambah)',
+				recordedBy: adminId
+			})
+		);
 		await cashBook(testDb.db, adminId);
 
 		const after = await allTransactions();
 		for (const row of before) {
 			expect(after.find((candidate) => candidate.id === row.id)).toEqual(row);
 		}
-		// One row more: the Koreksi. Nothing was replaced and nothing disappeared.
-		expect(after).toHaveLength(before.length + 1);
+		// Two rows more: the Koreksi and the dues income. Nothing was replaced, nothing disappeared.
+		expect(after).toHaveLength(before.length + 2);
 	});
 });
 
@@ -244,8 +256,15 @@ describe('recordCashTransaction', () => {
 	it('refuses a manual entry into the system category "Iuran warga", and writes nothing', async () => {
 		// User story 7, and the reason: kas masuk on this category comes from verifying a Pembayaran
 		// and from nowhere else, so that saldo kas and status tagihan cannot contradict each other.
+		// "Writes nothing" is asserted as an unchanged row set rather than an empty one, because the
+		// append-only witness above legitimately puts a row into this category through
+		// `recordDuesIncome` — the flow that IS allowed to — and this file shares one schema.
 		const adminId = await insertAdmin('Pengurus Catat Iuran Manual');
 		const categoryId = await systemCategoryId(SYSTEM_CATEGORY_KEY.dues);
+		const before = await testDb.db
+			.select()
+			.from(cashTransactions)
+			.where(eq(cashTransactions.categoryId, categoryId));
 
 		const refusal: unknown = await record({ actorId: adminId, categoryId }).catch(
 			(error: unknown) => error
@@ -258,7 +277,7 @@ describe('recordCashTransaction', () => {
 				.select()
 				.from(cashTransactions)
 				.where(eq(cashTransactions.categoryId, categoryId))
-		).toHaveLength(0);
+		).toEqual(before);
 	});
 
 	it('refuses the other system category too, which is what keeps the one opening balance single', async () => {
@@ -560,5 +579,88 @@ describe('the amount a cash book line carries', () => {
 		// Past the `int4` ceiling on purpose: `amount` is `bigint`, and a value that lost its top bits
 		// on the way through the driver would come back as something else entirely.
 		expect(recorded.amount).toBe(2_147_483_648);
+	});
+});
+
+describe('recordDuesIncome — the one door into the system category "Iuran warga"', () => {
+	/** Runs `recordDuesIncome` inside a transaction of its own, the way verification holds one. */
+	async function recordDues(
+		overrides: Partial<Parameters<typeof recordDuesIncome>[2]> & { readonly recordedBy: string }
+	) {
+		return testDb.db.transaction(async (transaction) =>
+			recordDuesIncome(transaction, new FakeClock(START), {
+				occurredOn: DAY,
+				amount: rupiah(150_000),
+				description: 'Iuran warga Blok D No 1 (pembayaran uji)',
+				...overrides
+			})
+		);
+	}
+
+	it('writes one income row into the dues category, dated on the day the money was received', async () => {
+		const adminId = await insertAdmin('Pengurus Verifikasi Menulis Kas');
+		const categoryId = await systemCategoryId(SYSTEM_CATEGORY_KEY.dues);
+
+		const row = await recordDues({ recordedBy: adminId });
+
+		expect(row).toMatchObject({
+			occurredOn: DAY,
+			type: CASH_CATEGORY_TYPE.income,
+			categoryId,
+			amount: 150_000,
+			description: 'Iuran warga Blok D No 1 (pembayaran uji)',
+			attachmentKey: null,
+			recordedBy: adminId,
+			correctionOf: null
+		});
+
+		// No audit row of its own: the verification that calls this writes the single audit row the
+		// acceptance criteria asks for, filed against the Pembayaran — see the function's doc comment.
+		expect(await auditEntriesFor(testDb.db, row.id)).toHaveLength(0);
+	});
+
+	it('refuses a day inside a locked Periode by name, and writes nothing', async () => {
+		const adminId = await insertAdmin('Pengurus Verifikasi Bulan Terkunci');
+		const lockedDay = '2026-07-14';
+		await testDb.db.transaction(async (transaction) => {
+			await lockPeriod(transaction, new FakeClock(START), {
+				actorId: adminId,
+				year: 2026,
+				month: 7,
+				reason: 'Laporan bulanannya sudah terbit.'
+			});
+		});
+		const before = await allTransactions();
+
+		await expect(recordDues({ recordedBy: adminId, occurredOn: lockedDay })).rejects.toThrow(
+			PeriodLockedError
+		);
+
+		expect(await allTransactions()).toEqual(before);
+	});
+
+	it.each([
+		{ name: 'a zero amount', overrides: { amount: rupiah(0) }, rule: CASH_RULE.amountNotPositive },
+		{
+			name: 'a day that is not on the calendar',
+			overrides: { occurredOn: '2026-02-31' },
+			rule: CASH_RULE.notACalendarDay
+		},
+		{
+			name: 'an empty keterangan',
+			overrides: { description: '   ' },
+			rule: CASH_RULE.descriptionMissing
+		}
+	])('refuses $name with the same named rule the manual path uses', async ({ overrides, rule }) => {
+		const adminId = await insertAdmin(`Pengurus Verifikasi Tolak ${rule}`);
+		const before = await allTransactions();
+
+		const refusal: unknown = await recordDues({ recordedBy: adminId, ...overrides }).catch(
+			(error: unknown) => error
+		);
+
+		expect(refusal).toBeInstanceOf(CashRuleError);
+		expect(refusal).toMatchObject({ rule });
+		expect(await allTransactions()).toEqual(before);
 	});
 });
