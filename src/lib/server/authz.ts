@@ -184,7 +184,20 @@ export const ACTION = {
 	 * is deliberately not covered here and has no action at all: the registrant holds no rights yet,
 	 * and their own submission is guarded by being an ordinary form about their own address.
 	 */
-	manageRegistrations: 'manageRegistrations'
+	manageRegistrations: 'manageRegistrations',
+	/**
+	 * Seeing the units currently exempt from Tagihan, granting a new Pembebasan, and ending one
+	 * that is running. See `src/lib/server/services/dues/exemption.ts`. One action for the read
+	 * and the writes, the same reasoning as `manageJobs`: the list is only useful to whoever may
+	 * act on it.
+	 *
+	 * `CONTEXT.md` names Pembebasan directly in Superuser's list — "mengelola Warga dan peran,
+	 * Unit dan Masa Huni, Tarif, Pembebasan, pembatalan Tagihan, dan pembukaan kunci Periode" — so
+	 * this is a superuser-only action, the same reading that put `manageDuesRates` there. Answering
+	 * whether a unit is exempt on a given day is deliberately not covered here: the issuance job
+	 * that reads it has no session at all, so `isUnitExemptOn` takes no caller and checks nothing.
+	 */
+	manageExemptions: 'manageExemptions'
 } as const;
 
 /** One of the actions above. */
@@ -253,7 +266,8 @@ const PERMISSIONS: Readonly<Record<Action, ReadonlySet<Role>>> = {
 	[ACTION.manageDuesRates]: new Set([ROLE.superuser]),
 	[ACTION.manageCashCategories]: new Set([ROLE.superuser]),
 	[ACTION.recordOpeningBalance]: new Set([ROLE.superuser]),
-	[ACTION.manageRegistrations]: new Set([ROLE.superuser])
+	[ACTION.manageRegistrations]: new Set([ROLE.superuser]),
+	[ACTION.manageExemptions]: new Set([ROLE.superuser])
 };
 
 /**
