@@ -26,6 +26,25 @@ import {
 } from './visibility';
 
 /**
+ * `./reply.ts` and `./worklist.ts` are re-exported from here so that a caller of this module's
+ * public surface — the admin screens in this ticket, and #44's resident screens after it — reaches
+ * every Keluhan service function through the one module, the same way `listComplaints`,
+ * `getComplaint` and the status movers already do. Neither file imports anything back from this
+ * one: both read `./visibility.ts` directly, exactly as this module does, so there is no cycle
+ * between them.
+ */
+export {
+	addComplaintReply,
+	COMPLAINT_REPLY_RULE,
+	ComplaintReplyRuleError,
+	listComplaintReplies,
+	type AddComplaintReplyRequest,
+	type ComplaintReplyRule,
+	type ComplaintReplyWithAuthor
+} from './reply';
+export { complaintWorklistSummary, type ComplaintWorklistSummary } from './worklist';
+
+/**
  * **The Keluhan service: the rules that make a complaint trustworthy.**
  *
  * `docs/spec-keluhan-v1.md` puts all of them at this layer for one stated reason — "aturan
