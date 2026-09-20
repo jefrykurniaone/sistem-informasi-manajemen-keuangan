@@ -4,7 +4,7 @@
 |---|---|
 | Item spesifikasi | [#127](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/127) |
 | Run | `poles-v1` |
-| Peta eksekusi | belum ada — diisi Stage 5 |
+| Peta eksekusi | [#146](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/146) |
 | Riset pendukung | [docs/research-ui-ux-v1.md](./research-ui-ux-v1.md) |
 | Disalin pada | 2026-09-20 |
 
