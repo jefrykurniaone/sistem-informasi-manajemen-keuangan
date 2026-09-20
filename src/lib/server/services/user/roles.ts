@@ -8,9 +8,11 @@ import { ROLE, userRoles, type Role } from '../../db/schema/authz';
 import type { Clock } from '../../ports/clock';
 
 /**
- * Managing who holds which role. The only place `user_roles` is written outside the database
+ * Managing who holds which role. One of two places `user_roles` is written outside the database
  * trigger that gives every new `user` row its default `resident` role — see
- * `src/lib/server/db/schema/authz.ts`.
+ * `src/lib/server/db/schema/authz.ts`. The other is `./bootstrap.ts`, which cannot call `grantRole`
+ * below: it exists for the moment before any `superuser` exists to hold `ACTION.manageRoles`, so it
+ * writes the row itself instead of going through a permission check nobody could pass yet.
  *
  * Every function here takes `actorId` and calls `requirePermission` with it before touching
  * anything, exactly as `spec-fondasi-v1.md`'s "Peran" section asks: a service cannot be called
