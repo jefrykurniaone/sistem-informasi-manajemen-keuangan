@@ -1022,5 +1022,13 @@
 	"unsubscribe_done": "Selesai. Anda tidak akan menerima email laporan bulanan lagi. Anda dapat menyalakannya kembali kapan saja dari halaman preferensi notifikasi setelah masuk.",
 	"unsubscribe_invalid": "Tautan ini tidak berlaku. Mungkin sudah tidak lengkap saat disalin. Anda tetap dapat mengatur langganan dari halaman preferensi notifikasi setelah masuk.",
 	"unsubscribe_mandatory": "Jenis notifikasi ini wajib dan tidak dapat dimatikan.",
-	"unsubscribe_homeLink": "Ke halaman depan"
+	"unsubscribe_homeLink": "Ke halaman depan",
+	"appShell_groupHome": "Beranda",
+	"appShell_groupPosts": "Pengumuman & Kegiatan",
+	"appShell_groupMine": "Saya",
+	"appShell_groupFinance": "Keuangan",
+	"appShell_groupResidents": "Warga & Unit",
+	"appShell_groupServices": "Layanan",
+	"appShell_groupSystem": "Sistem",
+	"appShell_toggleSidebar": "Buka atau tutup menu"
 }
