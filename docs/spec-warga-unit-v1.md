@@ -6,6 +6,7 @@
 | Run | `komplek-v1` |
 | Peta eksekusi | [#47](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/47) |
 | Disalin pada | 2026-09-16 |
+| Lintasan penutup | 2026-09-20 — klaim yang dibalik run ini ditandai di badan, tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
@@ -113,6 +114,15 @@ data, bukan hanya oleh kode. Alasannya: dua penanggung jawab berarti email tagih
 kebingungan tentang siapa yang menunggak; nol penanggung jawab berarti tagihan terbit tanpa ada
 yang diberi tahu — kedua-duanya baru ketahuan berbulan-bulan kemudian.
 
+> [!note] Dibalik oleh run `komplek-v1`
+> Aturannya berakhir di lapisan service, bukan di basis data. `occupancies_primary_occupant_unique`
+> (#16, `7b96d75`) membaca "masih berjalan" sebagai `ended_on is null`, jadi `ended_on` bertanggal
+> masa depan membebaskan slotnya lebih awal dan PostgreSQL menerima penanggung jawab kedua —
+> direproduksi langsung pada gelombang 7. Jalan keluar di basis data adalah exclusion constraint atas
+> `daterange` yang menuntut `btree_gist`, dan penolakannya tertulis di
+> `src/lib/server/db/schema/occupancy.ts`; #18 (`892cb18`) yang menutup celahnya di
+> `src/lib/server/services/occupancy/`.
+
 **Penyaringan tampilan menurut masa huni.** Warga hanya melihat data rumahnya untuk rentang waktu
 ia menghuninya. Ini keputusan yang diambil di lapisan service dan disediakan sebagai satu fungsi
 yang dipakai spec keuangan, bukan diulang di setiap layar. Admin melihat seluruh riwayat Unit.
@@ -130,11 +140,30 @@ nilai teracak, bukan dalam bentuk aslinya. Menerima undangan berarti akun dibuat
 `warga`, Masa Huni dibuat, dan email dianggap terverifikasi — karena undangan dikirim ke alamat itu
 dan hanya pemiliknya yang bisa membukanya.
 
+> [!note] Dibalik oleh run `komplek-v1`
+> Menerima undangan **melengkapi** akun yang sudah ada, bukan membuatnya: impor #19 (`08adc8a`)
+> sudah menulis baris `user` tanpa kredensial beserta `residents` dan Masa Huninya, dan #20
+> (`98b6515`) menulis kredensialnya lewat `passwordHasherOf(auth)` langsung ke `account` di dalam
+> transaksi — bukan lewat `auth.api.signUpEmail` — tanpa menggandakan Masa Huni itu. Peran yang
+> diberikan bernama `resident`, bukan `warga` (lihat `docs/spec-fondasi-v1.md`), dan peran huninya
+> selalu `owner` karena `invitations` tidak punya kolom peran. Masa berlaku tujuh hari mendarat apa
+> adanya sebagai `INVITATION_LIFETIME_DAYS` di `src/lib/server/services/invitation/index.ts`.
+
 **Pendaftaran mandiri tidak memberi akses.** Pendaftar memasukkan nama, email, dan blok serta nomor
 rumah yang diklaimnya, lalu berstatus menunggu persetujuan: ia bisa masuk, tetapi hanya melihat
 halaman yang mengatakan pendaftarannya sedang ditinjau. Superuser menyetujui, menolak dengan
 alasan, atau mengaitkannya ke Unit yang berbeda dari yang diklaim. Alasannya: klaim rumah yang
 tidak diperiksa memberi orang asing akses ke laporan keuangan dan daftar warga.
+
+> [!note] Dibalik oleh run `komplek-v1`
+> Pendaftar sudah punya kredensial sebelum ditinjau: `/register` memanggil `signUpEmail` better-auth
+> **lebih dulu**, lalu menulis baris `registrations`, dan persetujuan superuser **tidak pernah**
+> membuat akun — ia hanya membuat `residents`, langganan bawaan, dan `occupancies`, dan menolak
+> dengan `RegistrationAccountMissingError` kalau akunnya tidak ada (#21, `8d1759e`,
+> `src/lib/server/services/registration/index.ts`). Peran huni yang dibuat persetujuan selalu
+> `owner`. Pengalihan ke halaman "sedang ditinjau" ada di
+> `src/routes/(app)/+layout.server.ts` dan **mengecualikan pemegang `admin` atau `superuser`**, tanpa
+> itu pengurus yang tidak punya rumah terkunci dari seluruh `/admin/*`.
 
 **Preferensi notifikasi adalah data, bukan kolom boolean yang bertambah.** Satu baris per Warga per
 jenis notifikasi, dengan nilai bawaan yang ditetapkan saat akun dibuat. Jenis notifikasi yang

@@ -6,6 +6,7 @@
 | Run | `komplek-v1` |
 | Peta eksekusi | [#47](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/47) |
 | Disalin pada | 2026-09-16 |
+| Lintasan penutup | 2026-09-20 — klaim yang dibalik run ini ditandai di badan, tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
@@ -112,6 +113,14 @@ Satu orang boleh memegang lebih dari satu. Pemeriksaan hak dilakukan lewat satu 
 lapisan service, sehingga sebuah service tidak bisa dipanggil tanpa memutuskan siapa pemanggilnya —
 halaman dan rute hanya menerjemahkan penolakan menjadi tampilan atau kode status.
 
+> [!note] Dibalik oleh run `komplek-v1`
+> Nilai peran yang benar-benar tersimpan berbahasa Inggris — `resident`, bukan `warga`. `role` adalah
+> `text` dengan check constraint atas `resident`/`admin`/`superuser` di
+> `src/lib/server/db/schema/authz.ts`, dan pemicu `user_created_gets_resident_role_trigger`
+> menyisipkan baris `resident` untuk setiap baris `user` baru. Ditetapkan #12 (`8210192`) lalu dikunci
+> konvensi "nama di kode berbahasa Inggris" yang mendarat di `e43bde6`; keputusan "himpunan, bukan
+> tingkatan tunggal" sendiri mendarat apa adanya di `src/lib/server/authz.ts`.
+
 **Basis data dan migrasi.** PostgreSQL dengan Drizzle ORM. Perubahan skema selalu menghasilkan
 berkas SQL yang ikut disimpan di repositori dan dijalankan sebagai migrasi. Sinkronisasi skema
 langsung hanya untuk percobaan lokal, tidak pernah untuk data sungguhan. Nilai uang disimpan
@@ -131,6 +140,15 @@ Alasannya: verifikasi pembayaran tidak boleh gagal hanya karena penyedia email s
 laporan bulanan yang dikirim ke ratusan warga butuh percobaan ulang yang bisa dilihat. Tabel
 notifikasi menyimpan kolom saluran sejak awal, meski hanya email yang diisi, supaya penambahan
 WhatsApp kelak tidak menuntut migrasi ulang.
+
+> [!note] Dibalik oleh run `komplek-v1`
+> Tabel notifikasi berkolom saluran itu tidak pernah dibuat. #10 (`c8b0486`) hanya membuat
+> `email_queue` dengan `kind` dan `payload`, dan alasan penolakannya tertulis di
+> `src/lib/server/db/schema/email.ts` — "No channel column", karena tabel itu adalah antrean email,
+> bukan tabel notifikasi, dan kolom yang hanya bisa berisi `'email'` akan memindahkan konsep
+> notifikasi ke tempat yang salah. Preferensi per jenis mendarat terpisah sebagai tabel
+> `subscriptions` (#16, `7b96d75`) dengan registrinya di
+> `src/lib/server/services/subscription/kinds.ts` (#22, `eeff273`).
 
 **Penjadwal.** Sebuah penjadwal in-process yang, sebelum menjalankan pekerjaan apa pun, mengambil
 kunci di basis data untuk pasangan nama pekerjaan dan periodenya. Dua instance yang menyala
@@ -163,12 +181,27 @@ bukan "fungsi privat ini dipanggil sekali".
 - **Lapisan service** diuji dengan Vitest terhadap PostgreSQL **nyata** di dalam container, bukan
   tiruan. Setiap pengujian berjalan dalam transaksi yang digulung balik, atau terhadap basis data
   yang dibersihkan, sehingga urutannya tidak penting.
+
+  > [!note] Dibalik oleh run `komplek-v1`
+  > Hanya cabang kedua yang mendarat, dan cabang pertama **dilarang**: membungkus pengujian di dalam
+  > transaksi yang digulung balik tidak boleh dipakai. Yang berlaku adalah satu skema PostgreSQL
+  > bersih per berkas pengujian, dengan komit sungguhan lalu `drop schema … cascade` —
+  > `testDatabase()` di `src/lib/server/db/test-helpers.ts`, ditetapkan #9 (`396877f`) dan dijaga
+  > lintas berkas oleh #52 (`69ecb36`).
 - **Port keluar** dipalsukan: pengirim email palsu mengumpulkan pesan ke dalam larik yang bisa
   diperiksa, jam palsu bisa dimajukan, penyimpan berkas palsu menyimpan di memori.
 - **Penjaga peran** diuji sebagai tabel kasus: untuk setiap kombinasi peran dan aksi, diizinkan atau
   ditolak. Ini satu pengujian berparameter, bukan dua puluh pengujian yang mirip.
 - **Playwright** dipakai tipis: satu alur masuk-keluar sebagai bukti rangka benar-benar hidup.
   Aturan domain tidak diuji lewat browser.
+
+  > [!note] Dibalik oleh run `komplek-v1`
+  > Suite e2e tidak tinggal tipis: sebelas berkas dan 27 pengujian di `tests/e2e/`, termasuk alur
+  > domain lewat peramban — `payments.spec.ts`, `complaints.spec.ts`, `reports.spec.ts`,
+  > `invitation.spec.ts`, `registration.spec.ts`, dan serangan lintasan atas tautan bertanda tangan
+  > di `file-serving.spec.ts`. Kelima spec lain memang masing-masing meminta satu alur Playwright;
+  > yang membuat suite itu benar-benar bisa dijalankan dan hijau adalah #71 (`dfcbdb6`) dan #112
+  > (`1635fc5`).
 - Tidak ada prior art di repositori ini — spec ini yang menetapkannya, dan spec berikutnya
   mengikutinya.
 

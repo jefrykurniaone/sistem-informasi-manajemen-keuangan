@@ -6,6 +6,7 @@
 | Run | `komplek-v1` |
 | Peta eksekusi | [#47](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/47) |
 | Disalin pada | 2026-09-16 |
+| Lintasan penutup | 2026-09-20 — klaim yang dibalik run ini ditandai di badan, tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
@@ -88,6 +89,14 @@ dilakukan pelapor dan hanya selama status masih `baru`. Alasannya: kolom status 
 nilai apa pun yang diketik layar mana pun, dan aturan "penolakan harus beralasan" yang hanya hidup
 di formulir akan hilang begitu ada jalan kedua menuju data yang sama.
 
+> [!note] Dibalik oleh run `komplek-v1`
+> Keenam nilainya tersimpan berbahasa Inggris — `new`, `reviewing`, `working`, `resolved`,
+> `rejected`, `withdrawn` — ditetapkan koreksi glosarium pada #42 (`66e8307`,
+> `src/lib/server/db/schema/complaint.ts`). Mesin keadaannya mendarat apa adanya di
+> `src/lib/server/services/complaint/state-machine.ts` (#43, `f3e598b`), dengan 29 dari 36 pasangan
+> berurutan ditolak dan setiap tepi membawa pelakunya (`handler` atau `reporter`); satu tepi yang
+> mungkin diharapkan pembaca **sengaja tidak ada**, yaitu `reviewing -> resolved`.
+
 **Riwayat status disimpan, bukan hanya status terakhir.** Setiap perpindahan menghasilkan satu baris
 berisi status lama, status baru, pelaku, waktu, dan catatan. Alasannya: pertanyaan yang benar-benar
 ditanyakan di rapat warga adalah "berapa lama ini menggantung", dan itu tidak bisa dijawab oleh
@@ -99,6 +108,14 @@ dibaca setiap warga yang sudah masuk, tetapi tidak pernah publik tanpa akun. Pen
 satu fungsi yang dipakai semua jalur baca. Pelapor boleh menurunkan keluhannya dari `umum` menjadi
 `pribadi`, tetapi tidak sebaliknya — sesuatu yang sudah terlihat tetangga tidak bisa ditarik kembali
 dengan mengubah satu kolom, dan berpura-pura bisa akan menyesatkan.
+
+> [!note] Dibalik oleh run `komplek-v1`
+> Kedua nilainya tersimpan berbahasa Inggris, `private` dan `public` (#42, `66e8307`,
+> `src/lib/server/db/schema/complaint.ts`). Aturan satu arahnya mendarat apa adanya sebagai
+> `visibilityOnlyLowers` di `src/lib/server/services/complaint/index.ts`, dijaga kepemilikan baris
+> dan bukan aksi izin, dengan baris audit `complaint_visibility_changed`; penyaringan bacanya ada di
+> `visibility.ts` dan lingkup kosong menjadi `` sql`false` ``, bukan `where` yang hilang (#43,
+> `f3e598b`).
 
 **Tidak ada keluhan anonim.** Keluhan anonim tidak bisa ditindaklanjuti karena pengurus tidak bisa
 bertanya balik, dan mengundang penyalahgunaan di komunitas sekecil ini. Privasi sudah dijaga oleh
@@ -119,6 +136,15 @@ tangan berumur pendek, karena foto keluhan sering memuat rumah tetangga dan pela
 pelapor. Keduanya lewat antrean email spec fondasi. Email perubahan status kepada pelapor tidak bisa
 dimatikan, karena ia adalah jawaban atas sesuatu yang diminta warga itu sendiri; email keluhan baru
 kepada admin bisa diatur per admin.
+
+> [!note] Dibalik oleh run `komplek-v1`
+> `new-complaint` mendarat sebagai jenis **memilih-masuk yang mati secara bawaan**
+> (`src/lib/server/services/subscription/kinds.ts`), jadi ia tidak sampai ke "seluruh pemegang peran
+> admin": penerimanya hanya warga berlangganan yang akunnya memegang `admin`, dan seorang admin tidak
+> menerima apa pun sampai ia menyalakannya sendiri. Perubahan status juga tidak selalu mengirim —
+> `withdrawComplaint` sengaja tidak memicu, jadi pelapor tidak dikirimi email atas penarikannya
+> sendiri — dan uraian keluhan tidak pernah masuk email. #46 (`66b3b38`),
+> `src/lib/server/services/complaint/notification.ts`.
 
 **Audit.** Setiap perubahan status dan setiap perubahan visibilitas masuk audit log spec fondasi,
 selain masuk riwayat status keluhan itu sendiri.

@@ -6,6 +6,7 @@
 | Run | `komplek-v1` |
 | Peta eksekusi | [#47](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/47) |
 | Disalin pada | 2026-09-16 |
+| Lintasan penutup | 2026-09-20 — klaim yang dibalik run ini ditandai di badan, tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
@@ -128,6 +129,15 @@ yang sudah terbit secara otomatis; superuser membatalkannya satu per satu. Alasa
 mundur otomatis akan membatalkan tagihan yang ternyata sudah dibayar, dan itu menghilangkan uang
 yang sudah masuk kas.
 
+> [!note] Dibalik oleh run `komplek-v1`
+> "Periodenya tertutup Pembebasan" diuji pada satu hari saja, bukan atas seluruh bulan:
+> `issueForUnit` menanyakan `isUnitExemptOn(transaction, unit.id, plan.issuanceDay)` dengan
+> `issuanceDay = firstDayOfPeriod(period)`, jadi **Pembebasan yang mulai di tengah bulan tidak
+> menghentikan Tagihan bulan itu** dan
+> menjalankan pekerjaannya terlambat tetap menghasilkan Tagihan yang sama. #25 (`51c0489`) menulis
+> `src/lib/server/services/dues/exemption.ts`, #26 (`84667cd`) menulis `invoice.ts` dan
+> `issuance.ts` di direktori yang sama.
+
 **Pembayaran dan alokasi adalah dua hal yang berbeda.** Sebuah Pembayaran adalah satu setoran uang
 dengan nominal, tanggal terima, bukti, pencatat, dan status. Sebuah Alokasi memetakan sebagian
 nominal Pembayaran ke satu Tagihan. Satu Pembayaran boleh punya banyak Alokasi. Jumlah seluruh
@@ -141,6 +151,15 @@ di-update, sehingga tidak bisa melenceng dari transaksinya. Saat tagihan baru te
 Unit dipakai otomatis untuk melunasinya. Saat masa huni berakhir dan masih ada saldo, superuser
 mencatat pengembalian sebagai uang keluar yang mengonsumsi saldo itu.
 
+> [!note] Dibalik oleh run `komplek-v1`
+> Rumusnya bersuku tiga, bukan dua: `creditBalanceOfUnit` = Σ Pembayaran terverifikasi − Σ Alokasi −
+> Σ Pengembalian, sesudah #30 (`6c2d24d`) menambahkan tabel `refunds` (migrasi `0010_refund`) yang
+> menyimpan Pengembalian **per Pembayaran**. Sisa sebuah Pembayaran karena itu
+> `amount − allocations − refunds`, dan setiap pembelanja saldo titipan harus lewat
+> `lockUnallocatedVerifiedPayments` dan mengurangi keduanya — baca
+> `src/lib/server/services/dues/credit-balance.ts` dan `credit-refund.ts`. Sifat "dihitung, bukan
+> kolom yang disimpan" sendiri mendarat apa adanya: saldo titipan tidak punya tabel.
+
 **Verifikasi adalah satu transaksi yang tidak bisa setengah jalan.** Memverifikasi sebuah Pembayaran
 melakukan tiga hal sekaligus: mengubah statusnya menjadi terverifikasi, membuat satu Transaksi Kas
 masuk pada kategori sistem "Iuran warga" bertanggal tanggal terima uang, dan membuat Alokasi ke
@@ -152,6 +171,14 @@ mana yang benar.
 **Alokasi otomatis, tertua lebih dulu.** Saat warga memilih membayar tanpa menentukan tagihan, atau
 saat saldo titipan dipakai, alokasi berjalan dari tagihan tertua yang belum lunas. Warga tetap bisa
 memilih tagihan tertentu secara eksplisit.
+
+> [!note] Dibalik oleh run `komplek-v1`
+> Pilihan eksplisit warga tidak pernah sampai ke pengalokasi: #28 (`f3bdda6` + `de49ac9`) tidak
+> menyimpan Tagihan yang dicentang di `/payments/new` — `src/lib/server/services/dues/payment.ts`
+> hanya menulis satu baris `payments` berstatus `pending` — jadi yang dilayani lebih dulu adalah
+> Tagihan yang **pengurus** sebut eksplisit saat verifikasi, tertua di antara mereka, lalu sisanya
+> terus dari yang tertua (#29, `efe9a81` + `282a81e`,
+> `src/lib/server/services/dues/allocation.ts`). Kebijakannya *lebih dulu*, bukan *saja*.
 
 **Pembatalan tagihan menolak yang punya alokasi.** Membatalkan sebuah Tagihan menandainya `void`
 beserta alasan dan pelakunya; barisnya tidak pernah dihapus. Kalau Tagihan itu punya Alokasi,
@@ -174,6 +201,13 @@ pembebasan, dan pengembalian saldo semuanya masuk audit log dari spec fondasi.
 **Email.** Dua jenis: tagihan terbit dan pembayaran diverifikasi. Keduanya dikirim ke penanggung
 jawab Unit yang aktif saat itu, lewat antrean email spec fondasi, dan keduanya tidak bisa dimatikan
 warga karena menyangkut uang miliknya sendiri.
+
+> [!note] Dibalik oleh run `komplek-v1`
+> Hanya `invoice-issued` yang dikirim ke penanggung jawab Unit yang aktif; `payment-verified`
+> dikirim ke **pencatat Pembayaran** (`payments.recordedBy`), penyimpangan yang dicatat saat dispatch
+> #31 (`d2b03a9`) karena badan tiketnya menyebut pencatat — pada alur warga biasa keduanya orang yang
+> sama. Jenisnya juga tiga, bukan dua: kedua jenis wajib itu ditambah `payment-rejected` yang
+> transaksional, juga ke pencatatnya. Baca `src/lib/server/services/dues/notification.ts`.
 
 ## Testing decisions
 
