@@ -8,7 +8,6 @@
 	"appShell_navManageRoles": "Manage Roles",
 	"appShell_navLogout": "Log out",
 	"appShell_navPosts": "Announcement Board",
-	"appShell_navGroupMine": "Mine",
 	"appShell_navProfile": "My Profile",
 	"appShell_navProfileNotifications": "Notification Preferences",
 	"appShell_navMyUnit": "My House",
@@ -16,7 +15,6 @@
 	"appShell_navPayments": "My Payments",
 	"appShell_navReports": "Monthly Reports",
 	"appShell_navComplaints": "My Complaints",
-	"appShell_navGroupManage": "Manage",
 	"appShell_navManageUnits": "Unit List",
 	"appShell_navManageJobs": "Scheduled Jobs",
 	"appShell_navManagePosts": "Manage Posts",
@@ -1030,5 +1028,7 @@
 	"appShell_groupResidents": "Residents & Units",
 	"appShell_groupServices": "Services",
 	"appShell_groupSystem": "System",
-	"appShell_toggleSidebar": "Open or close menu"
+	"appShell_toggleSidebar": "Open or close menu",
+	"appShell_sidebarSheetTitle": "Navigation",
+	"appShell_sidebarSheetDescription": "Shows the navigation menu on narrow screens."
 }
