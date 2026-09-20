@@ -18,6 +18,7 @@ export * from './occupancy';
 export * from './payment';
 export * from './period';
 export * from './post';
+export * from './rate-limit';
 export * from './refund';
 export * from './registration';
 export * from './resident';
