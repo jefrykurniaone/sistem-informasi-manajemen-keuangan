@@ -24,6 +24,7 @@ import { enqueueEmail } from '$lib/server/email/queue';
 import { COMPLAINT_STATUS_CHANGED_KIND } from '$lib/server/email/templates/complaint-status-changed';
 import { INVITATION_KIND } from '$lib/server/email/templates/invitation';
 import { INVOICE_ISSUED_KIND } from '$lib/server/email/templates/invoice-issued';
+import { MONTHLY_REPORT_KIND } from '$lib/server/email/templates/monthly-report';
 import { NEW_COMPLAINT_KIND } from '$lib/server/email/templates/new-complaint';
 import { NEW_POST_KIND } from '$lib/server/email/templates/new-post';
 import {
@@ -33,6 +34,7 @@ import {
 import { PAYMENT_REJECTED_KIND } from '$lib/server/email/templates/payment-rejected';
 import { PAYMENT_VERIFIED_KIND } from '$lib/server/email/templates/payment-verified';
 import { REGISTRATION_APPROVED_KIND } from '$lib/server/email/templates/registration-approved';
+import { MONTHLY_REPORT_REVISED_KIND } from '$lib/server/email/templates/report-revised';
 import { VERIFY_EMAIL_KIND, verifyEmailPayload } from '$lib/server/email/templates/verify-email';
 import { FakeClock, FakeEmailSender } from '$lib/server/ports/fakes';
 import {
@@ -286,7 +288,9 @@ describe('applicationEmailTemplates', () => {
 				PAYMENT_REJECTED_KIND,
 				NEW_POST_KIND,
 				NEW_COMPLAINT_KIND,
-				COMPLAINT_STATUS_CHANGED_KIND
+				COMPLAINT_STATUS_CHANGED_KIND,
+				MONTHLY_REPORT_KIND,
+				MONTHLY_REPORT_REVISED_KIND
 			].sort()
 		);
 		expect(

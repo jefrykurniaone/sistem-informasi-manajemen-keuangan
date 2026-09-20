@@ -10,11 +10,14 @@ import { FakeClock } from '$lib/server/ports/fakes';
 import { SUBSCRIPTION_KIND, SUBSCRIPTION_KINDS } from '$lib/server/services/subscription/kinds';
 import {
 	MandatorySubscriptionKindError,
+	UnsubscribeTokenError,
+	disableSubscriptionByToken,
 	ensureDefaultSubscriptions,
 	residentsSubscribedTo,
 	setSubscriptionPreference,
 	subscriptionPreferencesFor
 } from '$lib/server/services/subscription';
+import { buildUnsubscribeToken } from '$lib/server/services/subscription/unsubscribe-token';
 
 /**
  * Langganan: the registry of kinds, the default a fresh resident starts with, the rule that a
@@ -30,6 +33,17 @@ const START = '2026-01-01T00:00:00.000Z';
 const MANDATORY_KINDS = SUBSCRIPTION_KINDS.filter((definition) => definition.mandatory).map(
 	(definition) => definition.kind
 );
+
+/**
+ * The secret every unsubscribe token below is signed with — a test value, written here in full, so
+ * that these assertions never depend on which `BETTER_AUTH_SECRET` the machine happens to carry.
+ */
+const UNSUBSCRIBE_SECRET = 'test-unsubscribe-secret-that-is-long-enough';
+
+/** A token for one resident and one kind, signed with this file's own secret. */
+function unsubscribeToken(residentId: string, kind: string): string {
+	return buildUnsubscribeToken({ residentId, kind }, UNSUBSCRIBE_SECRET);
+}
 
 /** Inserts a bare `user` row. */
 async function insertUser(name: string): Promise<string> {
@@ -252,5 +266,148 @@ describe('residentsSubscribedTo', () => {
 			name: 'Warga Opt In Post Baru',
 			email: `${userId}@komplek.local`
 		});
+	});
+});
+
+describe('disableSubscriptionByToken', () => {
+	/** One resident who has asked for the monthly report, ready to be unsubscribed. */
+	async function insertSubscribedResident(name: string): Promise<string> {
+		const userId = await insertUser(name);
+		const residentId = await insertResident(userId);
+		await ensureDefaultSubscriptions(testDb.db, new FakeClock(START), residentId);
+		await setSubscriptionPreference(testDb.db, new FakeClock(START), {
+			callerUserId: userId,
+			residentId,
+			kind: SUBSCRIPTION_KIND.monthlyReport,
+			enabled: true
+		});
+		return residentId;
+	}
+
+	it('switches off exactly the kind the token names, with no session anywhere', async () => {
+		const residentId = await insertSubscribedResident('Warga Klik Berhenti');
+
+		const outcome = await disableSubscriptionByToken(
+			testDb.db,
+			new FakeClock(START),
+			unsubscribeToken(residentId, SUBSCRIPTION_KIND.monthlyReport),
+			{ secret: UNSUBSCRIBE_SECRET }
+		);
+
+		expect(outcome).toEqual({ residentId, kind: SUBSCRIPTION_KIND.monthlyReport });
+		expect(await storedEnabled(residentId, SUBSCRIPTION_KIND.monthlyReport)).toBe(false);
+	});
+
+	it('leaves every other kind that resident has alone', async () => {
+		const residentId = await insertSubscribedResident('Warga Tetap Dapat Tagihan');
+
+		await disableSubscriptionByToken(
+			testDb.db,
+			new FakeClock(START),
+			unsubscribeToken(residentId, SUBSCRIPTION_KIND.monthlyReport),
+			{ secret: UNSUBSCRIBE_SECRET }
+		);
+
+		expect(await storedEnabled(residentId, SUBSCRIPTION_KIND.invoiceIssued)).toBe(true);
+		expect(await storedEnabled(residentId, SUBSCRIPTION_KIND.paymentVerified)).toBe(true);
+		expect(await storedEnabled(residentId, SUBSCRIPTION_KIND.ownComplaintStatusChanged)).toBe(true);
+	});
+
+	it('leaves every other resident alone', async () => {
+		const mine = await insertSubscribedResident('Warga Berhenti Sendiri');
+		const somebodyElse = await insertSubscribedResident('Warga Lain Tetap Berlangganan');
+
+		await disableSubscriptionByToken(
+			testDb.db,
+			new FakeClock(START),
+			unsubscribeToken(mine, SUBSCRIPTION_KIND.monthlyReport),
+			{ secret: UNSUBSCRIBE_SECRET }
+		);
+
+		expect(await storedEnabled(somebodyElse, SUBSCRIPTION_KIND.monthlyReport)).toBe(true);
+	});
+
+	it('is idempotent, which is why the token needs no revocation', async () => {
+		const residentId = await insertSubscribedResident('Warga Klik Dua Kali');
+		const token = unsubscribeToken(residentId, SUBSCRIPTION_KIND.monthlyReport);
+		await disableSubscriptionByToken(testDb.db, new FakeClock(START), token, {
+			secret: UNSUBSCRIBE_SECRET
+		});
+
+		await disableSubscriptionByToken(testDb.db, new FakeClock(START), token, {
+			secret: UNSUBSCRIBE_SECRET
+		});
+
+		expect(await storedEnabled(residentId, SUBSCRIPTION_KIND.monthlyReport)).toBe(false);
+	});
+
+	it('refuses a token signed with another secret, and changes nothing', async () => {
+		const residentId = await insertSubscribedResident('Warga Tautan Palsu');
+		const forged = buildUnsubscribeToken(
+			{ residentId, kind: SUBSCRIPTION_KIND.monthlyReport },
+			'a-completely-different-secret-of-its-own'
+		);
+
+		await expect(
+			disableSubscriptionByToken(testDb.db, new FakeClock(START), forged, {
+				secret: UNSUBSCRIBE_SECRET
+			})
+		).rejects.toBeInstanceOf(UnsubscribeTokenError);
+
+		expect(await storedEnabled(residentId, SUBSCRIPTION_KIND.monthlyReport)).toBe(true);
+	});
+
+	it('refuses a token repointed at somebody else, and leaves that somebody else subscribed', async () => {
+		// The acceptance criterion in full: holding a valid link of your own must not be a way to
+		// switch anybody else off.
+		const mine = await insertSubscribedResident('Warga Punya Tautan');
+		const victim = await insertSubscribedResident('Warga Jadi Sasaran');
+		const own = unsubscribeToken(mine, SUBSCRIPTION_KIND.monthlyReport);
+		const victimToken = unsubscribeToken(victim, SUBSCRIPTION_KIND.monthlyReport);
+		const forged = `${victimToken.split('.')[0]}.${own.split('.')[1]}`;
+
+		await expect(
+			disableSubscriptionByToken(testDb.db, new FakeClock(START), forged, {
+				secret: UNSUBSCRIBE_SECRET
+			})
+		).rejects.toBeInstanceOf(UnsubscribeTokenError);
+
+		expect(await storedEnabled(victim, SUBSCRIPTION_KIND.monthlyReport)).toBe(true);
+	});
+
+	it.each([['garbage'], [''], ['a.b.c']])('refuses "%s" as a token', async (token) => {
+		await expect(
+			disableSubscriptionByToken(testDb.db, new FakeClock(START), token, {
+				secret: UNSUBSCRIBE_SECRET
+			})
+		).rejects.toBeInstanceOf(UnsubscribeTokenError);
+	});
+
+	it('refuses a token naming a resident that no longer exists', async () => {
+		const gone = randomUUID();
+
+		await expect(
+			disableSubscriptionByToken(
+				testDb.db,
+				new FakeClock(START),
+				unsubscribeToken(gone, SUBSCRIPTION_KIND.monthlyReport),
+				{ secret: UNSUBSCRIBE_SECRET }
+			)
+		).rejects.toMatchObject({ refusal: 'unknownResident' });
+	});
+
+	it.each(MANDATORY_KINDS)('refuses a token naming the mandatory kind "%s"', async (kind) => {
+		const residentId = await insertSubscribedResident(`Warga Wajib ${kind}`);
+
+		await expect(
+			disableSubscriptionByToken(
+				testDb.db,
+				new FakeClock(START),
+				unsubscribeToken(residentId, kind),
+				{ secret: UNSUBSCRIBE_SECRET }
+			)
+		).rejects.toBeInstanceOf(MandatorySubscriptionKindError);
+
+		expect(await storedEnabled(residentId, kind)).toBe(true);
 	});
 });

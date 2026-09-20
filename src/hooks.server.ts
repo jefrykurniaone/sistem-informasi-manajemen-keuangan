@@ -8,6 +8,7 @@ import { registerEmailJobs } from '$lib/server/email/jobs';
 import { systemClock } from '$lib/server/ports/clock';
 import { applicationJobs, isSchedulerProcess, startJobScheduler } from '$lib/server/scheduler';
 import { registerDuesJobs } from '$lib/server/services/dues/jobs';
+import { registerReportJobs } from '$lib/server/services/report/jobs';
 import { paraglideMiddleware } from '$lib/paraglide/server.js';
 import { getTextDirection } from '$lib/paraglide/runtime.js';
 
@@ -58,7 +59,7 @@ import { getTextDirection } from '$lib/paraglide/runtime.js';
  * per route; `src/lib/server/scheduler/index.ts` doing it on import would run inside every test file
  * and every `vite build` that so much as mentions the scheduler.
  *
- * 1. **`registerEmailJobs()` and `registerDuesJobs()` — unconditional.** Each builds a
+ * 1. **`registerEmailJobs()`, `registerDuesJobs()` and `registerReportJobs()` — unconditional.** Each builds a
  *    `JobDefinition` and puts it in `applicationJobs`. No environment is read, no connection is
  *    opened, nothing is started, so both are safe while `building`; and doing it unconditionally is
  *    what makes `/admin/jobs` list the jobs on any process that serves that page. The page itself
@@ -66,7 +67,8 @@ import { getTextDirection } from '$lib/paraglide/runtime.js';
  *    `listJobsWithLastRun`. A job module that nothing imports registers nothing, which is why the
  *    import is here and not left to whoever happens to need the service: `registerDuesJobs` was
  *    added by ticket #26, and the monthly Tagihan issuance exists on a running server only because
- *    this line does.
+ *    this line does. `registerReportJobs` was added by ticket #37 for the same reason: the daily
+ *    `send-monthly-report` job, and its manual trigger on `/admin/jobs`, exist only because of it.
  * 2. **`startJobScheduler(…)` — only when `isSchedulerProcess` says so.** That predicate is `false`
  *    while `building` and `false` under Vitest; see the periodic-trigger section in
  *    `src/lib/server/scheduler/index.ts` for what each exclusion is for and for why the handle is
@@ -77,6 +79,7 @@ import { getTextDirection } from '$lib/paraglide/runtime.js';
 
 registerEmailJobs();
 registerDuesJobs();
+registerReportJobs();
 
 if (isSchedulerProcess({ building })) {
 	startJobScheduler({ db: database(), clock: systemClock, registry: applicationJobs });

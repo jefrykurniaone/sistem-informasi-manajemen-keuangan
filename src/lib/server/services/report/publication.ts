@@ -12,6 +12,7 @@ import type { Clock } from '../../ports/clock';
 import { CASH_BOOK_MONTH_PATTERN } from '../cash/balance';
 import { lockPeriod, listPeriods, periodLabel } from '../cash/period';
 import { composeReportFigures, currentReportPeriod, type ReportFigures } from './composition';
+import { notifyReportRevised, type ReportRevisionAnnouncement } from './notification';
 
 /**
  * Publishing a Laporan Bulanan, and reading the published ones back — the numbered, frozen
@@ -80,6 +81,22 @@ import { composeReportFigures, currentReportPeriod, type ReportFigures } from '.
  * locked it. The reason `lockPeriod` files is written in Indonesian, because that column already
  * holds the Indonesian sentences a superuser types when reopening a month, and a single audit
  * stream in two languages is worse than either.
+ *
+ * ## The revision email is queued here, after the transaction has committed
+ *
+ * From revision 2 on, `publishReport` hands `./notification.ts` the Periode, the revision number and
+ * the alasan, and it queues one `monthly-report-revised` email per subscribed warga. The call is
+ * *after* `db.transaction` returns, never inside it — the same placement `publishPost` uses for
+ * `notifyNewPost` and `verifyPayment` for `notifyPaymentVerified`, and the reason is in
+ * `../dues/notification.ts`'s doc comment: the publication is already committed by then, so an
+ * exception escaping the notification would report a published report as unpublished. The catch sits
+ * here rather than inside `notifyReportRevised`, because `PublishReportSettings.notify` lets a caller
+ * substitute the notifier — and the guarantee has to hold for whatever is substituted.
+ *
+ * Revision 1 queues nothing from this module. It is announced by the scheduled job in `./jobs.ts`
+ * instead, which is what lets a first publication reach a resident who subscribed after the admin
+ * pressed the button, and what keeps one announcement per Periode rather than one per publication —
+ * see `./notification.ts` for both halves of that argument.
  */
 
 /** The audit log's `action` for a Laporan Bulanan that was published, with its revision in `after`. */
@@ -137,9 +154,31 @@ export interface PublishReportRequest {
 }
 
 /**
+ * What a publication may have handed to it instead of the production wiring.
+ *
+ * Optional, and the whole argument optional too, so that every existing caller of `publishReport` —
+ * the admin route and `tests/unit/report-revision.test.ts` among them — keeps compiling unchanged.
+ * The same shape `PublishPostSettings` has in `../post/index.ts`.
+ */
+export interface PublishReportSettings {
+	/**
+	 * Replaces `notifyReportRevised` for this call. A test hands this a spy or a no-op so it can
+	 * assert on the decision to notify without writing queue rows; production code never sets it.
+	 */
+	readonly notify?: (
+		db: Database,
+		clock: Clock,
+		announcement: ReportRevisionAnnouncement
+	) => Promise<void>;
+}
+
+/**
  * Publishes one revision of one Periode's Laporan Bulanan: freezes the month's figures, numbers the
  * revision, and locks the month — all in one transaction, so that a report residents can read never
  * exists beside a month that still accepts new money.
+ *
+ * From revision 2 on it then queues the revision notification, outside that transaction — see this
+ * module's doc comment.
  *
  * @throws {TypeError} when `period` is not a calendar month written as `YYYY-MM`. A route validates
  *   its own input against `CASH_BOOK_MONTH_PATTERN`, so reaching this is a mistake in calling code.
@@ -152,12 +191,13 @@ export interface PublishReportRequest {
 export async function publishReport(
 	db: Database,
 	clock: Clock,
-	request: PublishReportRequest
+	request: PublishReportRequest,
+	settings: PublishReportSettings = {}
 ): Promise<MonthlyReport> {
 	const period = requirePeriod(request.period);
 	const month = monthOf(period);
 
-	return db.transaction(async (transaction) => {
+	const report = await db.transaction(async (transaction) => {
 		await requirePermission(transaction, request.actorId, ACTION.publishReports);
 
 		const row = await lockPeriod(transaction, clock, {
@@ -171,7 +211,7 @@ export async function publishReport(
 		const revisionReason = requireRevisionReason(revision, request.revisionReason);
 		const figures = await composeReportFigures(transaction, clock, period);
 
-		const [report] = await transaction
+		const [published] = await transaction
 			.insert(monthlyReports)
 			.values({
 				periodId: row.id,
@@ -193,11 +233,34 @@ export async function publishReport(
 		await recordAuditEntry(transaction, clock, {
 			actorId: request.actorId,
 			action: REPORT_PUBLISHED_ACTION,
-			targetId: report.id,
+			targetId: published.id,
 			after: { period, revision, revisionReason }
 		});
-		return report;
+		return published;
 	});
+
+	if (report.revision > FIRST_REVISION) {
+		const notify = settings.notify ?? notifyReportRevised;
+		try {
+			await notify(db, clock, {
+				period,
+				revision: report.revision,
+				// Never null above revision 1: `requireRevisionReason` refused the publication otherwise,
+				// and `monthly_reports_revision_reason_check` refused it again.
+				reason: report.revisionReason ?? ''
+			});
+		} catch (error) {
+			// The revision is committed. Letting this reach the caller would report a published report
+			// as unpublished, and the admin would publish it again — see this module's doc comment.
+			// The console is the honest place for it until this application has a logger.
+			console.error(
+				`Queuing the revision notification for ${period} revision ${report.revision} failed after the publication had already committed:`,
+				error
+			);
+		}
+	}
+
+	return report;
 }
 
 /** One published revision, as a list of them reads — no figures, only which revision it is. */
