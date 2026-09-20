@@ -58,6 +58,11 @@ import {
 	type JobDefinition,
 	type Schedule
 } from '$lib/server/scheduler';
+// Importing these two, like the email import above, is what registers `issue-invoices` and
+// `send-monthly-report` into `applicationJobs` for this file — see the comment on the superuser
+// screen test below for why that import has to be here rather than assumed.
+import { INVOICE_ISSUANCE_JOB_NAME } from '$lib/server/services/dues/jobs';
+import { MONTHLY_REPORT_JOB_NAME } from '$lib/server/services/report/jobs';
 
 /**
  * The two halves ticket #67 added: the periodic trigger that makes registered jobs run without
@@ -172,13 +177,18 @@ function pause(milliseconds: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-/** Waits until `ready()` answers true, and answers whether it ever did. */
-async function waitFor(ready: () => boolean): Promise<boolean> {
+/**
+ * Waits until `ready()` answers true, and answers whether it ever did.
+ *
+ * `ready` may be async, so that a wait can poll the database for the row a test is actually about,
+ * rather than an in-memory counter that only proves a *different* event happened.
+ */
+async function waitFor(ready: () => boolean | Promise<boolean>): Promise<boolean> {
 	const deadline = Date.now() + WAIT_TIMEOUT_MILLISECONDS;
-	while (Date.now() < deadline && !ready()) {
+	while (Date.now() < deadline && !(await ready())) {
 		await pause(TICK_MILLISECONDS);
 	}
-	return ready();
+	return await ready();
 }
 
 /** A superuser, for the one test that calls a service `ACTION.manageJobs` guards. */
@@ -350,10 +360,20 @@ describe('the email queue drain job', () => {
 });
 
 describe('the superuser screen, through the exact call /admin/jobs makes', () => {
-	it('lists the email drain job and the history prune job with their last runs', async () => {
+	it('lists every registered job with its last run', async () => {
 		// `src/routes/(app)/admin/jobs/+page.server.ts` calls `listJobsWithLastRun` with
-		// `applicationJobs` and nothing else, so this is the whole of what that page will show — and
-		// the reason registering the job needed no edit to the page.
+		// `applicationJobs` and nothing else, so what that page shows is whatever is registered into
+		// `applicationJobs` by the time it runs. On a real server that is all four jobs:
+		// `src/hooks.server.ts` imports `$lib/server/email/jobs`, `$lib/server/services/dues/jobs` and
+		// `$lib/server/services/report/jobs` unconditionally (`registerEmailJobs`, `registerDuesJobs`,
+		// `registerReportJobs`), and `$lib/server/scheduler` registers `jobRunPruneJob` itself. This
+		// file's own import list at the top pulls in all of those same modules for the same reason —
+		// not to run their jobs, just for the registration each one does at module scope — so that
+		// this test states what `/admin/jobs` actually shows rather than a subset that only holds
+		// because Vitest isolates module state per file. A version of this test that only imported
+		// the email module would still pass after a change added a fifth job elsewhere, and would keep
+		// passing right up until the day this file's isolation from other tests' modules stopped
+		// existing.
 		const superuserId = await insertSuperuser('Pengurus Pekerjaan Email');
 		const clock = new FakeClock(DRAIN_LISTED_AT);
 		await runJob({
@@ -369,10 +389,12 @@ describe('the superuser screen, through the exact call /admin/jobs makes', () =>
 			actorId: superuserId
 		});
 
-		// The registry lists by name, and `email-queue-drain` sorts before `job-run-history-prune`.
+		// The registry lists by name, alphabetically.
 		expect(listed.map((job) => job.name)).toEqual([
 			EMAIL_QUEUE_DRAIN_JOB_NAME,
-			JOB_RUN_PRUNE_JOB_NAME
+			INVOICE_ISSUANCE_JOB_NAME,
+			JOB_RUN_PRUNE_JOB_NAME,
+			MONTHLY_REPORT_JOB_NAME
 		]);
 		const drain = listed.find((job) => job.name === EMAIL_QUEUE_DRAIN_JOB_NAME);
 		expect(drain?.currentPeriod).toBe(DRAIN_LISTED_AT);
@@ -424,15 +446,27 @@ describe('startJobScheduler', () => {
 			intervalMilliseconds: TICK_MILLISECONDS
 		});
 
+		// Proves the two jobs ran in the same tick: `following.contexts` only grows once `runDueJobs`
+		// has moved past `failing` in that tick's loop, whether `failing` threw or not.
 		expect(await waitFor(() => following.contexts.length >= 1)).toBe(true);
-		// The failed row is looked for rather than the first one. `failJobRun` takes a row out of the
-		// partial claim index, so the tick twenty milliseconds later claims this same fixed period
-		// again and inserts a second `running` row; both carry the same `startedAt` because the clock
-		// is fake, so `runsOf` breaks the tie on a random uuid and whichever row sorts first is a coin
-		// flip. The failure this test is about is on the failed row either way, and it is certain to
-		// exist by now: `runDueJobs` awaits `failJobRun` before it reaches the job after it, which is
-		// what the line above waited for.
-		const failed = (await runsOf(failing.name)).find((row) => row.status === JOB_RUN_STATUS.failed);
+		// What this test is actually about is `failing`'s own row reaching a terminal status — not
+		// `following`'s in-memory counter above, which is a different job's different event. The write
+		// that moves `failing`'s row from `running` to `failed` is a separate statement that may not
+		// have landed yet even though `following` already ran, so it is waited for here rather than
+		// read once.
+		//
+		// The row is looked for by status rather than taken as the first one, because `failJobRun`
+		// takes a row out of the partial claim index, so the tick twenty milliseconds later claims this
+		// same fixed period again and inserts a second `running` row for `failing`; both carry the same
+		// `startedAt` because the clock is fake, so `runsOf`, which sorts `asc(startedAt), asc(id)`,
+		// breaks the tie on a random uuid. The row this test wants is the `failed` one either way.
+		let failed: JobRun | undefined;
+		expect(
+			await waitFor(async () => {
+				failed = (await runsOf(failing.name)).find((row) => row.status === JOB_RUN_STATUS.failed);
+				return failed !== undefined;
+			})
+		).toBe(true);
 		expect(failed).toMatchObject({ status: JOB_RUN_STATUS.failed, error: FAILURE_MESSAGE });
 	});
 
