@@ -2,29 +2,28 @@ import { expect, test, type Page } from '@playwright/test';
 import { Pool } from 'pg';
 
 /**
- * The Elysia surface mounted at `/api`, over a real HTTP connection:
+ * The boundary at `/api`, over a real HTTP connection, from both of its sides:
  *
+ * - `/api/auth/*` is answered by better-auth's own router, not by the Elysia catch-all;
  * - `/api/health` answers with no session and reports the database is reachable;
  * - `/api/me`, the guarded example route, refuses with 401 without a session and returns the
  *   signed-in resident's own data with one.
  *
+ * The two sides belong in one file because they share one address space.
+ * `src/routes/api/[...slugs]/+server.ts` mounts Elysia on everything under `/api`, and
+ * `src/hooks.server.ts`'s `authHandle` takes `/api/auth/*` back out from under it first, by handing
+ * the request to `svelteKitHandler`. A change that let the catch-all start swallowing the sign-in
+ * surface would break every session this application issues while leaving every page-level test
+ * green — the other e2e specs all reach better-auth through form actions, never over HTTP — so
+ * neither assertion below is allowed to stand without the other.
+ *
+ * Proving any of this needs `ORIGIN` to name the address the server under test is really listening
+ * on: `svelteKitHandler` compares the request's origin against it before forwarding anything.
+ * `playwright.config.ts` derives the port, the `baseURL` and that `ORIGIN` from one constant for
+ * exactly this reason, and says so at length.
+ *
  * `tests/unit/api-macro.test.ts` covers the `session` macro's 401/403 behaviour in more depth,
  * without a browser or an HTTP round trip.
- *
- * ## What this file does not, and cannot, prove about `/api/auth/*`
- *
- * `src/hooks.server.ts`'s `authHandle` only forwards a request to better-auth's own router when
- * `better-auth/svelte-kit`'s `isAuthPath` finds the request's *origin* equal to `auth().options.baseURL`
- * (read from `ORIGIN`). `playwright.config.ts` always previews this application on a fixed port
- * (4173), while `.env` sets `ORIGIN` to the port this worktree's dev server answers on — the two
- * disagree, so under this harness every request's origin fails that check regardless of this
- * ticket, and `/api/auth/*` falls through to SvelteKit's router exactly as it did before this
- * ticket added a route under `/api` at all. That is a pre-existing property of this repository's
- * `ORIGIN`/preview-port wiring, not something `src/routes/api/[...slugs]/+server.ts` can fix from
- * inside its own `writes:` scope, and not something a fixed preview port can be made to prove
- * either way. The claim that this catch-all does not break `/api/auth/*` is verified instead
- * against `bun run dev` on the port `ORIGIN` actually names, where the origins agree — see the
- * ticket's delivery report for that walk.
  */
 
 /** The database the application under test is using. Bun loads it out of `.env`. */
@@ -99,9 +98,20 @@ async function signIn(page: Page, email: string): Promise<void> {
 	await page.getByRole('button', { name: 'Masuk' }).click();
 }
 
-test('the health route answers with no session and reports the app and database', async ({
+test('better-auth answers its own routes instead of the catch-all mounted at /api', async ({
 	request
 }) => {
+	const response = await request.get('/api/auth/get-session');
+
+	// better-auth reports "nobody is signed in" as 200 carrying a JSON `null`. The Elysia catch-all
+	// has no route at this address and would answer 404 with the uniform `{ error: { message } }`
+	// body from `src/lib/server/api/errors.ts` — the same shape the `/api/me` test below reads — so
+	// this pair of assertions tells the two answers apart on its own.
+	expect(response.status()).toBe(200);
+	expect(await response.json()).toBeNull();
+});
+
+test('the Elysia health route still answers on the same arrangement', async ({ request }) => {
 	const response = await request.get('/api/health');
 
 	expect(response.status()).toBe(200);
