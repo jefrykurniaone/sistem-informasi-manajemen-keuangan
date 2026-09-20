@@ -5,6 +5,7 @@
 	} from '$lib/components/cash/unlock-period-dialog.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as m from '$lib/paraglide/messages.js';
+	import { formatDateTime } from '$lib/time';
 	import type { PageProps } from './$types';
 
 	/**
@@ -28,12 +29,6 @@
 	 */
 
 	let { data, form }: PageProps = $props();
-
-	/** When a timestamp is shown, it is shown whole: a publication instant is read against a clock. */
-	const PUBLISHED_AT_FORMAT = new Intl.DateTimeFormat('id-ID', {
-		dateStyle: 'long',
-		timeStyle: 'short'
-	});
 
 	/** The month whose unlock dialog is open, or `undefined` when none is. */
 	let unlocking: UnlockablePeriod | undefined = $state();
@@ -82,7 +77,7 @@
 							<li class="text-sm">
 								{m.adminPeriods_reportRevision({
 									revision: report.revision,
-									date: PUBLISHED_AT_FORMAT.format(report.publishedAt)
+									date: formatDateTime(report.publishedAt)
 								})}
 								{#if report.revisionReason !== null}
 									<span class="text-muted-foreground">

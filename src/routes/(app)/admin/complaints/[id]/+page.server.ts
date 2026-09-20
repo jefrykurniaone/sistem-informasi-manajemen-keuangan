@@ -1,6 +1,5 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import * as m from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime';
 import { PermissionDeniedError } from '$lib/errors';
 import { AUTH_PATHS } from '$lib/server/auth';
 import { ACTION, requirePermission } from '$lib/server/authz';
@@ -8,6 +7,7 @@ import { database } from '$lib/server/db';
 import { COMPLAINT_STATUSES, type ComplaintStatus } from '$lib/server/db/schema/complaint';
 import { assertUuidParam } from '$lib/server/services/identifier';
 import { systemClock } from '$lib/server/ports/clock';
+import { formatDateTime } from '$lib/time';
 import {
 	addComplaintReply,
 	changeComplaintStatus,
@@ -174,11 +174,9 @@ function allowedHandlerTransitionsFrom(from: ComplaintStatus): readonly Complain
 	);
 }
 
-/** An instant as a sentence, in the interface locale — the same helper the posts screens carry. */
+/** An instant as a sentence, in the complex's own zone — `$lib/time`'s `formatDateTime`. */
 function formatInstant(instant: Date): string {
-	return new Intl.DateTimeFormat(getLocale(), { dateStyle: 'full', timeStyle: 'short' }).format(
-		instant
-	);
+	return formatDateTime(instant);
 }
 
 /** The sentence a person reads for each named Keluhan rule refusal. */

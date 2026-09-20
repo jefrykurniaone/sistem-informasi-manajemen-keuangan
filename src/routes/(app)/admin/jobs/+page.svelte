@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { formatDateTime } from '$lib/time';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -11,19 +12,9 @@
 		failed: 'Gagal'
 	};
 
-	/**
-	 * Instants are shown in UTC, and said to be. The alternative is the zone of whichever machine
-	 * renders the page, which is the server's on the first render and the browser's after hydration
-	 * — two different answers for one row.
-	 */
-	const INSTANT_FORMAT = new Intl.DateTimeFormat('id-ID', {
-		dateStyle: 'medium',
-		timeStyle: 'short',
-		timeZone: 'UTC'
-	});
-
+	/** Instants are shown in the complex's own zone — `$lib/time`'s `formatDateTime`. */
 	function formatInstant(instant: Date): string {
-		return `${INSTANT_FORMAT.format(instant)} UTC`;
+		return formatDateTime(instant);
 	}
 </script>
 

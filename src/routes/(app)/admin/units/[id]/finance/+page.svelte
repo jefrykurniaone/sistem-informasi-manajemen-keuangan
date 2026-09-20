@@ -10,6 +10,7 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { formatRupiah } from '$lib/money';
 	import * as m from '$lib/paraglide/messages.js';
+	import { formatDateTime } from '$lib/time';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -22,16 +23,6 @@
 
 	/** Whether the refund dialog is open. It names no row — the Unit comes from the route. */
 	let refunding = $state(false);
-
-	/**
-	 * Instants are shown in UTC, and said to be — the same reasoning as
-	 * `src/routes/(app)/admin/units/[id]/+page.svelte`'s copy of this constant.
-	 */
-	const OCCURRED_AT_FORMAT = new Intl.DateTimeFormat('id-ID', {
-		dateStyle: 'medium',
-		timeStyle: 'short',
-		timeZone: 'UTC'
-	});
 
 	/** The heading sentence for one history entry, by which of the three actions it records. */
 	const HISTORY_LABELS: Record<(typeof data.history)[number]['action'], () => string> = {
@@ -195,7 +186,7 @@
 						<div class="flex flex-wrap items-center justify-between gap-2">
 							<span class="font-medium">{HISTORY_LABELS[entry.action]()}</span>
 							<span class="text-muted-foreground">
-								{OCCURRED_AT_FORMAT.format(entry.occurredAt)} UTC
+								{formatDateTime(entry.occurredAt)}
 							</span>
 						</div>
 						<p class="text-muted-foreground">
