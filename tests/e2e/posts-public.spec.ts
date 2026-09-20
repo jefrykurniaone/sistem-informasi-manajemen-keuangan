@@ -212,20 +212,13 @@ test('a draft Post answers 404 to a browser with no session, even with its real 
 }) => {
 	// The only Post this test can make is a pengumuman — a kegiatan is what the test above covers,
 	// and its `Waktu mulai` is exactly the field this one must not have to fill. Picking the type is
-	// therefore not avoidable here, and picking it is what breaks:
-	// `src/lib/components/post/post-form.svelte` compiles every attribute update in the form into
-	// one Svelte `template_effect`, so changing `Tipe` re-runs it and writes the unchanged, empty
-	// `values.title` back over the `Judul` the person typed. `Judul` is `required`, so the browser
-	// then refuses to submit the form at all and the page never leaves `/admin/posts/new`.
-	// Measured against the preview build: three seconds after the field was filled — long after
-	// hydration — `selectOption('announcement')` leaves `Judul` empty while the two textareas keep
-	// what they hold, and the submit that follows does not navigate. Filed as #119, and not this
-	// ticket's to fix: `post-form.svelte` is outside its `writes:`. Take this `fixme` off once #119
-	// has landed.
-	test.fixme(
-		true,
-		'#119: Changing Tipe on the Post form clears the required Judul input, so Simpan draf is held back by the browser own form validation and no Post is ever created. Application defect in src/lib/components/post/post-form.svelte, see #119.'
-	);
+	// therefore not avoidable here, and picking it used to break: `src/lib/components/post/post-form.svelte`
+	// compiled every top-level attribute update in the form into one Svelte `template_effect`, so
+	// changing `Tipe` reran it and wrote the unchanged, empty `values.title` back over the `Judul`
+	// the person typed. `Judul` is `required`, so the browser refused to submit the form at all and
+	// the page never left `/admin/posts/new`. Fixed by #119, which isolates the `Tipe` `<select>`'s
+	// own reactive attribute update into its own compiled effect so it no longer reruns the effect
+	// that writes `Judul`, `Ringkasan`, `Kategori` and `Isi`.
 	const email = anAddress('draft');
 	await signUpAdmin(page, email);
 

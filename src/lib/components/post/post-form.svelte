@@ -118,22 +118,52 @@
 </script>
 
 <form method="POST" {action} class="flex flex-col gap-5">
-	<div class="flex flex-col gap-1.5">
-		<label class="text-sm font-medium" for="post-form-type-{uid}">
-			{m.adminPosts_form_typeLabel()}
-		</label>
-		<select
-			id="post-form-type-{uid}"
-			name="type"
-			value={type}
-			onchange={(event) => (chosenType = event.currentTarget.value)}
-			class="h-11 rounded-md border border-border bg-background px-3 text-sm"
-		>
-			{#each types as option (option)}
-				<option value={option}>{POST_TYPE_LABEL[option]?.() ?? option}</option>
-			{/each}
-		</select>
-	</div>
+	{#key uid}
+		<!--
+			#119: `uid` never changes, so this `{#key}` never tears the field down — it exists purely to
+			give the `Tipe` `<select>` its own compiled `template_effect`.
+
+			Without it, Svelte 5 folds every top-level attribute update in this template into one
+			`template_effect` per block, and that effect re-runs in full whenever any signal it reads
+			changes. `value={type}` below reads `type`, which is `$derived` from `chosenType`, so
+			picking a different `Tipe` reran the *whole* effect — including the unrelated
+			`$.set_value(input, $$props.values.title)` for `Judul` a few lines down, writing the
+			untouched, still-empty `values.title` prop back over whatever the person had typed. `Judul`
+			is `required`, so the browser then held back `Simpan draf` and no Post was ever created
+			through that path. Confirmed by comparing the compiled output (`svelte/compiler`, `generate:
+			'client'`) before and after this block: before, `$.set_value(input, $$props.values.title)`
+			sat inside the same `template_effect` as the `<select>`'s `value={type}` write; after,
+			`type` is read only inside this `{#key}` block's own effect, and the form-level effect that
+			writes `Judul`, `Ringkasan`, `Kategori`, `Isi` no longer reads `type` or `chosenType` at all.
+
+			`values.title` (and `values.category`, `values.startsAt`, `values.endsAt`,
+			`values.location`) still get written back on every render, unconditionally — that part is
+			untouched by this `{#key}`, and it has to stay: see the comment on `chosenType` above.
+			Neither `(app)/admin/posts/new/+page.svelte` nor `(app)/admin/posts/[id]/+page.svelte` uses
+			`use:enhance`, so this form posts natively and a rejected submission is a full document
+			render with the action's `values` handed back as fresh props. A `$state` seeded from a prop
+			captures that prop's first value and stops following it, so seeding these fields from
+			`values` the same way `chosenType` is kept separate from `values.type` would freeze them at
+			whatever `values` held on the very first render, and a rejected submission's returned
+			`values` would never reach the DOM.
+		-->
+		<div class="flex flex-col gap-1.5">
+			<label class="text-sm font-medium" for="post-form-type-{uid}">
+				{m.adminPosts_form_typeLabel()}
+			</label>
+			<select
+				id="post-form-type-{uid}"
+				name="type"
+				value={type}
+				onchange={(event) => (chosenType = event.currentTarget.value)}
+				class="h-11 rounded-md border border-border bg-background px-3 text-sm"
+			>
+				{#each types as option (option)}
+					<option value={option}>{POST_TYPE_LABEL[option]?.() ?? option}</option>
+				{/each}
+			</select>
+		</div>
+	{/key}
 
 	<div class="flex flex-col gap-1.5">
 		<label class="text-sm font-medium" for="post-form-title-{uid}">
