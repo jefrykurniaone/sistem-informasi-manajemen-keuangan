@@ -70,6 +70,9 @@ jobs:
           # notification test (#41, 2026-09-19) failed here. The value is never dereferenced by a
           # test, so any absolute http(s) address works.
           ORIGIN: http://localhost:5173
+          # The monthly-report notification tests sign unsubscribe links with the auth secret and
+          # fail the same way when it is unset. Single-use value for this job only, not a secret.
+          BETTER_AUTH_SECRET: rahasia-ci-sekali-pakai-bukan-rahasia-sungguhan-32
 
       - name: build
         run: bun run build
