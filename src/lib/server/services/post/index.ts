@@ -140,12 +140,19 @@ export const MAXIMUM_COVER_IMAGE_BYTES = 256 * 1024;
  *
  * The extension is taken from here rather than from the uploaded file's name on purpose: the name
  * arrives from a browser form and becomes part of a storage key, and a key is a path.
+ *
+ * A `Map`, deliberately not an object literal: `request.contentType` comes straight from an upload,
+ * and an object literal inherits from `Object.prototype`, so `literal['constructor']` and
+ * `literal['__proto__']` both answer with a truthy inherited value that survives an `if (!extension)`
+ * guard — exactly the defect open as #93. A `Map` has no prototype chain behind `get`, so every
+ * content type outside these three is `undefined`. See `CONTENT_TYPES_BY_EXTENSION` in
+ * `src/routes/files/[...key]/+server.ts`, which states the same reasoning for the same shape.
  */
-const COVER_IMAGE_EXTENSIONS: Readonly<Record<string, string>> = {
-	'image/jpeg': 'jpg',
-	'image/png': 'png',
-	'image/webp': 'webp'
-};
+const COVER_IMAGE_EXTENSIONS: ReadonlyMap<string, string> = new Map([
+	['image/jpeg', 'jpg'],
+	['image/png', 'png'],
+	['image/webp', 'webp']
+]);
 
 /**
  * The first bytes each accepted format really starts with.
@@ -156,20 +163,27 @@ const COVER_IMAGE_EXTENSIONS: Readonly<Record<string, string>> = {
  * exactly the shape of an upload that becomes a script when something downstream sniffs its content
  * rather than believing its type. `WEBP` is checked at offset 8, after the `RIFF` container header
  * and the four-byte length that follows it.
+ *
+ * A `Map`, for the same reason `COVER_IMAGE_EXTENSIONS` above is one, and `hasSignatureOf` below
+ * never treats a content type missing from this map as passing — see that function's doc comment.
  */
-const COVER_IMAGE_SIGNATURES: Readonly<
-	Record<string, readonly { readonly offset: number; readonly bytes: readonly number[] }[]>
-> = {
-	'image/jpeg': [{ offset: 0, bytes: [0xff, 0xd8, 0xff] }],
-	'image/png': [{ offset: 0, bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] }],
-	'image/webp': [
-		{ offset: 0, bytes: [0x52, 0x49, 0x46, 0x46] },
-		{ offset: 8, bytes: [0x57, 0x45, 0x42, 0x50] }
+const COVER_IMAGE_SIGNATURES: ReadonlyMap<
+	string,
+	readonly { readonly offset: number; readonly bytes: readonly number[] }[]
+> = new Map([
+	['image/jpeg', [{ offset: 0, bytes: [0xff, 0xd8, 0xff] }]],
+	['image/png', [{ offset: 0, bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] }]],
+	[
+		'image/webp',
+		[
+			{ offset: 0, bytes: [0x52, 0x49, 0x46, 0x46] },
+			{ offset: 8, bytes: [0x57, 0x45, 0x42, 0x50] }
+		]
 	]
-};
+]);
 
 /** Every content type a cover image may be uploaded as, for a screen that builds an `accept` list. */
-export const COVER_IMAGE_CONTENT_TYPES: readonly string[] = Object.keys(COVER_IMAGE_EXTENSIONS);
+export const COVER_IMAGE_CONTENT_TYPES: readonly string[] = [...COVER_IMAGE_EXTENSIONS.keys()];
 
 /**
  * Every rule this service refuses a request for, other than permission.
@@ -717,7 +731,7 @@ function coverImageKeyFor(request: SetPostCoverImageRequest): string {
 		);
 	}
 
-	const extension = COVER_IMAGE_EXTENSIONS[request.contentType];
+	const extension = COVER_IMAGE_EXTENSIONS.get(request.contentType);
 	if (!extension) {
 		throw new PostRuleError(
 			POST_RULE.coverImageNotAnImage,
@@ -734,9 +748,19 @@ function coverImageKeyFor(request: SetPostCoverImageRequest): string {
 	return `posts/${request.postId}/cover.${extension}`;
 }
 
-/** Whether `content` really begins the way a file of `contentType` begins. */
+/**
+ * Whether `content` really begins the way a file of `contentType` begins.
+ *
+ * Answers `false`, never `true`, when `contentType` has no registered signature at all: `?? []`
+ * followed by `[].every(...)` would answer `true` for a content type this map has never heard of,
+ * which is the wrong default for a security check — see `src/lib/server/services/complaint/attachment.ts`,
+ * which already makes this same call for the same shape.
+ */
 function hasSignatureOf(content: Uint8Array, contentType: string): boolean {
-	const signature = COVER_IMAGE_SIGNATURES[contentType] ?? [];
+	const signature = COVER_IMAGE_SIGNATURES.get(contentType);
+	if (!signature) {
+		return false;
+	}
 	return signature.every((part) =>
 		part.bytes.every((byte, index) => content[part.offset + index] === byte)
 	);
