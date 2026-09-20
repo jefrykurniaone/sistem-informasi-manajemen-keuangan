@@ -4,6 +4,7 @@ import { PermissionDeniedError } from '$lib/errors';
 import { AUTH_PATHS } from '$lib/server/auth';
 import { database } from '$lib/server/db';
 import { OCCUPANCY_ROLES, type OccupancyRole } from '$lib/server/db/schema/occupancy';
+import { assertUuidParam } from '$lib/server/services/identifier';
 import { systemClock } from '$lib/server/ports/clock';
 import {
 	endOccupancy,
@@ -40,6 +41,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	if (!locals.user) {
 		redirect(303, AUTH_PATHS.login);
 	}
+	// `units.id` is a `uuid` column — see #111 and `$lib/server/services/identifier.ts`.
+	assertUuidParam(params.id, m.adminUnits_notFound());
 
 	const db = database();
 	try {
@@ -59,6 +62,7 @@ export const actions: Actions = {
 		if (!locals.user) {
 			redirect(303, AUTH_PATHS.login);
 		}
+		assertUuidParam(params.id, m.adminUnits_notFound());
 
 		const form = await request.formData();
 		const residentId = String(form.get('residentId') ?? '').trim();

@@ -147,6 +147,16 @@ describe('getPublishedPost', () => {
 	it('throws PostNotFoundError for an id that names no Post at all', async () => {
 		await expect(getPublishedPost(testDb.db, randomUUID())).rejects.toThrow(PostNotFoundError);
 	});
+
+	it('throws PostNotFoundError for an id that is not shaped like a uuid at all, without querying the database — #111', async () => {
+		// `posts.id` is a `uuid` column; comparing it to something that is not shaped like one is a
+		// PostgreSQL query error, not "no row". `new` is the id the linked issue was opened over —
+		// the sibling static route segment `/admin/posts/new` — but any non-uuid string must answer
+		// the same way.
+		await expect(getPublishedPost(testDb.db, 'new')).rejects.toThrow(PostNotFoundError);
+		await expect(getPublishedPost(testDb.db, 'abc')).rejects.toThrow(PostNotFoundError);
+		await expect(getPublishedPost(testDb.db, '1')).rejects.toThrow(PostNotFoundError);
+	});
 });
 
 describe('listPublicPosts', () => {

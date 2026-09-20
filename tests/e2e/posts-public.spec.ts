@@ -129,7 +129,10 @@ test('an admin publishes a kegiatan, and a browser with no session opens it from
 	await page.getByLabel('Lokasi').fill('Lapangan komplek');
 	await page.getByRole('button', { name: 'Simpan draf' }).click();
 
-	await expect(page).toHaveURL(/\/admin\/posts\/[^/]+$/);
+	// A uuid-shaped final segment only — `/\/admin\/posts\/[^/]+$/` also matches
+	// `/admin/posts/new` itself, which would read `postId` back as the literal string `new` if this
+	// assertion somehow ran before the save navigated away. See #111.
+	await expect(page).toHaveURL(/\/admin\/posts\/[0-9a-f-]{36}$/);
 	const postId = page.url().split('/').pop();
 
 	await page.getByRole('button', { name: 'Terbitkan' }).click();
@@ -186,7 +189,8 @@ test('a draft Post answers 404 to a browser with no session, even with its real 
 	await page.getByLabel('Tipe').selectOption('announcement');
 	await page.getByRole('button', { name: 'Simpan draf' }).click();
 
-	await expect(page).toHaveURL(/\/admin\/posts\/[^/]+$/);
+	// A uuid-shaped final segment only — see the note on the same pattern in the previous test.
+	await expect(page).toHaveURL(/\/admin\/posts\/[0-9a-f-]{36}$/);
 	const draftId = page.url().split('/').pop();
 
 	const anonymousContext = await browser.newContext();
@@ -197,6 +201,14 @@ test('a draft Post answers 404 to a browser with no session, even with its real 
 
 	const guessedResponse = await anonymousPage.goto(`/posts/${randomUUID()}`);
 	expect(guessedResponse?.status()).toBe(404);
+
+	// #111: a `params.id` that is not shaped like a uuid at all — `new` (this route's own sibling
+	// segment under `/admin/posts/new`), a short word, or a bare digit — must answer 404 exactly
+	// like a real-but-missing uuid, never a 500.
+	for (const nonUuidId of ['new', 'abc', '1']) {
+		const nonUuidResponse = await anonymousPage.goto(`/posts/${nonUuidId}`);
+		expect(nonUuidResponse?.status()).toBe(404);
+	}
 
 	await anonymousContext.close();
 });

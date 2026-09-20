@@ -7,6 +7,7 @@ import { database } from '$lib/server/db';
 import { COMPLAINT_STATUS } from '$lib/server/db/schema/complaint';
 import { systemClock } from '$lib/server/ports/clock';
 import type { FileStore } from '$lib/server/ports/file-store';
+import { assertUuidParam } from '$lib/server/services/identifier';
 import {
 	addComplaintReply,
 	COMPLAINT_REPLY_RULE,
@@ -57,6 +58,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 	if (!locals.user) {
 		redirect(303, AUTH_PATHS.login);
 	}
+	// `complaints.id` is a `uuid` column; a non-uuid `params.id` must be refused here, before it
+	// reaches `getComplaint`'s comparison — see #111 and `$lib/server/services/identifier.ts`.
+	assertUuidParam(params.id, m.complaintDetail_notFound());
 
 	try {
 		const db = database();
@@ -112,6 +116,7 @@ export const actions: Actions = {
 		if (!locals.user) {
 			redirect(303, AUTH_PATHS.login);
 		}
+		assertUuidParam(params.id, m.complaintDetail_notFound());
 
 		const form = await request.formData();
 		const content = String(form.get('content') ?? '');
@@ -136,6 +141,7 @@ export const actions: Actions = {
 		if (!locals.user) {
 			redirect(303, AUTH_PATHS.login);
 		}
+		assertUuidParam(params.id, m.complaintDetail_notFound());
 
 		try {
 			await withdrawComplaint(database(), systemClock, {

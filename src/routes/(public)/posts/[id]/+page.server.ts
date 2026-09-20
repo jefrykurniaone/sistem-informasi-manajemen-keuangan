@@ -3,6 +3,7 @@ import * as m from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 import { database } from '$lib/server/db';
 import { renderPostBody } from '$lib/server/services/post/markdown';
+import { assertUuidParam } from '$lib/server/services/identifier';
 import { PostNotFoundError } from '$lib/server/services/post';
 import { getPublishedPost } from '$lib/server/services/post/public';
 import { systemClock } from '$lib/server/ports/clock';
@@ -35,6 +36,12 @@ import type { PageServerLoad } from './$types';
  */
 
 export const load: PageServerLoad = async ({ params, url }) => {
+	// `params.id` reaches no session check on this route at all — see the doc comment above — so an
+	// id shaped like `new` (the sibling `/admin/posts/new` route's own segment) or any other
+	// non-uuid string must be refused before it ever reaches `getPublishedPost`'s `uuid` comparison.
+	// See #111 and `$lib/server/services/identifier.ts`.
+	assertUuidParam(params.id, m.postPublic_notFound());
+
 	let post;
 	try {
 		post = await getPublishedPost(database(), params.id);

@@ -1,6 +1,7 @@
 import { and, asc, count, desc, eq, gte, lt, or, sql } from 'drizzle-orm';
 import type { Database } from '../../db';
 import { posts, POST_STATUS, POST_TYPE, type Post } from '../../db/schema/post';
+import { isUuid } from '../identifier';
 import type { Clock } from '../../ports/clock';
 import { PostNotFoundError, type PostCategory } from './index';
 
@@ -131,9 +132,17 @@ export async function listPublicPosts(
  * The one Post named by `postId`, for the public detail page.
  *
  * @throws {PostNotFoundError} when `postId` names no Post, when it names one that is not
- *   `published`, or — from the outside these two are the same thing, which is the point.
+ *   `published`, or when `postId` is not shaped like a uuid at all — from the outside all three
+ *   are the same thing, which is the point. The last one matters because `posts.id` is a `uuid`
+ *   column: comparing it to something that is not shaped like one is a PostgreSQL query error, not
+ *   "no row", so this guards the query rather than letting a guessed id like `new` reach it. See
+ *   `../identifier.ts`'s own doc comment, and #111.
  */
 export async function getPublishedPost(db: Database, postId: string): Promise<Post> {
+	if (!isUuid(postId)) {
+		throw new PostNotFoundError(postId);
+	}
+
 	const [row] = await db
 		.select()
 		.from(posts)
