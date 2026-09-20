@@ -193,7 +193,7 @@
 	"adminPosts_form_summaryLabel": "Ringkasan",
 	"adminPosts_form_summaryHint": "Satu atau dua kalimat. Ini yang muncul di daftar dan di email pemberitahuan.",
 	"adminPosts_form_bodyLabel": "Isi",
-	"adminPosts_form_bodyHint": "Ditulis dengan Markdown: **tebal**, *miring*, daftar, tautan, kutipan, dan tabel. Gambar di dalam isi tidak ditampilkan — pakai gambar sampul di bawah.",
+	"adminPosts_form_bodyHint": "Isi mendukung tebal, miring, daftar, tautan, kutipan, dan tabel. Gambar di dalam isi tidak ditampilkan — pakai gambar sampul di bawah.",
 	"adminPosts_form_categoryLabel": "Kategori",
 	"adminPosts_form_eventHeading": "Waktu dan tempat kegiatan",
 	"adminPosts_form_eventHint": "Hanya diisi untuk kegiatan. Pengumuman tidak boleh punya waktu atau tempat.",

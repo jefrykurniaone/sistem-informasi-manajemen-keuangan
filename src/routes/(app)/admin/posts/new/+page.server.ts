@@ -51,7 +51,7 @@ export const actions: Actions = {
 
 		const form = await request.formData();
 		const values = readPostFormValues(form);
-		if (values.title === '' || values.summary === '' || values.bodyMarkdown === '') {
+		if (values.title === '' || values.summary === '' || values.bodyHtml === '') {
 			return fail(400, { message: m.adminPosts_invalidForm(), values });
 		}
 
@@ -68,7 +68,7 @@ export const actions: Actions = {
 				type: parseType(values.type),
 				title: values.title,
 				summary: values.summary,
-				bodyMarkdown: values.bodyMarkdown,
+				bodyHtml: values.bodyHtml,
 				category: values.category,
 				startsAt,
 				endsAt,
@@ -101,7 +101,7 @@ function readPostFormValues(form: FormData) {
 		type: String(form.get('type') ?? ''),
 		title: String(form.get('title') ?? '').trim(),
 		summary: String(form.get('summary') ?? '').trim(),
-		bodyMarkdown: String(form.get('bodyMarkdown') ?? '').trim(),
+		bodyHtml: String(form.get('bodyHtml') ?? '').trim(),
 		category: String(form.get('category') ?? ''),
 		startsAt: String(form.get('startsAt') ?? ''),
 		endsAt: String(form.get('endsAt') ?? ''),

@@ -56,7 +56,7 @@
 		<p class="text-sm text-muted-foreground">{m.adminPosts_previewHint()}</p>
 
 		<form method="POST" action="?/preview">
-			<input type="hidden" name="bodyMarkdown" value={values.bodyMarkdown} />
+			<input type="hidden" name="bodyHtml" value={values.bodyHtml} />
 			<input type="hidden" name="type" value={values.type} />
 			<input type="hidden" name="title" value={values.title} />
 			<input type="hidden" name="summary" value={values.summary} />

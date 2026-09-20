@@ -14,7 +14,7 @@ import {
 import { residents } from '../../db/schema/resident';
 import type { Clock } from '../../ports/clock';
 import type { FileStore } from '../../ports/file-store';
-import { renderPostBody } from './markdown';
+import { sanitizePostHtml } from './sanitize';
 import { notifyNewPost } from './notification';
 
 /**
@@ -29,8 +29,8 @@ import { notifyNewPost } from './notification';
  *   Unit service states about `deleteUnit`.
  * - **The public reading surface is not here.** `docs/spec-konten-v1.md`'s "Halaman publik punya dua
  *   wajah" filtering, the upcoming-events ordering and the category filter belong to the ticket that
- *   builds the public board (#40). What that ticket needs from this one is `renderPostBody` in
- *   `./markdown.ts`, which is the security boundary and is exported for exactly that reason.
+ *   builds the public board (#40). What that ticket needs from this one is `sanitizePostHtml` in
+ *   `./sanitize.ts`, which is the security boundary and is exported for exactly that reason.
  * - **Who gets emailed about a new Post is not here either.** `./notification.ts` holds
  *   `notifyNewPost` — the `new-post` Langganan recipients, the payload it sends them, and the
  *   `readOrigin()`-built link. `publishPost` below calls it exactly once, after its own transaction
@@ -282,8 +282,9 @@ export interface PostContent {
 	readonly type: PostType;
 	readonly title: string;
 	readonly summary: string;
-	/** The author's Markdown, stored exactly as typed and sanitized only when it is displayed. */
-	readonly bodyMarkdown: string;
+	/** The editor's HTML, as typed. Sanitized by this service before it is stored — see
+	 *  `normalizePostBodyHtml`. */
+	readonly bodyHtml: string;
 	/** One of `POST_CATEGORIES`. */
 	readonly category: string;
 	/** When the kegiatan starts. `null` for a pengumuman. */
@@ -395,8 +396,13 @@ export async function getPost(
 }
 
 /**
- * What the preview screen shows: the body exactly as a visitor would read it, rendered and
- * sanitized, without touching the row.
+ * What the preview screen shows: the body exactly as it would be stored and read, sanitized,
+ * without touching the row.
+ *
+ * It runs `normalizePostBodyHtml` — the same step `createPost` and `updatePost` run — rather than
+ * only sanitizing, so that the preview is the saved body rather than something close to it: plain
+ * typed text is shown in the `<p>` the save would wrap it in, and markup the whitelist refuses is
+ * already gone here rather than surprising the author after they pressed save.
  *
  * Story 4 asks to see the result before publishing, and the acceptance criterion adds that the
  * preview must not change the status. It cannot: this function writes nothing at all. It still takes
@@ -408,10 +414,10 @@ export async function getPost(
 export async function previewPostBody(
 	db: Database,
 	actorId: string,
-	bodyMarkdown: string
+	bodyHtml: string
 ): Promise<string> {
 	await requirePermission(db, actorId, ACTION.managePosts);
-	return renderPostBody(bodyMarkdown);
+	return normalizePostBodyHtml(bodyHtml);
 }
 
 /** Who is writing, and what they wrote. */
@@ -776,8 +782,8 @@ function hasSignatureOf(content: Uint8Array, contentType: string): boolean {
 function validatePostContent(content: PostContent): PostContent {
 	const title = content.title.trim();
 	const summary = content.summary.trim();
-	const bodyMarkdown = content.bodyMarkdown.trim();
-	if (title === '' || summary === '' || bodyMarkdown === '') {
+	const bodyHtml = normalizePostBodyHtml(content.bodyHtml);
+	if (title === '' || summary === '' || bodyHtml === '') {
 		throw new TypeError('A post needs a non-empty title, summary and body.');
 	}
 
@@ -795,12 +801,57 @@ function validatePostContent(content: PostContent): PostContent {
 		type: content.type,
 		title,
 		summary,
-		bodyMarkdown,
+		bodyHtml,
 		category: content.category,
 		startsAt: content.startsAt,
 		endsAt: content.endsAt,
 		location
 	};
+}
+
+/**
+ * Whether `body` carries any HTML element at all.
+ *
+ * Deliberately not a parse and deliberately not a security check — `sanitizePostHtml` is the only
+ * thing in this application that decides what is safe, and it runs after this either way. All this
+ * answers is "did what arrive look like markup", which is what `normalizePostBodyHtml` needs to
+ * know to decide whether to wrap it.
+ *
+ * The pattern has no quantifier and no alternation, so it is linear in the length of `body` and
+ * cannot backtrack — a whitelist or a structural rule written as a pattern over HTML would be both
+ * wrong and a backtracking hazard, which is why this one only ever looks for `<` followed by a
+ * letter or a closing slash.
+ */
+function containsHtmlTag(body: string): boolean {
+	return /<\/?[a-zA-Z]/.test(body);
+}
+
+/**
+ * What an admin typed, as the HTML that is safe to store in `posts.bodyHtml`.
+ *
+ * Two steps, in this order:
+ *
+ * 1. **Plain text is wrapped in a `<p>`.** Until #140 lands, the write screen is still the old
+ *    plain `<textarea>`, so a body arrives as the words an admin typed and nothing else. Storing
+ *    those words bare would put a bare text node into `{@html …}` on the public page, with no block
+ *    element to style or to space it; `docs/spec-post-editor-v1.md` asks for the wrap so the
+ *    application keeps working across the two tickets. A body that already carries markup is left
+ *    exactly as it is — wrapping `<h1>…</h1>` in a paragraph would be inventing structure.
+ * 2. **The result is sanitized.** Sanitizing last, never first, is what makes this function's
+ *    output safe whatever step 1 did with it.
+ *
+ * Answers `''` for a body that is empty, whitespace, or nothing but markup the whitelist refuses —
+ * `<script>alert(1)</script>` alone leaves nothing behind. `validatePostContent` turns that into
+ * the same `TypeError` an empty body gets, which is the honest answer: after sanitizing there is no
+ * post left to store.
+ */
+function normalizePostBodyHtml(body: string): string {
+	const typed = body.trim();
+	if (typed === '') {
+		return '';
+	}
+	const wrapped = containsHtmlTag(typed) ? typed : `<p>${typed}</p>`;
+	return sanitizePostHtml(wrapped).trim();
 }
 
 /**
@@ -856,7 +907,7 @@ async function residentIdForUser(
 /**
  * What an audit row records about a Post.
  *
- * Deliberately not `bodyMarkdown`. An audit row exists so that a later reader can see who changed
+ * Deliberately not `bodyHtml`. An audit row exists so that a later reader can see who changed
  * what, and a body is long enough that two copies of it per edit would bury every other column in
  * the log; the fields below are the ones somebody reading the log is actually asking about.
  */

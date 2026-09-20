@@ -193,7 +193,7 @@
 	"adminPosts_form_summaryLabel": "Summary",
 	"adminPosts_form_summaryHint": "One or two sentences. This is what appears in the list and in the notification email.",
 	"adminPosts_form_bodyLabel": "Body",
-	"adminPosts_form_bodyHint": "Written in Markdown: **bold**, *italic*, lists, links, quotes and tables. Images inside the body are not shown — use the cover image below.",
+	"adminPosts_form_bodyHint": "The body supports bold, italic, lists, links, quotes and tables. Images inside the body are not shown — use the cover image below.",
 	"adminPosts_form_categoryLabel": "Category",
 	"adminPosts_form_eventHeading": "Activity time and place",
 	"adminPosts_form_eventHint": "Only filled in for an activity. An announcement may not have a time or a place.",
