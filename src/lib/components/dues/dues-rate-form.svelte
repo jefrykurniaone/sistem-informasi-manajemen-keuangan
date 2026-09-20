@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RupiahInput from '$lib/components/rupiah-input.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import type { Rupiah } from '$lib/money';
 	import * as m from '$lib/paraglide/messages.js';
@@ -54,15 +55,12 @@
 		<label class="text-sm font-medium" for="dues-rate-amount-{uid}">
 			{m.adminDuesRates_amountLabel()}
 		</label>
-		<input
+		<RupiahInput
 			id="dues-rate-amount-{uid}"
 			name="amount"
-			type="text"
-			inputmode="numeric"
 			required
-			value={rate ? String(rate.amount) : ''}
+			value={rate?.amount ?? ''}
 			placeholder={m.adminDuesRates_amountPlaceholder()}
-			class="h-11 rounded-md border border-border bg-background px-3 text-sm"
 		/>
 	</div>
 

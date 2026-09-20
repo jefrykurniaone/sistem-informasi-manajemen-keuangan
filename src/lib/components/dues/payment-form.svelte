@@ -43,6 +43,7 @@
 
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import RupiahInput from '$lib/components/rupiah-input.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import ProofUpload from '$lib/components/dues/proof-upload.svelte';
 	import { formatRupiah, rupiah } from '$lib/money';
@@ -64,8 +65,14 @@
 	 * pengurus decides the allocation at verification, oldest Tagihan first, and the hint under the
 	 * picker says so rather than letting the resident believe they have chosen it.
 	 *
-	 * Without JavaScript nothing is lost but the addition: the nominal field is an ordinary required
-	 * input, and the form posts and saves exactly as it does with it.
+	 * ## The nominal field needs JavaScript
+	 *
+	 * It is a `RupiahInput`, which shows the amount grouped as `1.500.000` and posts the plain digits
+	 * from a hidden field beside it — so an amount typed with JavaScript off reaches no hidden field and
+	 * is not posted. That is a change from the ordinary input this form used to carry, and it is the
+	 * price of the formatting: see `src/lib/components/rupiah-input.svelte`. The picker's addition
+	 * writes through the same binding, so ticking a Tagihan still fills the field in and the hidden
+	 * value follows it.
 	 */
 	interface Props {
 		/** Where to post. */
@@ -200,15 +207,13 @@
 		<label class="text-sm font-medium" for="payment-amount-{uid}">
 			{m.payments_form_amountLabel()}
 		</label>
-		<input
+		<RupiahInput
 			id="payment-amount-{uid}"
 			name="amount"
-			type="text"
-			inputmode="numeric"
 			required
 			bind:value={amount}
 			aria-describedby="payment-amount-hint-{uid}"
-			class="h-11 w-full rounded-md border border-border bg-background px-3 text-sm"
+			class="w-full"
 		/>
 		<p id="payment-amount-hint-{uid}" class="text-sm text-muted-foreground">
 			{m.payments_form_amountHint({ example: formatRupiah(rupiah(150_000)) })}
