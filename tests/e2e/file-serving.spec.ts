@@ -273,17 +273,13 @@ test('a published cover image really renders for a browser with no session, thro
 	page,
 	browser
 }) => {
-	// Blocked on the same application defect `tests/e2e/posts-public.spec.ts` records at length:
-	// changing `Tipe` on the Post form clears the `required` `Judul` input, the browser then refuses
-	// to submit `Simpan draf`, and the page never leaves `/admin/posts/new` — which is why the
+	// Used to be blocked on the same application defect `tests/e2e/posts-public.spec.ts` records at
+	// length: changing `Tipe` on the Post form cleared the `required` `Judul` input, the browser then
+	// refused to submit `Simpan draf`, and the page never left `/admin/posts/new` — which is why the
 	// `Berkas gambar` field below was never found. The old `toHaveURL(/\/admin\/posts\/[^/]+$/)` on
 	// the line after the submit hid that, because `/admin/posts/new` matches it; #111 tightened the
-	// same assertion in `posts-public.spec.ts` for this reason. The defect itself is #119; take this
-	// `fixme` off once that has landed.
-	test.fixme(
-		true,
-		'#119: Changing Tipe on the Post form clears the required Judul input, so Simpan draf is held back by the browser own form validation and no Post is ever created. Application defect in src/lib/components/post/post-form.svelte, see #119.'
-	);
+	// same assertion in `posts-public.spec.ts` for this reason. The defect itself was #119, fixed in
+	// `src/lib/components/post/post-form.svelte`.
 	const email = anAddress('cover');
 	await signUpAdmin(page, email);
 
