@@ -36,11 +36,35 @@ const PNG = Buffer.from(
 	'base64'
 );
 
-const pool = new Pool({ connectionString: DATABASE_URL });
+/**
+ * This file's own connection, opened on first use by each job and closed by the job that opened
+ * it. Not a module-scope pool closed once — see `tests/e2e/auth.spec.ts` for why `fullyParallel`
+ * runs `afterAll` more than once in one worker process, and what `pg` does about it.
+ */
+let openPool: Pool | undefined;
+
+/** The connection, opened on first use by this job. */
+function pool(): Pool {
+	openPool ??= new Pool({ connectionString: DATABASE_URL });
+	return openPool;
+}
 
 test.afterAll(async () => {
-	await pool.end();
+	const closing = openPool;
+	openPool = undefined;
+	await closing?.end();
 });
+
+/**
+ * Opens `path` and waits until the page can be typed into. `goto` on its own is not enough:
+ * Svelte's hydration writes every `value={…}` binding back over whatever was typed before it ran,
+ * which empties a `required` field and leaves a form the browser will not submit. See
+ * `tests/e2e/auth.spec.ts` for the measurement and for why `networkidle` is the signal.
+ */
+async function open(page: Page, path: string): Promise<void> {
+	await page.goto(path);
+	await page.waitForLoadState('networkidle');
+}
 
 /** An address no other run of this spec will have used. */
 function anAddress(label: string): string {
@@ -61,7 +85,7 @@ function today(): string {
 async function verificationToken(recipient: string): Promise<string> {
 	const deadline = Date.now() + QUEUE_WAIT_MILLISECONDS;
 	while (Date.now() < deadline) {
-		const result = await pool.query<{ payload: { url?: string } }>(
+		const result = await pool().query<{ payload: { url?: string } }>(
 			"select payload from email_queue where recipient = $1 and kind = 'verify-email' order by created_at desc limit 1",
 			[recipient]
 		);
@@ -79,7 +103,7 @@ async function verificationToken(recipient: string): Promise<string> {
 
 /** Registers an account, verifies its address, and answers its `user.id`. Signed out afterwards. */
 async function signUp(page: Page, email: string, name: string): Promise<string> {
-	await page.goto('/register');
+	await open(page, '/register');
 	await page.getByLabel('Nama').fill(name);
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Blok rumah').fill('E2EP');
@@ -92,7 +116,7 @@ async function signUp(page: Page, email: string, name: string): Promise<string> 
 	const token = await verificationToken(email);
 	await page.goto(`/verify?token=${encodeURIComponent(token)}`);
 
-	const { rows } = await pool.query<{ id: string }>('select id from "user" where email = $1', [
+	const { rows } = await pool().query<{ id: string }>('select id from "user" where email = $1', [
 		email
 	]);
 	const userId = rows[0]?.id;
@@ -104,15 +128,18 @@ async function signUp(page: Page, email: string, name: string): Promise<string> 
 
 /** Signs `email` in on `page`. */
 async function logIn(page: Page, email: string): Promise<void> {
-	await page.goto('/login');
+	await open(page, '/login');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Kata sandi').fill(PASSWORD);
 	await page.getByRole('button', { name: 'Masuk' }).click();
+	// The session has to have landed before the caller navigates — see the same wait, with its
+	// reasoning, in `tests/e2e/posts-public.spec.ts`.
+	await expect(page).toHaveURL(/\/$/);
 }
 
 /** Gives an account a `residents` row, and answers its id. */
 async function insertResident(userId: string): Promise<string> {
-	const { rows } = await pool.query<{ id: string }>(
+	const { rows } = await pool().query<{ id: string }>(
 		'insert into residents (user_id, created_at) values ($1, now()) returning id',
 		[userId]
 	);
@@ -129,17 +156,17 @@ test('a warga records a payment with proof, an admin verifies it, and the Tagiha
 	const residentId = await insertResident(residentUserId);
 
 	const unitNumber = String(Date.now());
-	const { rows: unitRows } = await pool.query<{ id: string }>(
+	const { rows: unitRows } = await pool().query<{ id: string }>(
 		"insert into units (block, number, created_at) values ('E2EP', $1, now()) returning id",
 		[unitNumber]
 	);
 	const unitId = unitRows[0].id;
-	await pool.query(
+	await pool().query(
 		"insert into occupancies (unit_id, resident_id, role, started_on, is_primary_occupant, created_at) values ($1, $2, 'owner', '2025-01-01', true, now())",
 		[unitId, residentId]
 	);
 	const period = currentPeriod();
-	await pool.query(
+	await pool().query(
 		'insert into invoices (unit_id, period, amount, due_date, issued_at) values ($1, $2, 150000, $3, now())',
 		[unitId, period, `${period}-05`]
 	);
@@ -148,7 +175,7 @@ test('a warga records a payment with proof, an admin verifies it, and the Tagiha
 
 	// ── The warga records the transfer, with the photo of its receipt. ──
 	await logIn(page, residentEmail);
-	await page.goto('/payments/new');
+	await open(page, '/payments/new');
 	// One house, so the form fixes the unit; ticking the Tagihan fills the amount in.
 	await expect(page.getByText(period)).toBeVisible();
 	await page.getByRole('checkbox').first().check();
@@ -167,7 +194,7 @@ test('a warga records a payment with proof, an admin verifies it, and the Tagiha
 	const adminContext = await browser.newContext();
 	const adminPage = await adminContext.newPage();
 	const adminUserId = await signUp(adminPage, adminEmail, 'Pengurus E2E Pembayaran');
-	await pool.query(
+	await pool().query(
 		"insert into user_roles (user_id, role, created_at) values ($1, 'admin', now())",
 		[adminUserId]
 	);

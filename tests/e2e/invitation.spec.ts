@@ -40,11 +40,35 @@ const PASSWORD = 'kata sandi ujung ke ujung';
 /** The label on every address field in the flow. */
 const EMAIL_FIELD = 'Alamat email';
 
-const pool = new Pool({ connectionString: DATABASE_URL });
+/**
+ * This file's own connection, opened on first use by each job and closed by the job that opened
+ * it. Not a module-scope pool closed once — see `tests/e2e/auth.spec.ts` for why `fullyParallel`
+ * runs `afterAll` more than once in one worker process, and what `pg` does about it.
+ */
+let openPool: Pool | undefined;
+
+/** The connection, opened on first use by this job. */
+function pool(): Pool {
+	openPool ??= new Pool({ connectionString: DATABASE_URL });
+	return openPool;
+}
 
 test.afterAll(async () => {
-	await pool.end();
+	const closing = openPool;
+	openPool = undefined;
+	await closing?.end();
 });
+
+/**
+ * Opens `path` and waits until the page can be typed into. `goto` on its own is not enough:
+ * Svelte's hydration writes every `value={…}` binding back over whatever was typed before it ran,
+ * which empties a `required` field and leaves a form the browser will not submit. See
+ * `tests/e2e/auth.spec.ts` for the measurement and for why `networkidle` is the signal.
+ */
+async function open(page: Page, path: string): Promise<void> {
+	await page.goto(path);
+	await page.waitForLoadState('networkidle');
+}
 
 /** An address no other run of this spec will have used. */
 function anAddress(label: string): string {
@@ -60,7 +84,7 @@ function aBlock(): string {
 async function linkFromQueuedEmail(recipient: string, kind: string): Promise<string> {
 	const deadline = Date.now() + QUEUE_WAIT_MILLISECONDS;
 	while (Date.now() < deadline) {
-		const result = await pool.query<{ payload: { url?: string } }>(
+		const result = await pool().query<{ payload: { url?: string } }>(
 			'select payload from email_queue where recipient = $1 and kind = $2 order by created_at desc limit 1',
 			[recipient, kind]
 		);
@@ -90,7 +114,7 @@ function acceptPathOf(link: string): string {
 /** Registers, verifies and signs a superuser in, granting the role by SQL — see the doc comment. */
 async function signedInSuperuser(page: Page): Promise<string> {
 	const email = anAddress('superuser');
-	await page.goto('/register');
+	await open(page, '/register');
 	await page.getByLabel('Nama').fill('Pengurus E2E');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	// The claimed house the form asks for since #21. Nothing here checks it against `units`, and a
@@ -106,14 +130,14 @@ async function signedInSuperuser(page: Page): Promise<string> {
 	await page.goto(`/verify?token=${encodeURIComponent(tokenFromQuery(verifyLink))}`);
 	await expect(page.getByText('Alamat email Anda sudah terverifikasi')).toBeVisible();
 
-	await pool.query(
+	await pool().query(
 		`insert into user_roles (user_id, role, created_at)
 		 select id, 'superuser', now() from "user" where email = $1
 		 on conflict do nothing`,
 		[email]
 	);
 
-	await page.goto('/login');
+	await open(page, '/login');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Kata sandi').fill(PASSWORD);
 	await page.getByRole('button', { name: 'Masuk' }).click();
@@ -124,7 +148,7 @@ async function signedInSuperuser(page: Page): Promise<string> {
 /** A unit row of this run's own, returning its id and block. */
 async function insertUnit(): Promise<{ unitId: string; block: string }> {
 	const block = aBlock();
-	const result = await pool.query<{ id: string }>(
+	const result = await pool().query<{ id: string }>(
 		"insert into units (block, number, created_at) values ($1, '1', now()) returning id",
 		[block]
 	);
@@ -133,7 +157,7 @@ async function insertUnit(): Promise<{ unitId: string; block: string }> {
 
 /** Sends one invitation through the admin screen and returns the emailed accept path. */
 async function inviteThroughScreen(page: Page, block: string, email: string): Promise<string> {
-	await page.goto('/admin/invitations');
+	await open(page, '/admin/invitations');
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Undangan warga');
 	await page.getByLabel('Unit').selectOption({ label: `${block} — 1` });
 	await page.getByLabel(EMAIL_FIELD, { exact: true }).fill(email);
@@ -148,7 +172,7 @@ async function acceptInBrowser(browser: Browser, acceptPath: string, block: stri
 	const context = await browser.newContext();
 	const invitee = await context.newPage();
 	try {
-		await invitee.goto(acceptPath);
+		await open(invitee, acceptPath);
 		await expect(invitee.getByRole('heading', { level: 1 })).toHaveText('Terima undangan');
 		await invitee.getByLabel('Nama').fill('Warga Diundang');
 		await invitee.getByLabel('Kata sandi', { exact: true }).fill(PASSWORD);
@@ -189,7 +213,7 @@ test('an expired link is refused with its own message, and a resend makes a work
 	const oldPath = await inviteThroughScreen(page, block, inviteeEmail);
 
 	// Age the link — see the doc comment for why this travels through the database.
-	await pool.query('update invitations set expires_at = now() where email = $1', [inviteeEmail]);
+	await pool().query('update invitations set expires_at = now() where email = $1', [inviteeEmail]);
 
 	const context = await browser.newContext();
 	const invitee = await context.newPage();
@@ -202,7 +226,7 @@ test('an expired link is refused with its own message, and a resend makes a work
 
 	// The superuser resends from the list — this invitation's own card, because other tests may
 	// have put cards of their own above it.
-	await page.goto('/admin/invitations');
+	await open(page, '/admin/invitations');
 	await page
 		.locator('article', { hasText: inviteeEmail })
 		.getByRole('button', { name: 'Kirim ulang' })

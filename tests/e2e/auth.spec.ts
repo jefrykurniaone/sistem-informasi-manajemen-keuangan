@@ -46,10 +46,39 @@ const EMAIL_FIELD = 'Alamat email';
 /** The sign-in page. */
 const LOGIN_PATH = '/login';
 
-const pool = new Pool({ connectionString: DATABASE_URL });
+/**
+ * This file's own connection, opened when a test first needs one and opened again after it has
+ * been closed.
+ *
+ * **Not a `const` pool closed once in `afterAll`**, which is what every spec in this directory
+ * used to be, and which `fullyParallel: true` breaks. Playwright gives each test a job of its own
+ * under that setting, two jobs of one file can land in the same worker process, and it runs
+ * `beforeAll` and `afterAll` around each of those jobs against the one module instance the worker
+ * has already imported — so the hook below really does run more than once per process. `pg` throws
+ * "Called end on pool more than once" on the second `end()`, and throws again on any query made
+ * through a pool that was closed, so the old shape failed one way or the other as soon as the
+ * runner split a file. Measured while fixing #112: `tests/e2e/file-serving.spec.ts:140` failed
+ * with exactly that message, and only ever above `--workers=1`.
+ *
+ * Opening per job rather than per file costs one connection handshake and takes the whole question
+ * away: each job closes exactly the pool it opened.
+ *
+ * The other specs in this directory carry the same two lines and point back here for the reason,
+ * the way they already copy their sign-up helpers rather than importing one — importing from a
+ * spec file would register its tests a second time.
+ */
+let openPool: Pool | undefined;
+
+/** The connection, opened on first use by this job. */
+function pool(): Pool {
+	openPool ??= new Pool({ connectionString: DATABASE_URL });
+	return openPool;
+}
 
 test.afterAll(async () => {
-	await pool.end();
+	const closing = openPool;
+	openPool = undefined;
+	await closing?.end();
 });
 
 /** An address no other run of this spec will have used. */
@@ -61,7 +90,7 @@ function anAddress(label: string): string {
 async function tokenFromQueuedEmail(recipient: string, kind: string): Promise<string> {
 	const deadline = Date.now() + QUEUE_WAIT_MILLISECONDS;
 	while (Date.now() < deadline) {
-		const result = await pool.query<{ payload: { url?: string } }>(
+		const result = await pool().query<{ payload: { url?: string } }>(
 			'select payload from email_queue where recipient = $1 and kind = $2 order by created_at desc limit 1',
 			[recipient, kind]
 		);
@@ -77,9 +106,40 @@ async function tokenFromQueuedEmail(recipient: string, kind: string): Promise<st
 	throw new Error(`No email of kind "${kind}" was queued for ${recipient}.`);
 }
 
+/**
+ * Opens `path` and waits until the page can be typed into.
+ *
+ * `goto` on its own is not enough, and the reason is measured rather than guessed. The page
+ * arrives server-rendered and Svelte hydrates it a moment later, and hydration writes every
+ * `value={…}` binding back over the DOM — so anything typed before it runs is thrown away. With
+ * the client chunks held back two seconds and `goto` told not to wait for them, an address filled
+ * into `Alamat email` on `/login` survived twelve readings and was empty on the thirteenth, at the
+ * moment hydration landed, and stayed empty. `Alamat email` is `required`, so what that leaves is
+ * a form the browser silently refuses to submit and no error anywhere to say why: `/login`, still
+ * showing, with an empty address and a full password. That is exactly the page every one of #112's
+ * parallel failures was looking at.
+ *
+ * It only bites above one worker because six Chromium instances share this machine, and hydration
+ * then slips past `load` often enough to lose the race several times per run.
+ *
+ * `networkidle` is the signal because it needs to know nothing about Svelte or SvelteKit:
+ * hydration runs as soon as the client chunks resolve, and this application opens no socket and
+ * polls nothing, so half a second with no network activity means those chunks have arrived and
+ * run. Playwright discourages `networkidle` as a way of deciding an application is *ready* — that
+ * is what the assertions in these tests are for — but "the last module has arrived" is exactly
+ * what it does report.
+ *
+ * The other specs in this directory carry the same helper and point back here, the way they
+ * already copy their sign-up helpers rather than importing one.
+ */
+async function open(page: Page, path: string): Promise<void> {
+	await page.goto(path);
+	await page.waitForLoadState('networkidle');
+}
+
 /** Fills in the registration form and submits it. */
 async function register(page: Page, email: string, password = PASSWORD): Promise<void> {
-	await page.goto('/register');
+	await open(page, '/register');
 	await page.getByLabel('Nama').fill('Warga Uji');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	// The claimed house the form asks for since #21. Nothing here checks it against `units`, and a
@@ -89,11 +149,15 @@ async function register(page: Page, email: string, password = PASSWORD): Promise
 	await page.getByLabel('Kata sandi', { exact: true }).fill(password);
 	await page.getByLabel('Ulangi kata sandi').fill(password);
 	await page.getByRole('button', { name: 'Daftar' }).click();
+	// Waiting here rather than leaving it to whichever test cares. Clicking only posts the form,
+	// and the sign-up is still running when `click` resolves — the test below that registers and
+	// then goes straight to `/login` would otherwise race its own account into existence.
+	await expect(page).toHaveURL(/\/verify/);
 }
 
 /** Fills in the sign-in form and submits it. */
 async function signIn(page: Page, email: string, password = PASSWORD): Promise<void> {
-	await page.goto(LOGIN_PATH);
+	await open(page, LOGIN_PATH);
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Kata sandi').fill(password);
 	await page.getByRole('button', { name: 'Masuk' }).click();
@@ -164,21 +228,21 @@ test('a forgotten password is recovered through the emailed link, which works on
 	const verifyToken = await tokenFromQueuedEmail(email, 'verify-email');
 	await page.goto(`/verify?token=${encodeURIComponent(verifyToken)}`);
 
-	await page.goto('/forgot-password');
+	await open(page, '/forgot-password');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByRole('button', { name: 'Kirim tautan' }).click();
 	await expect(page.getByRole('status')).toContainText('hanya bisa dipakai sekali');
 
 	const resetToken = await tokenFromQueuedEmail(email, 'password-reset');
 	const resetPath = `/set-password?token=${encodeURIComponent(resetToken)}`;
-	await page.goto(resetPath);
+	await open(page, resetPath);
 	await page.getByLabel('Kata sandi baru', { exact: true }).fill(newPassword);
 	await page.getByLabel('Ulangi kata sandi baru').fill(newPassword);
 	await page.getByRole('button', { name: 'Simpan kata sandi' }).click();
 	await expect(page).toHaveURL(/\/login/);
 
 	// The same link a second time is refused, because using it deleted it.
-	await page.goto(resetPath);
+	await open(page, resetPath);
 	await page.getByLabel('Kata sandi baru', { exact: true }).fill(newPassword);
 	await page.getByLabel('Ulangi kata sandi baru').fill(newPassword);
 	await page.getByRole('button', { name: 'Simpan kata sandi' }).click();

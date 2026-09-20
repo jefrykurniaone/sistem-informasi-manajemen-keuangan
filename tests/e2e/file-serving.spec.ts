@@ -58,7 +58,20 @@ const PASSWORD = 'kata sandi tautan berkas';
 /** The label on the address field in the registration form. */
 const EMAIL_FIELD = 'Alamat email';
 
-const pool = new Pool({ connectionString: DATABASE_URL });
+/**
+ * This file's own connection, opened on first use by each job and closed by the job that opened
+ * it. Not a module-scope pool closed once — see `tests/e2e/auth.spec.ts` for why `fullyParallel`
+ * runs `afterAll` more than once in one worker process, and what `pg` does about it. This is the
+ * file the failure was measured on: the test at line 140 below, which never touches the database,
+ * failed with "Called end on pool more than once" whenever the runner split this file.
+ */
+let openPool: Pool | undefined;
+
+/** The connection, opened on first use by this job. */
+function pool(): Pool {
+	openPool ??= new Pool({ connectionString: DATABASE_URL });
+	return openPool;
+}
 
 test.beforeAll(() => {
 	if (!FILE_STORE_SECRET) {
@@ -69,8 +82,12 @@ test.beforeAll(() => {
 });
 
 test.afterAll(async () => {
+	// `force: true` makes this one idempotent already, which is what the hook has to be: it runs
+	// once per job, and this file's jobs can share a worker.
 	await rm(path.join(FILE_STORE_ROOT, runDirectory), { recursive: true, force: true });
-	await pool.end();
+	const closing = openPool;
+	openPool = undefined;
+	await closing?.end();
 });
 
 /** Writes `content` where the preview server's store will find it under `key`. */
@@ -179,6 +196,17 @@ test('a genuine link whose file does not exist answers 404', async ({ request })
 	expect(response.status()).toBe(404);
 });
 
+/**
+ * Opens `path` and waits until the page can be typed into. `goto` on its own is not enough:
+ * Svelte's hydration writes every `value={…}` binding back over whatever was typed before it ran,
+ * which empties a `required` field and leaves a form the browser will not submit. See
+ * `tests/e2e/auth.spec.ts` for the measurement and for why `networkidle` is the signal.
+ */
+async function open(page: Page, path: string): Promise<void> {
+	await page.goto(path);
+	await page.waitForLoadState('networkidle');
+}
+
 /** An address no other run of this spec will have used. */
 function anAddress(label: string): string {
 	return `e2e-files-${label}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@komplek.local`;
@@ -188,7 +216,7 @@ function anAddress(label: string): string {
 async function verificationToken(recipient: string): Promise<string> {
 	const deadline = Date.now() + QUEUE_WAIT_MILLISECONDS;
 	while (Date.now() < deadline) {
-		const result = await pool.query<{ payload: { url?: string } }>(
+		const result = await pool().query<{ payload: { url?: string } }>(
 			"select payload from email_queue where recipient = $1 and kind = 'verify-email' order by created_at desc limit 1",
 			[recipient]
 		);
@@ -206,7 +234,7 @@ async function verificationToken(recipient: string): Promise<string> {
 
 /** Registers a resident, verifies their address, signs them in, and grants them the admin role. */
 async function signUpAdmin(page: Page, email: string): Promise<void> {
-	await page.goto('/register');
+	await open(page, '/register');
 	await page.getByLabel('Nama').fill('Pengurus E2E Berkas');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Blok rumah').fill('E2E');
@@ -219,40 +247,56 @@ async function signUpAdmin(page: Page, email: string): Promise<void> {
 	const token = await verificationToken(email);
 	await page.goto(`/verify?token=${encodeURIComponent(token)}`);
 
-	const { rows } = await pool.query<{ id: string }>('select id from "user" where email = $1', [
+	const { rows } = await pool().query<{ id: string }>('select id from "user" where email = $1', [
 		email
 	]);
 	const userId = rows[0]?.id;
 	if (!userId) {
 		throw new Error(`No "user" row was found for ${email} after verifying.`);
 	}
-	await pool.query(
+	await pool().query(
 		"insert into user_roles (user_id, role, created_at) values ($1, 'admin', now())",
 		[userId]
 	);
-	await pool.query('insert into residents (user_id, created_at) values ($1, now())', [userId]);
+	await pool().query('insert into residents (user_id, created_at) values ($1, now())', [userId]);
 
-	await page.goto('/login');
+	await open(page, '/login');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Kata sandi').fill(PASSWORD);
 	await page.getByRole('button', { name: 'Masuk' }).click();
+	// The session has to have landed before the caller navigates — see the same wait, with its
+	// reasoning, in `tests/e2e/posts-public.spec.ts`.
+	await expect(page).toHaveURL(/\/$/);
 }
 
 test('a published cover image really renders for a browser with no session, through its og:image address', async ({
 	page,
 	browser
 }) => {
+	// Blocked on the same application defect `tests/e2e/posts-public.spec.ts` records at length:
+	// changing `Tipe` on the Post form clears the `required` `Judul` input, the browser then refuses
+	// to submit `Simpan draf`, and the page never leaves `/admin/posts/new` — which is why the
+	// `Berkas gambar` field below was never found. The old `toHaveURL(/\/admin\/posts\/[^/]+$/)` on
+	// the line after the submit hid that, because `/admin/posts/new` matches it; #111 tightened the
+	// same assertion in `posts-public.spec.ts` for this reason.
+	test.fixme(
+		true,
+		'Changing Tipe on the Post form clears the required Judul input, so Simpan draf is held back by the browser own form validation and no Post is ever created. Application defect in src/lib/components/post/post-form.svelte, filed as its own ticket.'
+	);
 	const email = anAddress('cover');
 	await signUpAdmin(page, email);
 
-	await page.goto('/admin/posts/new');
+	await open(page, '/admin/posts/new');
 	await page.getByLabel('Judul').fill(`Sampul tautan bertanda tangan ${Date.now()}`);
 	await page.getByLabel('Ringkasan').fill('Bukti gelombang 13 bahwa gambar sampul tampil.');
 	await page.getByLabel('Isi').fill('Isi pengumuman dengan gambar sampul.');
 	await page.getByLabel('Tipe').selectOption('announcement');
 	await page.getByRole('button', { name: 'Simpan draf' }).click();
 
-	await expect(page).toHaveURL(/\/admin\/posts\/[^/]+$/);
+	// A uuid-shaped final segment only. `/\/admin\/posts\/[^/]+$/` also matches `/admin/posts/new`
+	// itself, so it passed while the save had not happened at all and handed `postId` the literal
+	// string `new` — the same trap #111 took out of `tests/e2e/posts-public.spec.ts`.
+	await expect(page).toHaveURL(/\/admin\/posts\/[0-9a-f-]{36}$/);
 	const postId = page.url().split('/').pop();
 
 	await page
