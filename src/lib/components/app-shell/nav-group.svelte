@@ -54,11 +54,26 @@
 	 * address landing inside it — stays open until a click on its own title, Escape, another group
 	 * opening, or a new address closes it.
 	 *
-	 * That is the usual menu convention, and here it is also a correctness rule. Clicking the title
-	 * of a group *below* the open one collapses the one above it, which lifts the clicked row out
-	 * from under the pointer with the pointer never having moved. The browser fires `pointerleave`
-	 * for that lift, and without this rule that stray event scheduled a close on the group the
-	 * click had just opened, so switching downward shut everything.
+	 * That is the usual menu convention, and here it is also a correctness rule. Opening the group
+	 * *below* the open one collapses the one above it, which lifts the newly opened row out from
+	 * under the pointer with the pointer never having moved. The browser fires `pointerleave` for
+	 * that lift, and a stray leave used to schedule a close on the group that had just opened, so
+	 * switching downward shut everything.
+	 *
+	 * ## Hover only counts as hover while the row stays under the pointer
+	 *
+	 * Pinning on click fixed the click path and not the hover path, which suffers the same lift:
+	 * hovering a group below an open one opened it, collapsed the group above, and the row jumped
+	 * away from a motionless pointer. So the hover timer pins too, when it has to. One animation
+	 * frame after it opens the group — by then the collapse above has been laid out — it asks
+	 * whether the row still covers the last place the pointer actually was, recorded from
+	 * `pointerenter` and `pointermove` and never from a leave. If it does not, the pointer did not
+	 * leave, the row left: the open is treated as pinned and any close the stray leave has already
+	 * scheduled is cancelled.
+	 *
+	 * A pointer that leaves by its own motion is untouched by that test, because the last recorded
+	 * position is then the last one *inside* an unmoved row, which the row still covers. Opening a
+	 * group *above* an open one does not shift its own row either. Both keep closing on hover.
 	 */
 	interface Props {
 		readonly group: MenuGroup;
@@ -96,6 +111,22 @@
 
 	let openTimer: ReturnType<typeof setTimeout> | null = null;
 	let closeTimer: ReturnType<typeof setTimeout> | null = null;
+	let settleFrame: number | null = null;
+
+	/** The row, so the frame after an open can ask where it ended up. */
+	let itemElement = $state<HTMLLIElement | null>(null);
+
+	/**
+	 * The last place the pointer was seen over this group. Written by `pointerenter` and
+	 * `pointermove`, and deliberately never by `pointerleave` — that is what lets the settle check
+	 * below tell a row that moved from a pointer that moved.
+	 *
+	 * It is only ever *read* one frame after a hover opened the group, and a hover can only open a
+	 * group that is shut, which is when no floating panel exists to have recorded anything. So the
+	 * value the check sees is always a position on the row, never one on the panel.
+	 */
+	let lastPointerX: number | null = null;
+	let lastPointerY: number | null = null;
 
 	/**
 	 * Whether the open group on screen is the one this component's hover timer opened. False for
@@ -125,6 +156,46 @@
 		}
 	}
 
+	function cancelSettle(): void {
+		if (settleFrame !== null) {
+			cancelAnimationFrame(settleFrame);
+			settleFrame = null;
+		}
+	}
+
+	/** Where the pointer last was over this group. Never called from a leave — see the note above. */
+	function rememberPointer(event: PointerEvent): void {
+		lastPointerX = event.clientX;
+		lastPointerY = event.clientY;
+	}
+
+	function covers(rect: DOMRect, x: number, y: number): boolean {
+		return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+	}
+
+	/**
+	 * One frame after a hover opened this group, when the collapse of whatever was open above it
+	 * has been laid out: if the row no longer covers the last place the pointer was, the row moved
+	 * and the pointer did not, so this open is pinned rather than hover's to undo.
+	 *
+	 * The close is cancelled as well as the flag cleared, because the stray `pointerleave` can be
+	 * dispatched either side of this frame and would otherwise have scheduled one already.
+	 */
+	function pinWhenRowMovedAway(): void {
+		cancelSettle();
+		settleFrame = requestAnimationFrame(() => {
+			settleFrame = null;
+			if (itemElement === null || lastPointerX === null || lastPointerY === null) {
+				return;
+			}
+			if (covers(itemElement.getBoundingClientRect(), lastPointerX, lastPointerY)) {
+				return;
+			}
+			hoverOpened = false;
+			cancelClose();
+		});
+	}
+
 	/**
 	 * A pointer arriving on the trigger or on the open panel. A touch reports `pointerType` of
 	 * `'touch'` and is ignored outright, so a tap opens the group exactly once through the click
@@ -134,6 +205,7 @@
 		if (event.pointerType === 'touch') {
 			return;
 		}
+		rememberPointer(event);
 		// Arriving anywhere inside the group — the trigger or the panel it opened — cancels the
 		// close this same handler's counterpart scheduled. That is SC 1.4.13's "Hoverable".
 		cancelClose();
@@ -145,6 +217,7 @@
 			openTimer = null;
 			hoverOpened = true;
 			onOpenChange(true);
+			pinWhenRowMovedAway();
 		}, HOVER_OPEN_DELAY_MS);
 	}
 
@@ -173,6 +246,7 @@
 	function handleOpenChange(next: boolean): void {
 		cancelOpen();
 		cancelClose();
+		cancelSettle();
 		hoverOpened = false;
 		onOpenChange(next);
 	}
@@ -189,11 +263,12 @@
 		return itemKey === activeItemKey;
 	}
 
-	// Both timers die with the component: a group can be removed from the menu by a locale switch
-	// or a role change while one of them is still pending.
+	// Both timers and the settle frame die with the component: a group can be removed from the menu
+	// by a locale switch or a role change while one of them is still pending.
 	onDestroy(() => {
 		cancelOpen();
 		cancelClose();
+		cancelSettle();
 	});
 </script>
 
@@ -201,7 +276,9 @@
 	<DropdownMenu.Root {open} onOpenChange={handleOpenChange}>
 		<Sidebar.Menu>
 			<Sidebar.MenuItem
+				bind:ref={itemElement}
 				onpointerenter={handlePointerEnter}
+				onpointermove={rememberPointer}
 				onpointerleave={handlePointerLeave}
 				onkeydown={handleKeydown}
 			>
@@ -259,7 +336,9 @@
 	<Collapsible.Root {open} onOpenChange={handleOpenChange} class="group/collapsible">
 		<Sidebar.Menu>
 			<Sidebar.MenuItem
+				bind:ref={itemElement}
 				onpointerenter={handlePointerEnter}
+				onpointermove={rememberPointer}
 				onpointerleave={handlePointerLeave}
 				onkeydown={handleKeydown}
 			>
