@@ -18,7 +18,26 @@
 			<a class="text-sm font-semibold tracking-tight" href={resolve('/')}>
 				{m.appShell_brand()}
 			</a>
-			<Navigation signedIn={data.signedIn} canManageRoles={data.canManageRoles} />
+			<Navigation
+				signedIn={data.signedIn}
+				canManageRoles={data.canManageRoles}
+				canManageUnits={data.canManageUnits}
+				canManageJobs={data.canManageJobs}
+				canManagePosts={data.canManagePosts}
+				canImportResidents={data.canImportResidents}
+				canManageInvitations={data.canManageInvitations}
+				canManageRegistrations={data.canManageRegistrations}
+				canManageDuesRates={data.canManageDuesRates}
+				canManageCashCategories={data.canManageCashCategories}
+				canRecordOpeningBalance={data.canRecordOpeningBalance}
+				canManageExemptions={data.canManageExemptions}
+				canRecordCashTransactions={data.canRecordCashTransactions}
+				canReadPeriods={data.canReadPeriods}
+				canReadAllComplaints={data.canReadAllComplaints}
+				canReadOverdue={data.canReadOverdue}
+				canVerifyPayments={data.canVerifyPayments}
+				canPublishReports={data.canPublishReports}
+			/>
 			<div class="ml-auto">
 				<LanguageSwitcher />
 			</div>
