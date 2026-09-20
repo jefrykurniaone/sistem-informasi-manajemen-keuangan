@@ -38,7 +38,16 @@
 		</form>
 	{/if}
 
-	<a class="text-sm underline underline-offset-4" href={resolve('/')}>
+	<!--
+		`min-h-11` with `inline-flex items-center` rather than the bare text link this started as: a
+		44 px tap target is the rule, and an anchor styled as text is 20 px tall however long its
+		label is. `self-start` keeps it from stretching across the column the way a flex child
+		otherwise would.
+	-->
+	<a
+		class="inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4"
+		href={resolve('/')}
+	>
 		{m.unsubscribe_homeLink()}
 	</a>
 </main>
