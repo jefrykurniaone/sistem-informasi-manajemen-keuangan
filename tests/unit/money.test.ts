@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatRupiah, parseRupiah, rupiah, type Rupiah } from '$lib/money';
+import { formatRupiah, groupThousands, parseRupiah, rupiah, type Rupiah } from '$lib/money';
 
 describe('rupiah', () => {
 	it.each([
@@ -27,6 +27,28 @@ describe('rupiah', () => {
 		{ name: 'below the safe bound', input: Number.MIN_SAFE_INTEGER - 2 }
 	])('rejects a value $name', ({ input }) => {
 		expect(() => rupiah(input)).toThrow(RangeError);
+	});
+});
+
+describe('groupThousands', () => {
+	// The shared grouping of `formatRupiah` and of `rupiah-input.svelte`, so that a nominal being
+	// typed and the same number in a table are never two different shapes.
+	it.each([
+		{ input: '', output: '' },
+		{ input: '5', output: '5' },
+		{ input: '999', output: '999' },
+		{ input: '1000', output: '1.000' },
+		{ input: '1500000', output: '1.500.000' },
+		{ input: '1234567', output: '1.234.567' },
+		{ input: '1000000000', output: '1.000.000.000' }
+	])('groups "$input" as "$output"', ({ input, output }) => {
+		expect(groupThousands(input)).toBe(output);
+	});
+
+	it('leaves an empty field empty rather than turning it into a zero', () => {
+		// What lets `required` keep meaning "fill this in" on a nominal field: a blank field that
+		// formatted itself as "0" would satisfy the browser and post a real amount nobody typed.
+		expect(groupThousands('')).toBe('');
 	});
 });
 
@@ -80,6 +102,39 @@ describe('parseRupiah', () => {
 
 	it('rejects a value outside the safe range instead of truncating it', () => {
 		expect(() => parseRupiah('9007199254740993')).toThrow(RangeError);
+	});
+});
+
+describe('parseRupiah of a pasted amount', () => {
+	// Built rather than typed: a literal non-breaking space in a test file is invisible, and a later
+	// reformatting pass or editor would be free to turn it into a plain one without anybody noticing
+	// that the case it exists for had stopped being tested.
+	const nonBreakingSpace = String.fromCodePoint(0xa0);
+
+	// The shapes one and a half million rupiah really arrives in when somebody copies it out of a
+	// spreadsheet, a bank statement or this application's own tables. All of them are the same money.
+	it.each([
+		{ name: 'this application own formatting', input: 'Rp 1.500.000' },
+		{ name: 'bare digits', input: '1500000' },
+		{ name: 'grouped digits without the prefix', input: '1.500.000' },
+		{ name: 'spaced digits with stray outer spaces', input: ' 1 500 000 ' },
+		{ name: 'spaced digits', input: '1 500 000' },
+		{
+			name: 'digits spaced with non-breaking spaces',
+			input: `1${nonBreakingSpace}500${nonBreakingSpace}000`
+		},
+		{ name: 'a non-breaking space after the prefix', input: `Rp${nonBreakingSpace}1.500.000` }
+	])('reads $name as 1500000', ({ input }) => {
+		expect(parseRupiah(input)).toBe(1_500_000);
+	});
+
+	it.each([
+		{ name: 'a fraction', input: '1.500,50' },
+		{ name: 'letters', input: 'abc' },
+		{ name: 'a fraction spelled with a point', input: '1 500 000.50' },
+		{ name: 'letters among spaced digits', input: '1 500 abc' }
+	])('still rejects $name', ({ input }) => {
+		expect(() => parseRupiah(input)).toThrow(TypeError);
 	});
 });
 

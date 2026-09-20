@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import RupiahInput from '$lib/components/rupiah-input.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
@@ -59,15 +60,7 @@
 				<label class="text-sm font-medium" for="amount-{uid}">
 					{m.adminPayments_cash_amountLabel()}
 				</label>
-				<input
-					id="amount-{uid}"
-					name="amount"
-					type="text"
-					inputmode="numeric"
-					required
-					value={form?.values?.amount ?? ''}
-					class="min-h-11 rounded-md border border-border bg-background px-3 text-sm"
-				/>
+				<RupiahInput id="amount-{uid}" name="amount" required value={form?.values?.amount ?? ''} />
 				<p class="text-sm text-muted-foreground">{m.adminPayments_cash_amountHint()}</p>
 			</div>
 

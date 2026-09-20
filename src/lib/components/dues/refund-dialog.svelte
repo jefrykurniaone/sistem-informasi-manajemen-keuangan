@@ -1,4 +1,5 @@
 <script lang="ts">
+	import RupiahInput from '$lib/components/rupiah-input.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as m from '$lib/paraglide/messages.js';
 
@@ -13,6 +14,11 @@
 	 * a refund above whatever the balance really is at commit time is refused by name, so this
 	 * dialog needs no client-side ceiling to be correct. A native `<dialog>` opened with
 	 * `showModal()`, per `src/lib/components/cash/correction-dialog.svelte`.
+	 *
+	 * The nominal is a `RupiahInput`, so it carries no `min="1"` the way the `type="number"` field it
+	 * replaced did: that field's own floor was never the guarantee either — `refund_rule_amountNotPositive`
+	 * is — and a number input cannot format while being typed at all, because `setSelectionRange()`
+	 * throws on one. The amount now reads back as `1.500.000` while the hidden field posts `1500000`.
 	 */
 	interface Props {
 		/** Where the refund form posts. */
@@ -59,16 +65,7 @@
 			<div class="flex flex-col gap-1.5">
 				<label class="text-sm font-medium" for="refund-amount-{uid}">{m.refund_amountLabel()}</label
 				>
-				<input
-					id="refund-amount-{uid}"
-					name="amount"
-					type="number"
-					inputmode="numeric"
-					min="1"
-					step="1"
-					required
-					class="h-11 rounded-md border border-border bg-background px-3 text-sm"
-				/>
+				<RupiahInput id="refund-amount-{uid}" name="amount" required />
 			</div>
 
 			<div class="flex flex-col gap-1.5">

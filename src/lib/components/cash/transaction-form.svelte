@@ -32,6 +32,7 @@
 </script>
 
 <script lang="ts">
+	import RupiahInput from '$lib/components/rupiah-input.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as m from '$lib/paraglide/messages.js';
 
@@ -122,15 +123,12 @@
 		<label class="text-sm font-medium" for="cash-transaction-amount-{uid}">
 			{m.adminCash_form_amountLabel()}
 		</label>
-		<input
+		<RupiahInput
 			id="cash-transaction-amount-{uid}"
 			name="amount"
-			type="text"
-			inputmode="numeric"
 			required
 			value={values.amount}
 			aria-describedby="cash-transaction-amount-hint-{uid}"
-			class="h-11 rounded-md border border-border bg-background px-3 text-sm"
 		/>
 		<p id="cash-transaction-amount-hint-{uid}" class="text-sm text-muted-foreground">
 			{m.adminCash_form_amountHint()}

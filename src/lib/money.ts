@@ -45,6 +45,23 @@ const THOUSANDS_SEPARATOR = '.';
 const RUPIAH_PATTERN = /^(-?)(?:Rp\s*)?(\d{1,3}(?:\.\d{3})+|\d+)$/;
 
 /**
+ * A run of whitespace standing *between* two digits, which `parseRupiah` drops before matching.
+ *
+ * This is what makes a paste work. Text copied out of a spreadsheet, a bank statement or an
+ * `Intl.NumberFormat` result in a locale that groups with a space arrives as `1 500 000`, spaced
+ * with either the plain space U+0020 or the non-breaking U+00A0 — and asking a person to retype it by
+ * hand is not reasonable. `\s` rather than those two characters by name, because it covers both and
+ * every other spacing character a clipboard can carry, and none of them can turn the text into a
+ * fraction or hide a letter: whatever is left still has to match `RUPIAH_PATTERN` whole.
+ *
+ * Only spacing *between digits* is dropped. The space in `Rp 150.000` is already part of that
+ * pattern, and a space anywhere else still fails to match. Grouping by space is not checked for
+ * correctness the way grouping by `.` is — `1 50 000` reads as `150000` — because a space carries no
+ * meaning of its own in this notation, whereas `.` is either the thousands separator or a mistake.
+ */
+const DIGIT_SPACING_PATTERN = /(\d)\s+(?=\d)/g;
+
+/**
  * Wraps a `number` into a `Rupiah`.
  *
  * @throws {TypeError} when the value is not a finite integer — including any fraction, which is
@@ -76,18 +93,19 @@ export function rupiah(value: number): Rupiah {
  */
 export function formatRupiah(value: Rupiah): string {
 	const sign = value < 0 ? '-' : '';
-	return `${sign}${CURRENCY_PREFIX} ${groupThousands(Math.abs(value))}`;
+	return `${sign}${CURRENCY_PREFIX} ${groupThousands(String(Math.abs(value)))}`;
 }
 
 /**
- * Parses text into a `Rupiah`. Accepts the output of `formatRupiah` and bare digits.
+ * Parses text into a `Rupiah`. Accepts the output of `formatRupiah`, bare digits, and digits spaced
+ * apart the way a paste out of a spreadsheet or a bank statement spaces them.
  *
  * @throws {TypeError} when the text is not a whole-rupiah shape — including any fractional form
- *   such as `150,50`, which is rejected and never rounded.
+ *   such as `150,50`, which is rejected and never rounded, and anything holding a letter.
  * @throws {RangeError} when the value is outside the safe `number` range.
  */
 export function parseRupiah(text: string): Rupiah {
-	const match = RUPIAH_PATTERN.exec(text.trim());
+	const match = RUPIAH_PATTERN.exec(text.trim().replaceAll(DIGIT_SPACING_PATTERN, '$1'));
 	if (!match) {
 		throw new TypeError(
 			`"${text}" is not a valid rupiah value. Accepted shapes: "150000", "150.000", "${CURRENCY_PREFIX} 150.000", "-${CURRENCY_PREFIX} 150.000". Fractions are not accepted.`
@@ -97,9 +115,19 @@ export function parseRupiah(text: string): Rupiah {
 	return rupiah(Number(`${sign}${digits.replaceAll(THOUSANDS_SEPARATOR, '')}`));
 }
 
-/** Inserts thousands separators into the digits of an unsigned integer. */
-function groupThousands(value: number): string {
-	const digits = String(value);
+/**
+ * Inserts thousands separators into a run of digits: `''` stays `''`, `'5'` stays `'5'`, and
+ * `'1500000'` becomes `'1.500.000'`.
+ *
+ * Exported because the grouping in a nominal field and the grouping in a table have to be the same
+ * shape, and the only way to guarantee that is for both to call this. `formatRupiah` uses it for the
+ * display side and `$lib/components/rupiah-input.svelte` for the typing side.
+ *
+ * The argument is digits, not a number: while somebody is typing, the value on screen is not yet a
+ * number — it may be empty, and it keeps whatever leading zeros were typed until the server parses
+ * it. No sign is handled here; `formatRupiah` writes the sign itself around the grouped digits.
+ */
+export function groupThousands(digits: string): string {
 	let result = '';
 	for (let end = digits.length; end > 0; end -= 3) {
 		const chunk = digits.slice(Math.max(0, end - 3), end);

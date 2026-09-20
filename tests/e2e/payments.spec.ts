@@ -177,9 +177,16 @@ test('a warga records a payment with proof, an admin verifies it, and the Tagiha
 	await logIn(page, residentEmail);
 	await open(page, '/payments/new');
 	// One house, so the form fixes the unit; ticking the Tagihan fills the amount in.
+	//
+	// The nominal is a RupiahInput, which is two inputs behaving as one control, so both halves are
+	// checked here: the labelled visible input reads the grouped 150.000, and the field actually named
+	// `amount` — the hidden one beside it, which is what gets posted — still holds the plain 150000
+	// that `parseRupiah` turns into money. Asserting only the visible half would pass while the form
+	// posted nothing at all.
 	await expect(page.getByText(period)).toBeVisible();
 	await page.getByRole('checkbox').first().check();
-	await expect(page.getByLabel('Nominal yang ditransfer')).toHaveValue('150000');
+	await expect(page.getByLabel('Nominal yang ditransfer')).toHaveValue('150.000');
+	await expect(page.locator('input[name="amount"]')).toHaveValue('150000');
 	await page.getByLabel('Tanggal uang ditransfer').fill(today());
 	await page
 		.locator('input[name="proof"]')
