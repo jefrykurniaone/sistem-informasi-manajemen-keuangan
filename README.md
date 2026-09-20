@@ -58,6 +58,33 @@ bawah Node, yang tidak mewarisi muatan `.env` milik proses Bun, jadi `vite.confi
 isi `.env` ke `process.env` — variabel yang sudah ada di lingkungan sungguhan tetap menang atas nilai
 di berkas itu.
 
+### Penyiapan awal: migrasi, lalu superuser pertama
+
+Basis data yang baru dimigrasi belum memiliki satu pun superuser. Pemicu basis data memberi setiap
+akun baru peran `resident` saja, sementara pemberian peran di dalam aplikasi menuntut peran
+`superuser`, sehingga tanpa langkah ini halaman `/admin/roles` menjawab 403 kepada siapa pun. Karena
+itu superuser pertama dibuat dari baris perintah, bukan dari halaman mana pun: tidak ada rute, tidak
+ada form action, dan tidak ada endpoint yang bisa memberi peran ini.
+
+```bash
+bun run db:migrate                                # jalankan migrasi
+# daftarkan akun pengurus lewat aplikasi, lalu berikan perannya:
+bun run superuser:grant pengurus@komplek.local
+```
+
+Perintah itu hanya memberi peran kepada akun yang **sudah terdaftar**. Kalau alamatnya tidak ada, ia
+berhenti dengan pesan yang menyebut alamat tersebut dan keluar dengan kode 1. Menjalankannya dua kali
+tidak mengubah apa pun pada jalan kedua — tidak ada baris peran kedua dan tidak ada baris `audit_log`
+kedua. Setiap pemberian yang berhasil meninggalkan satu baris `audit_log` dengan `actor_id` bernilai
+`system:bootstrap`, penanda bahwa perubahan itu datang dari operator mesin dan bukan dari seseorang
+yang sedang masuk.
+
+Perintah ini tetap bekerja pada sistem yang sudah punya superuser, dan sengaja tidak menolaknya: itu
+satu-satunya jalan kembali kalau akun superuser terakhir hilang. Perlu dicatat bahwa peran
+`superuser` saja belum cukup untuk setiap layar — sebagian tindakan, misalnya memberi Pembebasan,
+dinisbahkan pada baris `residents` milik pelakunya, jadi akun pengurus tetap perlu terdaftar sebagai
+warga sebuah Unit.
+
 ## Gerbang mutu
 
 Empat perintah ini adalah gerbangnya. Semua harus lulus sebelum sebuah pull request digabungkan, dan
