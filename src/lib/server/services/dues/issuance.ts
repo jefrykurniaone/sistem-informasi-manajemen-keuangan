@@ -94,27 +94,28 @@ import { duesRateOn } from './rate';
  * The time zone the complex keeps its calendar in: `Asia/Jakarta`.
  *
  * **This is the decision `src/lib/server/scheduler/registry.ts` and `src/lib/server/ports/clock.ts`
- * both refused to make for themselves**, and this is the module it belongs to, because issuance is
- * what gives "the first of the month" something to be true of. `monthlySchedule` takes the zone as an
- * argument for exactly this reason — "A later spec that issues invoices on the first of the month
- * passes the complex's zone in when it registers its job, rather than finding one hard-coded here" —
- * and `./jobs.ts` is where it is passed in.
+ * both refused to make for themselves**, and this module is where it was first made, because
+ * issuance is what gives "the first of the month" something to be true of. `monthlySchedule` takes
+ * the zone as an argument for exactly this reason — "A later spec that issues invoices on the first
+ * of the month passes the complex's zone in when it registers its job, rather than finding one
+ * hard-coded here" — and `./jobs.ts` is where it is passed in.
  *
- * `Asia/Jakarta` rather than a fixed `+07:00` offset, so the runtime's own tz database answers the
- * question and a complex that turns out to sit in WITA or WIT changes one constant rather than a
- * piece of arithmetic. The zone has no daylight saving and has not changed offset in living memory,
- * so every `YYYY-MM` this produces marks exactly one stretch of instants, with no hour that belongs
- * to two months and none that belongs to neither.
+ * The value itself now lives in `src/lib/time.ts`, which the browser can import and this module
+ * cannot be imported by; `docs/spec-waktu-rupiah-v1.md` moved it there so that every screen reads
+ * the same zone the job schedule does. It is re-exported here under the same name so that every
+ * existing caller keeps compiling, the value is unchanged, and no job's period marker moves. A new
+ * caller imports it from `$lib/time`; that module's doc comment carries the reasons for
+ * `Asia/Jakarta` over a fixed `+07:00` offset.
  *
- * **What it decides is when the job fires, and nothing else.** The run itself never asks the clock
- * what day it is — see this module's doc comment — so the zone cannot reach the rows that get
+ * **What it decides here is when the job fires, and nothing else.** The run itself never asks the
+ * clock what day it is — see this module's doc comment — so the zone cannot reach the rows that get
  * written. The one consequence worth stating: `currentDay(clock)` in
  * `src/lib/server/services/occupancy/visibility.ts` reads a **UTC** day, so between 00:00 and 07:00
  * local the two disagree by one day. That is a known gap in the screens that read `currentDay`, it
  * is recorded in that function's own comment, and it is not this module's to close — issuance reads
  * no day from the clock at all.
  */
-export const COMPLEX_TIME_ZONE = 'Asia/Jakarta';
+export { COMPLEX_TIME_ZONE } from '$lib/time';
 
 /**
  * Thrown when no Tarif is in force on the day a Periode is being issued for.
