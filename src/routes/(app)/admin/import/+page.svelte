@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import PreviewTable from '$lib/components/import/preview-table.svelte';
 	import * as m from '$lib/paraglide/messages.js';
@@ -38,14 +39,17 @@
 		<p class="rounded-md border border-border px-3 py-2 text-sm" role="status">{message}</p>
 	{/if}
 
-	<section class="flex flex-col gap-2 rounded-lg border border-border p-4">
-		<h2 class="text-lg font-semibold">{m.adminImport_formatHeading()}</h2>
-		<ul class="flex flex-col gap-1 text-sm text-muted-foreground">
-			<li><code class="break-all">{m.adminImport_formatHeader()}</code></li>
-			<li>{m.adminImport_formatRole()}</li>
-			<li><code class="break-all">{m.adminImport_formatExample()}</code></li>
-			<li>{m.adminImport_formatLimit({ maximum: data.maxRows })}</li>
-		</ul>
+	<section class="flex flex-col gap-3 rounded-lg border border-border p-4">
+		<h2 class="text-lg font-semibold">{m.adminImport_guideHeading()}</h2>
+		<ol class="flex flex-col gap-1 text-sm text-muted-foreground">
+			<li>{m.adminImport_guideStep1()}</li>
+			<li>{m.adminImport_guideStep2()}</li>
+			<li>{m.adminImport_guideStep3()}</li>
+		</ol>
+		<p class="text-sm text-muted-foreground">{m.adminImport_rowLimit({ maximum: data.maxRows })}</p>
+		<Button href={resolve('/admin/import/template')} variant="secondary" class="h-11 w-fit">
+			{m.adminImport_downloadTemplate()}
+		</Button>
 	</section>
 
 	<section class="flex flex-col gap-3 rounded-lg border border-border p-4">
@@ -65,7 +69,7 @@
 					id="admin-import-file-{uid}"
 					name="file"
 					type="file"
-					accept=".csv,text/csv"
+					accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 					required
 					class="h-11 rounded-md border border-border bg-background px-3 py-2 text-sm"
 				/>
