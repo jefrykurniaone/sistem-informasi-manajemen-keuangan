@@ -38,11 +38,35 @@ const EMAIL_FIELD = 'Alamat email';
 /** The first bytes a real JPEG starts with — enough for the attachment's signature check. */
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
 
-const pool = new Pool({ connectionString: DATABASE_URL });
+/**
+ * This file's own connection, opened on first use by each job and closed by the job that opened
+ * it. Not a module-scope pool closed once — see `tests/e2e/auth.spec.ts` for why `fullyParallel`
+ * runs `afterAll` more than once in one worker process, and what `pg` does about it.
+ */
+let openPool: Pool | undefined;
+
+/** The connection, opened on first use by this job. */
+function pool(): Pool {
+	openPool ??= new Pool({ connectionString: DATABASE_URL });
+	return openPool;
+}
 
 test.afterAll(async () => {
-	await pool.end();
+	const closing = openPool;
+	openPool = undefined;
+	await closing?.end();
 });
+
+/**
+ * Opens `path` and waits until the page can be typed into. `goto` on its own is not enough:
+ * Svelte's hydration writes every `value={…}` binding back over whatever was typed before it ran,
+ * which empties a `required` field and leaves a form the browser will not submit. See
+ * `tests/e2e/auth.spec.ts` for the measurement and for why `networkidle` is the signal.
+ */
+async function open(page: Page, path: string): Promise<void> {
+	await page.goto(path);
+	await page.waitForLoadState('networkidle');
+}
 
 /** An address no other run of this spec will have used. */
 function anAddress(label: string): string {
@@ -53,7 +77,7 @@ function anAddress(label: string): string {
 async function verificationToken(recipient: string): Promise<string> {
 	const deadline = Date.now() + QUEUE_WAIT_MILLISECONDS;
 	while (Date.now() < deadline) {
-		const result = await pool.query<{ payload: { url?: string } }>(
+		const result = await pool().query<{ payload: { url?: string } }>(
 			"select payload from email_queue where recipient = $1 and kind = 'verify-email' order by created_at desc limit 1",
 			[recipient]
 		);
@@ -69,9 +93,12 @@ async function verificationToken(recipient: string): Promise<string> {
 	throw new Error(`No verification email was queued for ${recipient}.`);
 }
 
-/** Registers a resident, verifies their address, and signs them in. Grants no role beyond it. */
-async function signUpResident(page: Page, email: string, name: string): Promise<void> {
-	await page.goto('/register');
+/**
+ * Registers an account, verifies its address, and gives it a `residents` row. Returns its
+ * `user.id`, and leaves the browser signed out — verifying deliberately does not sign anyone in.
+ */
+async function register(page: Page, email: string, name: string): Promise<string> {
+	await open(page, '/register');
 	await page.getByLabel('Nama').fill(name);
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Blok rumah').fill('E2E');
@@ -84,38 +111,59 @@ async function signUpResident(page: Page, email: string, name: string): Promise<
 	const token = await verificationToken(email);
 	await page.goto(`/verify?token=${encodeURIComponent(token)}`);
 
-	const { rows } = await pool.query<{ id: string }>('select id from "user" where email = $1', [
+	const { rows } = await pool().query<{ id: string }>('select id from "user" where email = $1', [
 		email
 	]);
 	const userId = rows[0]?.id;
 	if (!userId) {
 		throw new Error(`No "user" row was found for ${email} after verifying.`);
 	}
-	await pool.query('insert into residents (user_id, created_at) values ($1, now())', [userId]);
-
-	await page.goto('/login');
-	await page.getByLabel(EMAIL_FIELD).fill(email);
-	await page.getByLabel('Kata sandi').fill(PASSWORD);
-	await page.getByRole('button', { name: 'Masuk' }).click();
+	await pool().query('insert into residents (user_id, created_at) values ($1, now())', [userId]);
+	return userId;
 }
 
-/** The same, and also grants the `admin` role — the shortest path to a pengurus account. */
-async function signUpAdmin(page: Page, email: string, name: string): Promise<void> {
-	await signUpResident(page, email, name);
-	const { rows } = await pool.query<{ id: string }>('select id from "user" where email = $1', [
-		email
-	]);
-	await pool.query(
-		"insert into user_roles (user_id, role, created_at) values ($1, 'admin', now())",
-		[rows[0]?.id]
-	);
-	// The role only takes effect on a fresh session, the same reason `posts-public.spec.ts` signs
-	// its admin in only after granting it. Signing out and back in is cheaper than reasoning about
-	// whatever this application caches from the moment a role was granted.
-	await page.goto('/login');
+/**
+ * Signs an already registered account in, and waits until the session has really landed.
+ *
+ * The wait is the point. Clicking the button only posts the form; the response that carries the
+ * session cookie is still in flight when `click` resolves, so a `goto` on the next line races it
+ * and can be answered with no session at all.
+ */
+async function signIn(page: Page, email: string): Promise<void> {
+	await open(page, '/login');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Kata sandi').fill(PASSWORD);
 	await page.getByRole('button', { name: 'Masuk' }).click();
+	await expect(page).toHaveURL(/\/$/);
+}
+
+/** Registers a resident, verifies their address, and signs them in. Grants no role beyond it. */
+async function signUpResident(page: Page, email: string, name: string): Promise<void> {
+	await register(page, email, name);
+	await signIn(page, email);
+}
+
+/**
+ * The same, and also grants the `admin` role — the shortest path to a pengurus account.
+ *
+ * The grant happens **before** the one sign-in this helper makes, rather than after it with a
+ * second visit to `/login`. `(auth)/login/+page.server.ts`'s `load` redirects an account that is
+ * already signed in straight to `/`, so a second visit never renders the form at all: the version
+ * of this helper that signed in twice spent its whole thirty seconds waiting for an "Alamat email"
+ * field the redirect had taken away, which is the failure #112 was opened for.
+ *
+ * Nothing needed that second session. Roles are read out of `user_roles` on every request — by
+ * `(app)/+layout.server.ts` and by `requirePermission` — and `session.cookieCache` is deliberately
+ * off in `$lib/server/auth`, so a grant takes effect on the next request whether the session that
+ * carries it is new or not.
+ */
+async function signUpAdmin(page: Page, email: string, name: string): Promise<void> {
+	const userId = await register(page, email, name);
+	await pool().query(
+		"insert into user_roles (user_id, role, created_at) values ($1, 'admin', now())",
+		[userId]
+	);
+	await signIn(page, email);
 }
 
 /** Moves a Keluhan one step through the admin dialog, on a page already at its detail screen. */
@@ -135,7 +183,7 @@ test('a resident reports a complaint with one photo, an admin moves it to selesa
 
 	await signUpResident(page, reporterEmail, 'Warga E2E Keluhan');
 
-	await page.goto('/complaints/new');
+	await open(page, '/complaints/new');
 	await page.getByLabel('Judul').fill(title);
 	await page.getByLabel('Kategori').fill('penerangan');
 	await page.getByLabel('Uraian').fill('Lampu di depan blok E2E sudah mati sejak tiga hari lalu.');
@@ -178,7 +226,11 @@ test('a resident reports a complaint with one photo, an admin moves it to selesa
 	// Back on the resident's own session: the same complaint now reads "Selesai", with no reload
 	// needed beyond the one a resident would actually do — visiting the page again.
 	await page.goto(`/complaints/${complaintId}`);
-	await expect(page.getByText('Selesai')).toBeVisible();
+	// `exact`, because the page now carries the history of the change as well as its outcome: the
+	// status badge reads "Selesai" and the log line reads "Dikerjakan → Selesai", and a substring
+	// match resolves to both and fails Playwright's strict mode. The badge is what this assertion
+	// is about — that the status a warga reads really moved.
+	await expect(page.getByText('Selesai', { exact: true })).toBeVisible();
 	// The "tarik keluhan" button is gone: it only ever shows while the complaint is still "baru".
 	await expect(page.getByRole('button', { name: 'Tarik keluhan' })).toHaveCount(0);
 });

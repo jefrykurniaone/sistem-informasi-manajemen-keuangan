@@ -36,11 +36,35 @@ const EMAIL_FIELD = 'Alamat email';
 /** The reason the superuser types when turning a registration down. */
 const REJECTION_REASON = 'Blok itu tidak punya nomor rumah seperti yang Anda tulis.';
 
-const pool = new Pool({ connectionString: DATABASE_URL });
+/**
+ * This file's own connection, opened on first use by each job and closed by the job that opened
+ * it. Not a module-scope pool closed once — see `tests/e2e/auth.spec.ts` for why `fullyParallel`
+ * runs `afterAll` more than once in one worker process, and what `pg` does about it.
+ */
+let openPool: Pool | undefined;
+
+/** The connection, opened on first use by this job. */
+function pool(): Pool {
+	openPool ??= new Pool({ connectionString: DATABASE_URL });
+	return openPool;
+}
 
 test.afterAll(async () => {
-	await pool.end();
+	const closing = openPool;
+	openPool = undefined;
+	await closing?.end();
 });
+
+/**
+ * Opens `path` and waits until the page can be typed into. `goto` on its own is not enough:
+ * Svelte's hydration writes every `value={…}` binding back over whatever was typed before it ran,
+ * which empties a `required` field and leaves a form the browser will not submit. See
+ * `tests/e2e/auth.spec.ts` for the measurement and for why `networkidle` is the signal.
+ */
+async function open(page: Page, path: string): Promise<void> {
+	await page.goto(path);
+	await page.waitForLoadState('networkidle');
+}
 
 /** An address no other run of this spec will have used. */
 function anAddress(label: string): string {
@@ -56,7 +80,7 @@ function aBlock(): string {
 async function linkFromQueuedEmail(recipient: string, kind: string): Promise<string> {
 	const deadline = Date.now() + QUEUE_WAIT_MILLISECONDS;
 	while (Date.now() < deadline) {
-		const result = await pool.query<{ payload: { url?: string } }>(
+		const result = await pool().query<{ payload: { url?: string } }>(
 			'select payload from email_queue where recipient = $1 and kind = $2 order by created_at desc limit 1',
 			[recipient, kind]
 		);
@@ -83,7 +107,7 @@ async function fillRegistrationForm(
 	page: Page,
 	form: { name: string; email: string; block: string; number: string }
 ): Promise<void> {
-	await page.goto('/register');
+	await open(page, '/register');
 	await page.getByLabel('Nama').fill(form.name);
 	await page.getByLabel(EMAIL_FIELD).fill(form.email);
 	await page.getByLabel('Blok rumah').fill(form.block);
@@ -103,7 +127,7 @@ async function verifyAddress(page: Page, email: string): Promise<void> {
 
 /** Signs an already verified account in. */
 async function signIn(page: Page, email: string): Promise<void> {
-	await page.goto('/login');
+	await open(page, '/login');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Kata sandi').fill(PASSWORD);
 	await page.getByRole('button', { name: 'Masuk' }).click();
@@ -121,7 +145,7 @@ async function signedInSuperuser(page: Page): Promise<void> {
 	});
 	await verifyAddress(page, email);
 
-	await pool.query(
+	await pool().query(
 		`insert into user_roles (user_id, role, created_at)
 		 select id, 'superuser', now() from "user" where email = $1
 		 on conflict do nothing`,
@@ -134,7 +158,7 @@ async function signedInSuperuser(page: Page): Promise<void> {
 /** A unit row of this run's own, returning its block and number. */
 async function insertUnit(): Promise<{ block: string; number: string }> {
 	const block = aBlock();
-	await pool.query(
+	await pool().query(
 		"insert into units (block, number, created_at) values ($1, '1', now()) returning id",
 		[block]
 	);
@@ -177,7 +201,7 @@ test('a self-registrant waits, is approved onto a house, and becomes a warga of 
 			registrant.page.getByRole('heading', { name: 'Pendaftaran Anda sedang ditinjau' })
 		).toBeVisible();
 
-		await page.goto('/admin/registrations');
+		await open(page, '/admin/registrations');
 		await expect(page.getByRole('heading', { level: 1 })).toHaveText('Pendaftaran warga');
 		const card = page.locator('article', { hasText: registrant.email });
 		// The claim matched a real house, so the picker starts on it.
@@ -209,7 +233,7 @@ test('a self-registrant who is turned down reads the reason and may apply again'
 	const registrant = await registrantWaiting(browser, { block: aBlock(), number: '404' });
 
 	try {
-		await page.goto('/admin/registrations');
+		await open(page, '/admin/registrations');
 		const card = page.locator('article', { hasText: registrant.email });
 		// Nothing in the register matches what they typed, and the screen says so rather than hiding it.
 		await expect(card).toContainText('tidak cocok dengan unit mana pun');

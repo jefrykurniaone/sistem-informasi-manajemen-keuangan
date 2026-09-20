@@ -41,11 +41,35 @@ const PASSWORD = 'kata sandi permukaan api';
 /** The label on the address field in the registration form. */
 const EMAIL_FIELD = 'Alamat email';
 
-const pool = new Pool({ connectionString: DATABASE_URL });
+/**
+ * This file's own connection, opened on first use by each job and closed by the job that opened
+ * it. Not a module-scope pool closed once — see `tests/e2e/auth.spec.ts` for why `fullyParallel`
+ * runs `afterAll` more than once in one worker process, and what `pg` does about it.
+ */
+let openPool: Pool | undefined;
+
+/** The connection, opened on first use by this job. */
+function pool(): Pool {
+	openPool ??= new Pool({ connectionString: DATABASE_URL });
+	return openPool;
+}
 
 test.afterAll(async () => {
-	await pool.end();
+	const closing = openPool;
+	openPool = undefined;
+	await closing?.end();
 });
+
+/**
+ * Opens `path` and waits until the page can be typed into. `goto` on its own is not enough:
+ * Svelte's hydration writes every `value={…}` binding back over whatever was typed before it ran,
+ * which empties a `required` field and leaves a form the browser will not submit. See
+ * `tests/e2e/auth.spec.ts` for the measurement and for why `networkidle` is the signal.
+ */
+async function open(page: Page, path: string): Promise<void> {
+	await page.goto(path);
+	await page.waitForLoadState('networkidle');
+}
 
 /** An address no other run of this spec will have used. */
 function anAddress(label: string): string {
@@ -56,7 +80,7 @@ function anAddress(label: string): string {
 async function verificationToken(recipient: string): Promise<string> {
 	const deadline = Date.now() + QUEUE_WAIT_MILLISECONDS;
 	while (Date.now() < deadline) {
-		const result = await pool.query<{ payload: { url?: string } }>(
+		const result = await pool().query<{ payload: { url?: string } }>(
 			"select payload from email_queue where recipient = $1 and kind = 'verify-email' order by created_at desc limit 1",
 			[recipient]
 		);
@@ -74,7 +98,7 @@ async function verificationToken(recipient: string): Promise<string> {
 
 /** Registers a resident and verifies their address, leaving them signed out. */
 async function registerAndVerify(page: Page, email: string): Promise<void> {
-	await page.goto('/register');
+	await open(page, '/register');
 	await page.getByLabel('Nama').fill('Warga API');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	// The claimed house the form asks for since #21. Nothing here checks it against `units`, and a
@@ -92,7 +116,7 @@ async function registerAndVerify(page: Page, email: string): Promise<void> {
 
 /** Signs a verified resident in. */
 async function signIn(page: Page, email: string): Promise<void> {
-	await page.goto('/login');
+	await open(page, '/login');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Kata sandi').fill(PASSWORD);
 	await page.getByRole('button', { name: 'Masuk' }).click();
