@@ -5,6 +5,7 @@ import { PermissionDeniedError } from '$lib/errors';
 import { AUTH_PATHS } from '$lib/server/auth';
 import { database } from '$lib/server/db';
 import { POST_STATUS, POST_TYPES, type PostType } from '$lib/server/db/schema/post';
+import { assertUuidParam } from '$lib/server/services/identifier';
 import { systemClock } from '$lib/server/ports/clock';
 import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
 import {
@@ -41,6 +42,9 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	if (!locals.user) {
 		redirect(303, AUTH_PATHS.login);
 	}
+	// `posts.id` is a `uuid` column, and a non-uuid `params.id` must be refused here rather than
+	// reach `getPost`'s comparison — see #111 and `$lib/server/services/identifier.ts`.
+	assertUuidParam(params.id, m.adminPosts_notFound());
 
 	try {
 		const post = await getPost(database(), locals.user.id, params.id);
@@ -88,6 +92,7 @@ export const actions: Actions = {
 		if (!locals.user) {
 			redirect(303, AUTH_PATHS.login);
 		}
+		assertUuidParam(params.id, m.adminPosts_notFound());
 
 		const form = await request.formData();
 		const values = readPostFormValues(form);
@@ -157,6 +162,7 @@ export const actions: Actions = {
 		if (!locals.user) {
 			redirect(303, AUTH_PATHS.login);
 		}
+		assertUuidParam(params.id, m.adminPosts_notFound());
 
 		const form = await request.formData();
 		const file = form.get('cover');
@@ -195,6 +201,7 @@ async function moveStatus(
 	if (!actor) {
 		redirect(303, AUTH_PATHS.login);
 	}
+	assertUuidParam(postId, m.adminPosts_notFound());
 
 	try {
 		await move(database(), systemClock, { actorId: actor.id, postId });

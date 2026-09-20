@@ -4,6 +4,7 @@ import { PermissionDeniedError } from '$lib/errors';
 import { formatRupiah, parseRupiah, type Rupiah } from '$lib/money';
 import { AUTH_PATHS } from '$lib/server/auth';
 import { database } from '$lib/server/db';
+import { assertUuidParam } from '$lib/server/services/identifier';
 import { systemClock } from '$lib/server/ports/clock';
 import { PeriodLockedError } from '$lib/server/services/cash/period';
 import {
@@ -66,6 +67,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	if (!locals.user) {
 		redirect(303, AUTH_PATHS.login);
 	}
+	// `units.id` is a `uuid` column — see #111 and `$lib/server/services/identifier.ts`.
+	assertUuidParam(params.id, m.unitFinance_notFound());
 
 	try {
 		const [finance, history] = await Promise.all([
@@ -131,6 +134,7 @@ export const actions: Actions = {
 		if (!locals.user) {
 			redirect(303, AUTH_PATHS.login);
 		}
+		assertUuidParam(params.id, m.unitFinance_notFound());
 
 		const form = await request.formData();
 		const occurredOn = String(form.get(OCCURRED_ON_FIELD) ?? '').trim();

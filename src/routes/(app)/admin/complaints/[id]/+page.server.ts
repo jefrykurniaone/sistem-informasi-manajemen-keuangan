@@ -6,6 +6,7 @@ import { AUTH_PATHS } from '$lib/server/auth';
 import { ACTION, requirePermission } from '$lib/server/authz';
 import { database } from '$lib/server/db';
 import { COMPLAINT_STATUSES, type ComplaintStatus } from '$lib/server/db/schema/complaint';
+import { assertUuidParam } from '$lib/server/services/identifier';
 import { systemClock } from '$lib/server/ports/clock';
 import {
 	addComplaintReply,
@@ -44,6 +45,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	if (!locals.user) {
 		redirect(303, AUTH_PATHS.login);
 	}
+	// `complaints.id` is a `uuid` column — see #111 and `$lib/server/services/identifier.ts`.
+	assertUuidParam(params.id, m.adminComplaintDetail_notFound());
 
 	try {
 		const db = database();
@@ -95,6 +98,7 @@ export const actions: Actions = {
 		if (!locals.user) {
 			redirect(303, AUTH_PATHS.login);
 		}
+		assertUuidParam(params.id, m.adminComplaintDetail_notFound());
 
 		const form = await request.formData();
 		const to = String(form.get('to') ?? '').trim();
@@ -132,6 +136,7 @@ export const actions: Actions = {
 		if (!locals.user) {
 			redirect(303, AUTH_PATHS.login);
 		}
+		assertUuidParam(params.id, m.adminComplaintDetail_notFound());
 
 		const form = await request.formData();
 		const content = String(form.get('content') ?? '');
