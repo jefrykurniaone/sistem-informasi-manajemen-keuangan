@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
 import { auth } from '$lib/server/auth';
+import { limitFormAction, RATE_LIMIT_POLICY } from '$lib/server/rate-limit';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -19,6 +20,12 @@ import type { Actions, PageServerLoad } from './$types';
  * for verification identically, and spends the same amount of time doing it. Whatever it reports,
  * this action shows the same sentence.
  *
+ * **Asking too often is refused before better-auth is asked anything**, by `limitFormAction` in
+ * `$lib/server/rate-limit`, which counts the caller's address and the email typed without looking
+ * either up. Every post past the limit gets `TOO_MANY_REQUESTS` and a 429, whoever the address
+ * belongs to, and queues nothing — the same reasoning as `/forgot-password`, because the two forms
+ * are the same mail-sending lever with a different template behind it.
+ *
  * Verifying does not sign anyone in — see the reasoning in `$lib/server/auth`. The page sends the
  * person to the sign-in form afterwards.
  *
@@ -32,6 +39,10 @@ import type { Actions, PageServerLoad } from './$types';
 
 /** What this page is saying. The wording lives in the component; this is the situation. */
 export type VerificationState = 'idle' | 'sent' | 'verified' | 'expired' | 'invalid';
+
+/** Shown when the limiter refuses, whoever the address belongs to. */
+const TOO_MANY_REQUESTS =
+	'Terlalu banyak permintaan email verifikasi. Tunggu beberapa menit, lalu coba lagi.';
 
 export const load: PageServerLoad = async ({ url }) => {
 	const token = url.searchParams.get('token');
@@ -53,16 +64,24 @@ export const load: PageServerLoad = async ({ url }) => {
 };
 
 export const actions: Actions = {
-	resend: async ({ request }) => {
-		const form = await request.formData();
+	resend: async (event) => {
+		const form = await event.request.formData();
 		const email = String(form.get('email') ?? '').trim();
 
 		if (email === '') {
 			return fail(400, { sent: false, message: 'Isi dulu alamat email Anda.' });
 		}
 
+		const decision = await limitFormAction(event, RATE_LIMIT_POLICY.resendVerification, email);
+		if (!decision.allowed) {
+			return fail(429, { sent: false, message: TOO_MANY_REQUESTS });
+		}
+
 		try {
-			await auth().api.sendVerificationEmail({ body: { email }, headers: request.headers });
+			await auth().api.sendVerificationEmail({
+				body: { email },
+				headers: event.request.headers
+			});
 		} catch (error) {
 			// Every answer better-auth can give about one address — it is unknown, it is already
 			// verified, it has just been sent an email — leads to the same sentence below. Only a
