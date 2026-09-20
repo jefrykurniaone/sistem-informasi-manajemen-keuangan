@@ -1022,5 +1022,13 @@
 	"unsubscribe_done": "Done. You will not receive the monthly report by email again. You can switch it back on at any time from the notification preferences page after signing in.",
 	"unsubscribe_invalid": "This link is not valid. It may have been cut short when it was copied. You can still manage your subscriptions from the notification preferences page after signing in.",
 	"unsubscribe_mandatory": "This kind of notification is mandatory and cannot be switched off.",
-	"unsubscribe_homeLink": "Go to the home page"
+	"unsubscribe_homeLink": "Go to the home page",
+	"appShell_groupHome": "Home",
+	"appShell_groupPosts": "Announcements & Events",
+	"appShell_groupMine": "Mine",
+	"appShell_groupFinance": "Finance",
+	"appShell_groupResidents": "Residents & Units",
+	"appShell_groupServices": "Services",
+	"appShell_groupSystem": "System",
+	"appShell_toggleSidebar": "Open or close menu"
 }

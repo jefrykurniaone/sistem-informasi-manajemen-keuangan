@@ -1,64 +1,40 @@
+import { visibleMenu, type MenuGroup } from '$lib/components/app-shell/menu';
+import { rolesOf } from '$lib/server/authz';
+import { SIDEBAR_COOKIE_NAME } from '$lib/components/ui/sidebar/constants';
 import { database } from '$lib/server/db';
-import { ACTION, isAllowed, rolesOf } from '$lib/server/authz';
 import type { LayoutServerLoad } from './$types';
 
 /**
- * What the app shell in `+layout.svelte` needs to decide which menu items to render.
+ * What the app shell in `+layout.svelte` needs: whether there is a session, which menu that
+ * session may see, and how wide the sidebar was left last time.
  *
- * **This never decides what a request is allowed to do.** `isAllowed` is the same pure table
- * `src/lib/server/authz.ts` uses inside `requirePermission`, consulted here read-only to choose
- * what a link *shows*; the guard on each page — see `src/routes/(app)/admin/roles/+page.server.ts`
- * — remains the only place a request is actually let through or refused. Hiding a menu item is a
- * convenience for someone who could not use it anyway, never the reason it was refused.
+ * **This never decides what a request is allowed to do.** `visibleMenu` answers from `isAllowed`,
+ * the same pure table `src/lib/server/authz.ts` uses inside `requirePermission`, consulted here
+ * read-only to choose what a link *shows*; the guard on each page — see
+ * `src/routes/(app)/admin/roles/+page.server.ts` — remains the only place a request is actually let
+ * through or refused. Hiding a menu item is a convenience for someone who could not use it anyway,
+ * never the reason it was refused.
  *
- * One `rolesOf` read still answers every flag below, `isAllowed` decides each one against
- * `PERMISSIONS` — never by comparing a role's name — so an action held by more than one role
- * (`ACTION.readPeriods`, `ACTION.readAllComplaints`) is answered correctly with no special case.
+ * One `rolesOf` read answers the whole menu. It replaced the twenty `can*` booleans this file used
+ * to compute one at a time: the grouping, the order and the action behind each link now live in
+ * `src/lib/components/app-shell/menu.ts`, which is also what the unit test exercises.
+ *
+ * `sidebarOpen` is read here rather than left to the component because the shadcn `Sidebar.Provider`
+ * only *writes* the `sidebar_state` cookie — it starts open on every load unless it is told
+ * otherwise, so a collapsed sidebar would spring back open on the next request and, worse, flip
+ * width one frame after hydration.
  */
-export const load: LayoutServerLoad = async ({ locals }) => {
+export const load: LayoutServerLoad = async ({ cookies, locals }) => {
+	// The cookie holds "true" or "false"; anything else, including no cookie at all, means a
+	// visitor who has never touched the control, and the sidebar starts open for them.
+	const sidebarOpen = cookies.get(SIDEBAR_COOKIE_NAME) !== 'false';
+
 	const { user } = locals;
 	if (!user) {
-		return {
-			signedIn: false,
-			canManageRoles: false,
-			canManageUnits: false,
-			canManageJobs: false,
-			canManagePosts: false,
-			canImportResidents: false,
-			canManageInvitations: false,
-			canManageRegistrations: false,
-			canManageDuesRates: false,
-			canManageCashCategories: false,
-			canRecordOpeningBalance: false,
-			canManageExemptions: false,
-			canRecordCashTransactions: false,
-			canReadPeriods: false,
-			canReadAllComplaints: false,
-			canReadOverdue: false,
-			canVerifyPayments: false,
-			canPublishReports: false
-		};
+		const menu: readonly MenuGroup[] = [];
+		return { signedIn: false, sidebarOpen, menu };
 	}
 
 	const roles = await rolesOf(database(), user.id);
-	return {
-		signedIn: true,
-		canManageRoles: isAllowed(roles, ACTION.manageRoles),
-		canManageUnits: isAllowed(roles, ACTION.manageUnits),
-		canManageJobs: isAllowed(roles, ACTION.manageJobs),
-		canManagePosts: isAllowed(roles, ACTION.managePosts),
-		canImportResidents: isAllowed(roles, ACTION.importResidents),
-		canManageInvitations: isAllowed(roles, ACTION.manageInvitations),
-		canManageRegistrations: isAllowed(roles, ACTION.manageRegistrations),
-		canManageDuesRates: isAllowed(roles, ACTION.manageDuesRates),
-		canManageCashCategories: isAllowed(roles, ACTION.manageCashCategories),
-		canRecordOpeningBalance: isAllowed(roles, ACTION.recordOpeningBalance),
-		canManageExemptions: isAllowed(roles, ACTION.manageExemptions),
-		canRecordCashTransactions: isAllowed(roles, ACTION.recordCashTransactions),
-		canReadPeriods: isAllowed(roles, ACTION.readPeriods),
-		canReadAllComplaints: isAllowed(roles, ACTION.readAllComplaints),
-		canReadOverdue: isAllowed(roles, ACTION.readOverdue),
-		canVerifyPayments: isAllowed(roles, ACTION.verifyPayments),
-		canPublishReports: isAllowed(roles, ACTION.publishReports)
-	};
+	return { signedIn: true, sidebarOpen, menu: visibleMenu(roles) };
 };
