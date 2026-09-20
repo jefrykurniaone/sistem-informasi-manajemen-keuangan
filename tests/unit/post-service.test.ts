@@ -517,6 +517,23 @@ describe('the cover image, through the FileStore port', () => {
 			POST_RULE.coverImageTooLarge,
 			'image/png',
 			() => new Uint8Array(MAXIMUM_COVER_IMAGE_BYTES + 1)
+		],
+		// #93: `Object.prototype` property names, once looked up in an object literal, answer with a
+		// truthy inherited value that slips past an `if (!extension)` guard and ends in a `TypeError`
+		// instead of a named `PostRuleError`. `COVER_IMAGE_EXTENSIONS`/`COVER_IMAGE_SIGNATURES` are now
+		// `Map`s, which have no prototype chain behind `get`, so both are refused the same as any other
+		// unrecognised content type.
+		[
+			'a content type spelling an Object.prototype property name — "constructor"',
+			POST_RULE.coverImageNotAnImage,
+			'constructor',
+			() => PNG_BYTES
+		],
+		[
+			'a content type spelling an Object.prototype property name — "__proto__"',
+			POST_RULE.coverImageNotAnImage,
+			'__proto__',
+			() => PNG_BYTES
 		]
 	])('refuses %s, and stores nothing', async (_name, rule, contentType, build) => {
 		const adminId = await insertAdmin(unique('Pengurus Berkas Salah'));
