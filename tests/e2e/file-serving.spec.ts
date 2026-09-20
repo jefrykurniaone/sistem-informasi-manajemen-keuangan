@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { Pool } from 'pg';
 import { buildSignedLink } from '../../src/lib/server/ports/file-store';
 
@@ -13,13 +13,19 @@ import { buildSignedLink } from '../../src/lib/server/ports/file-store';
  * store's directory and minting links with the same `buildSignedLink` the application uses —
  * `FILE_STORE_SECRET` is in this process's environment because Bun loads `.env` before Playwright
  * starts, exactly the way `tests/e2e/posts-public.spec.ts` reads `DATABASE_URL`. The second half
- * is wave 10's reproduction, inverted into the acceptance criterion: an admin uploads a cover
- * image and publishes, and an anonymous browser's `og:image` address answers 200 with an image
+ * is wave 10's reproduction, inverted into the acceptance criterion: an admin gives a Post a cover
+ * image and publishes it, and an anonymous browser's `og:image` address answers 200 with an image
  * `Content-Type` instead of the 404 that ticket #83 was opened for.
  *
- * The admin sign-up helpers are copied from `tests/e2e/posts-public.spec.ts` rather than imported:
- * importing a spec file would register its tests a second time, and this repository keeps no
- * shared e2e helper module yet.
+ * Since #140 the Sampul is picked on the write form rather than uploaded from a second form on the
+ * edit screen, so that half of this spec chooses the file before `Simpan draf` and publishes on the
+ * screen it lands on. Everything it then claims about `/files/…` — the status, the `Content-Type`,
+ * and that the image really decodes — is unchanged, because none of it depended on which form the
+ * bytes arrived through.
+ *
+ * The admin sign-up helpers and the editor helper are copied from
+ * `tests/e2e/posts-public.spec.ts` rather than imported: importing a spec file would register its
+ * tests a second time, and this repository keeps no shared e2e helper module yet.
  */
 
 /** The database the application under test is using. Bun loads it out of `.env`. */
@@ -212,6 +218,28 @@ function anAddress(label: string): string {
 	return `e2e-files-${label}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@komplek.local`;
 }
 
+/**
+ * The Post body editor, once it has mounted and will take what is typed into it.
+ *
+ * `.ProseMirror` exists only after hydration has run and `rich-text-editor.svelte`'s `onMount` has
+ * finished its dynamic import, so waiting for it is the strongest hydration marker the write screen
+ * has: every field filled after this call is filled on a page whose Svelte effects have already
+ * written their `value={…}` bindings back. The click itself is wrapped in the `toPass` retry
+ * `tests/e2e/layout.spec.ts` and `tests/e2e/smoke.spec.ts` use, because under parallel workers the
+ * first JS-driven click can still land a frame early. Copied from
+ * `tests/e2e/posts-public.spec.ts` — see this file's doc comment for why the helpers are copied.
+ */
+async function bodyEditor(page: Page): Promise<Locator> {
+	const editor = page.locator('.ProseMirror');
+	await expect(editor).toBeVisible();
+	await expect(editor).toHaveAttribute('contenteditable', 'true');
+	await expect(async () => {
+		await editor.click();
+		await expect(editor).toBeFocused({ timeout: 1000 });
+	}).toPass();
+	return editor;
+}
+
 /** Waits for a verification email to be queued for `recipient`, and returns its token. */
 async function verificationToken(recipient: string): Promise<string> {
 	const deadline = Date.now() + QUEUE_WAIT_MILLISECONDS;
@@ -276,17 +304,25 @@ test('a published cover image really renders for a browser with no session, thro
 	// Used to be blocked on the same application defect `tests/e2e/posts-public.spec.ts` records at
 	// length: changing `Tipe` on the Post form cleared the `required` `Judul` input, the browser then
 	// refused to submit `Simpan draf`, and the page never left `/admin/posts/new` — which is why the
-	// `Berkas gambar` field below was never found. The old `toHaveURL(/\/admin\/posts\/[^/]+$/)` on
-	// the line after the submit hid that, because `/admin/posts/new` matches it; #111 tightened the
-	// same assertion in `posts-public.spec.ts` for this reason. The defect itself was #119, fixed in
+	// `Berkas gambar` field was never found. The old `toHaveURL(/\/admin\/posts\/[^/]+$/)` on the
+	// line after the submit hid that, because `/admin/posts/new` matches it; #111 tightened the same
+	// assertion in `posts-public.spec.ts` for this reason. The defect itself was #119, fixed in
 	// `src/lib/components/post/post-form.svelte`.
 	const email = anAddress('cover');
 	await signUpAdmin(page, email);
 
 	await open(page, '/admin/posts/new');
+
+	// The Sampul is a field of the write form since #140, so it is chosen here, before the Post
+	// exists, and `?/create` attaches it to the row it has just written. Waiting for the editor
+	// first is also what proves the page has hydrated — see `bodyEditor`.
+	await bodyEditor(page);
+	await page.keyboard.type('Isi pengumuman dengan gambar sampul.');
 	await page.getByLabel('Judul').fill(`Sampul tautan bertanda tangan ${Date.now()}`);
 	await page.getByLabel('Ringkasan').fill('Bukti gelombang 13 bahwa gambar sampul tampil.');
-	await page.getByLabel('Isi').fill('Isi pengumuman dengan gambar sampul.');
+	await page
+		.getByLabel('Berkas gambar')
+		.setInputFiles({ name: 'sampul.png', mimeType: 'image/png', buffer: PNG });
 	await page.getByLabel('Tipe').selectOption('announcement');
 	await page.getByRole('button', { name: 'Simpan draf' }).click();
 
@@ -296,11 +332,9 @@ test('a published cover image really renders for a browser with no session, thro
 	await expect(page).toHaveURL(/\/admin\/posts\/[0-9a-f-]{36}$/);
 	const postId = page.url().split('/').pop();
 
-	await page
-		.getByLabel('Berkas gambar')
-		.setInputFiles({ name: 'sampul.png', mimeType: 'image/png', buffer: PNG });
-	await page.getByRole('button', { name: 'Unggah sampul' }).click();
-	await expect(page.getByRole('status')).toContainText('Gambar sampul berhasil diunggah');
+	// The Sampul is already on the Post the redirect landed on, which is the claim the move to the
+	// write form has to keep: it is named on the edit screen before anything else is pressed.
+	await expect(page.getByText(`posts/${postId}/cover.png`)).toBeVisible();
 
 	await page.getByRole('button', { name: 'Terbitkan' }).click();
 	await expect(page.getByRole('status')).toContainText('sudah tampil di papan pengumuman');
