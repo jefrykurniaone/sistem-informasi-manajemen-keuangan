@@ -60,20 +60,27 @@
 	 * that lift, and a stray leave used to schedule a close on the group that had just opened, so
 	 * switching downward shut everything.
 	 *
-	 * ## Hover only counts as hover while the row stays under the pointer
+	 * ## A leave that carries no movement is the row leaving, not the pointer
 	 *
 	 * Pinning on click fixed the click path and not the hover path, which suffers the same lift:
 	 * hovering a group below an open one opened it, collapsed the group above, and the row jumped
-	 * away from a motionless pointer. So the hover timer pins too, when it has to. One animation
-	 * frame after it opens the group — by then the collapse above has been laid out — it asks
-	 * whether the row still covers the last place the pointer actually was, recorded from
-	 * `pointerenter` and `pointermove` and never from a leave. If it does not, the pointer did not
-	 * leave, the row left: the open is treated as pinned and any close the stray leave has already
-	 * scheduled is cancelled.
+	 * away from a motionless pointer. So the hover timer pins too, when it has to — and the leave
+	 * itself says when that is, from its own coordinates, without waiting for a frame.
 	 *
-	 * A pointer that leaves by its own motion is untouched by that test, because the last recorded
-	 * position is then the last one *inside* an unmoved row, which the row still covers. Opening a
-	 * group *above* an open one does not shift its own row either. Both keep closing on hover.
+	 * `pointerenter` and `pointermove` record where the pointer was over this group, and a leave
+	 * deliberately never does. A `pointerleave` whose `clientX`/`clientY` are exactly the last
+	 * recorded pair is therefore a layout shift: the pointer is still where it was and the row was
+	 * taken out from under it. Such a leave schedules no close and pins the group, so it behaves
+	 * like one opened by click and is closed only by a click on its own title, Escape, another
+	 * group opening, or a new address.
+	 *
+	 * A pointer that leaves by its own motion always carries a new position, outside the row, which
+	 * cannot equal the last one recorded inside it — so real hover keeps closing on its 500 ms
+	 * timer. Opening a group *above* an open one does not shift its own row either.
+	 *
+	 * Reading the coordinates off the leave rather than measuring the row a frame later is what
+	 * makes this reliable: a frame-based check races the callback that hides the collapsing
+	 * neighbour's content, and the order of those two is not guaranteed.
 	 */
 	interface Props {
 		readonly group: MenuGroup;
@@ -111,19 +118,15 @@
 
 	let openTimer: ReturnType<typeof setTimeout> | null = null;
 	let closeTimer: ReturnType<typeof setTimeout> | null = null;
-	let settleFrame: number | null = null;
-
-	/** The row, so the frame after an open can ask where it ended up. */
-	let itemElement = $state<HTMLLIElement | null>(null);
 
 	/**
 	 * The last place the pointer was seen over this group. Written by `pointerenter` and
-	 * `pointermove`, and deliberately never by `pointerleave` — that is what lets the settle check
-	 * below tell a row that moved from a pointer that moved.
+	 * `pointermove`, and deliberately never by `pointerleave` — that is what lets the leave tell a
+	 * row that moved from a pointer that moved.
 	 *
-	 * It is only ever *read* one frame after a hover opened the group, and a hover can only open a
-	 * group that is shut, which is when no floating panel exists to have recorded anything. So the
-	 * value the check sees is always a position on the row, never one on the panel.
+	 * Both values come straight from a pointer event, so comparing them to a later event's
+	 * coordinates is exact even where the browser reports fractional ones: a pointer that has not
+	 * moved reports the same number twice.
 	 */
 	let lastPointerX: number | null = null;
 	let lastPointerY: number | null = null;
@@ -156,44 +159,18 @@
 		}
 	}
 
-	function cancelSettle(): void {
-		if (settleFrame !== null) {
-			cancelAnimationFrame(settleFrame);
-			settleFrame = null;
-		}
-	}
-
 	/** Where the pointer last was over this group. Never called from a leave — see the note above. */
 	function rememberPointer(event: PointerEvent): void {
 		lastPointerX = event.clientX;
 		lastPointerY = event.clientY;
 	}
 
-	function covers(rect: DOMRect, x: number, y: number): boolean {
-		return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-	}
-
 	/**
-	 * One frame after a hover opened this group, when the collapse of whatever was open above it
-	 * has been laid out: if the row no longer covers the last place the pointer was, the row moved
-	 * and the pointer did not, so this open is pinned rather than hover's to undo.
-	 *
-	 * The close is cancelled as well as the flag cleared, because the stray `pointerleave` can be
-	 * dispatched either side of this frame and would otherwise have scheduled one already.
+	 * Whether a leave reports the pointer exactly where the last move left it, which means the
+	 * pointer never moved and the row was taken out from under it by a layout shift.
 	 */
-	function pinWhenRowMovedAway(): void {
-		cancelSettle();
-		settleFrame = requestAnimationFrame(() => {
-			settleFrame = null;
-			if (itemElement === null || lastPointerX === null || lastPointerY === null) {
-				return;
-			}
-			if (covers(itemElement.getBoundingClientRect(), lastPointerX, lastPointerY)) {
-				return;
-			}
-			hoverOpened = false;
-			cancelClose();
-		});
+	function isLayoutShift(event: PointerEvent): boolean {
+		return event.clientX === lastPointerX && event.clientY === lastPointerY;
 	}
 
 	/**
@@ -217,7 +194,6 @@
 			openTimer = null;
 			hoverOpened = true;
 			onOpenChange(true);
-			pinWhenRowMovedAway();
 		}, HOVER_OPEN_DELAY_MS);
 	}
 
@@ -227,9 +203,15 @@
 		}
 		cancelOpen();
 		cancelClose();
-		// Only hover undoes hover. A pinned group ignores the pointer leaving, including the
-		// `pointerleave` a collapsing neighbour above it causes without the pointer moving at all.
+		// Only hover undoes hover. A group opened any other way ignores the pointer leaving.
 		if (!open || !hoverOpened) {
+			return;
+		}
+		// A leave that carries no movement is the row being taken out from under a motionless
+		// pointer — a collapsing neighbour above it — and not the pointer going anywhere. Pin the
+		// group instead of closing it, so it lasts as long as one opened by click.
+		if (isLayoutShift(event)) {
+			hoverOpened = false;
 			return;
 		}
 		closeTimer = setTimeout(() => {
@@ -246,7 +228,6 @@
 	function handleOpenChange(next: boolean): void {
 		cancelOpen();
 		cancelClose();
-		cancelSettle();
 		hoverOpened = false;
 		onOpenChange(next);
 	}
@@ -263,12 +244,11 @@
 		return itemKey === activeItemKey;
 	}
 
-	// Both timers and the settle frame die with the component: a group can be removed from the menu
-	// by a locale switch or a role change while one of them is still pending.
+	// Both timers die with the component: a group can be removed from the menu by a locale switch
+	// or a role change while one of them is still pending.
 	onDestroy(() => {
 		cancelOpen();
 		cancelClose();
-		cancelSettle();
 	});
 </script>
 
@@ -276,7 +256,6 @@
 	<DropdownMenu.Root {open} onOpenChange={handleOpenChange}>
 		<Sidebar.Menu>
 			<Sidebar.MenuItem
-				bind:ref={itemElement}
 				onpointerenter={handlePointerEnter}
 				onpointermove={rememberPointer}
 				onpointerleave={handlePointerLeave}
@@ -336,7 +315,6 @@
 	<Collapsible.Root {open} onOpenChange={handleOpenChange} class="group/collapsible">
 		<Sidebar.Menu>
 			<Sidebar.MenuItem
-				bind:ref={itemElement}
 				onpointerenter={handlePointerEnter}
 				onpointermove={rememberPointer}
 				onpointerleave={handlePointerLeave}
