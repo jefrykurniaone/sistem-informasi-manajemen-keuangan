@@ -137,9 +137,15 @@
 			writes `Judul`, `Ringkasan`, `Kategori`, `Isi` no longer reads `type` or `chosenType` at all.
 
 			`values.title` (and `values.category`, `values.startsAt`, `values.endsAt`,
-			`values.location`) still get written back on every render — see the comment on `chosenType`
-			above for why that has to stay: it is what makes a rejected submission's returned `values`
-			show up again after `useEnhance` re-renders this form.
+			`values.location`) still get written back on every render, unconditionally — that part is
+			untouched by this `{#key}`, and it has to stay: see the comment on `chosenType` above.
+			Neither `(app)/admin/posts/new/+page.svelte` nor `(app)/admin/posts/[id]/+page.svelte` uses
+			`use:enhance`, so this form posts natively and a rejected submission is a full document
+			render with the action's `values` handed back as fresh props. A `$state` seeded from a prop
+			captures that prop's first value and stops following it, so seeding these fields from
+			`values` the same way `chosenType` is kept separate from `values.type` would freeze them at
+			whatever `values` held on the very first render, and a rejected submission's returned
+			`values` would never reach the DOM.
 		-->
 		<div class="flex flex-col gap-1.5">
 			<label class="text-sm font-medium" for="post-form-type-{uid}">
