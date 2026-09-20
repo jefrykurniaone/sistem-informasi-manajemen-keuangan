@@ -9,7 +9,7 @@ import {
 	importResidents,
 	previewResidentImport,
 	ImportRejectedError
-} from '$lib/server/services/import/resident-csv';
+} from '$lib/server/services/import/resident-import';
 import {
 	EmptyImportFileError,
 	ImportHeaderError,
@@ -72,7 +72,7 @@ export const actions: Actions = {
 		const importRequest = {
 			actorId: locals.user.id,
 			fileName: trimmedFileName(file.name),
-			content: await file.text()
+			content: Buffer.from(await file.arrayBuffer())
 		};
 		try {
 			return { preview: await previewResidentImport(database(), importRequest) };
@@ -90,9 +90,9 @@ export const actions: Actions = {
 		const importRequest = {
 			actorId: locals.user.id,
 			fileName: trimmedFileName(String(form.get('fileName') ?? '')),
-			content: String(form.get('content') ?? '')
+			content: Buffer.from(String(form.get('content') ?? ''), 'base64')
 		};
-		if (importRequest.content.trim() === '') {
+		if (importRequest.content.length === 0) {
 			return fail(400, { message: m.adminImport_missingContent() });
 		}
 

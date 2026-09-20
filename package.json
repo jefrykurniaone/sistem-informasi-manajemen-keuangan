@@ -65,6 +65,7 @@
 		"better-auth": "1.7.5",
 		"drizzle-orm": "0.45.2",
 		"elysia": "^1.4.30",
+		"exceljs": "^4.4.0",
 		"nodemailer": "^10.0.10",
 		"pg": "8.23.0",
 		"sanitize-html": "2.17.7"
