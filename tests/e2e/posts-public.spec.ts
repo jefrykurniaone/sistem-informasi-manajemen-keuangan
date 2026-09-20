@@ -219,10 +219,12 @@ test('a draft Post answers 404 to a browser with no session, even with its real 
 	// then refuses to submit the form at all and the page never leaves `/admin/posts/new`.
 	// Measured against the preview build: three seconds after the field was filled — long after
 	// hydration — `selectOption('announcement')` leaves `Judul` empty while the two textareas keep
-	// what they hold, and the submit that follows does not navigate. Not this ticket's to fix.
+	// what they hold, and the submit that follows does not navigate. Filed as #119, and not this
+	// ticket's to fix: `post-form.svelte` is outside its `writes:`. Take this `fixme` off once #119
+	// has landed.
 	test.fixme(
 		true,
-		'Changing Tipe on the Post form clears the required Judul input, so Simpan draf is held back by the browser own form validation and no Post is ever created. Application defect in src/lib/components/post/post-form.svelte, filed as its own ticket.'
+		'#119: Changing Tipe on the Post form clears the required Judul input, so Simpan draf is held back by the browser own form validation and no Post is ever created. Application defect in src/lib/components/post/post-form.svelte, see #119.'
 	);
 	const email = anAddress('draft');
 	await signUpAdmin(page, email);
