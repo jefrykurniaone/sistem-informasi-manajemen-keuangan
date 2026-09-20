@@ -8,7 +8,6 @@
 	"appShell_navManageRoles": "Kelola Peran",
 	"appShell_navLogout": "Keluar",
 	"appShell_navPosts": "Papan Pengumuman",
-	"appShell_navGroupMine": "Saya",
 	"appShell_navProfile": "Profil Saya",
 	"appShell_navProfileNotifications": "Preferensi Notifikasi",
 	"appShell_navMyUnit": "Rumah Saya",
@@ -16,7 +15,6 @@
 	"appShell_navPayments": "Pembayaran Saya",
 	"appShell_navReports": "Laporan Bulanan",
 	"appShell_navComplaints": "Keluhan Saya",
-	"appShell_navGroupManage": "Kelola",
 	"appShell_navManageUnits": "Daftar Unit",
 	"appShell_navManageJobs": "Pekerjaan Terjadwal",
 	"appShell_navManagePosts": "Kelola Post",
@@ -1030,5 +1028,7 @@
 	"appShell_groupResidents": "Warga & Unit",
 	"appShell_groupServices": "Layanan",
 	"appShell_groupSystem": "Sistem",
-	"appShell_toggleSidebar": "Buka atau tutup menu"
+	"appShell_toggleSidebar": "Buka atau tutup menu",
+	"appShell_sidebarSheetTitle": "Navigasi",
+	"appShell_sidebarSheetDescription": "Menampilkan menu navigasi pada layar sempit."
 }
