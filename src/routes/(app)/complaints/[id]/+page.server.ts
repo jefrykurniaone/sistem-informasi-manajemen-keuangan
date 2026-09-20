@@ -1,6 +1,5 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import * as m from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime';
 import { PermissionDeniedError } from '$lib/errors';
 import { AUTH_PATHS } from '$lib/server/auth';
 import { database } from '$lib/server/db';
@@ -8,6 +7,7 @@ import { COMPLAINT_STATUS } from '$lib/server/db/schema/complaint';
 import { systemClock } from '$lib/server/ports/clock';
 import type { FileStore } from '$lib/server/ports/file-store';
 import { assertUuidParam } from '$lib/server/services/identifier';
+import { formatDateTime } from '$lib/time';
 import {
 	addComplaintReply,
 	COMPLAINT_REPLY_RULE,
@@ -164,11 +164,9 @@ async function toLink(attachment: ComplaintAttachmentSummary, fileStore: FileSto
 	return { id: attachment.id, url: await fileStore.signedLink(attachment.fileKey) };
 }
 
-/** An instant as a sentence, in the interface locale — the same helper the admin screen carries. */
+/** An instant as a sentence, in the complex's own zone — `$lib/time`'s `formatDateTime`. */
 function formatInstant(instant: Date): string {
-	return new Intl.DateTimeFormat(getLocale(), { dateStyle: 'full', timeStyle: 'short' }).format(
-		instant
-	);
+	return formatDateTime(instant);
 }
 
 /** The sentence a resident reads for each named Tanggapan rule refusal. */

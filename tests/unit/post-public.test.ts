@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { user } from '$lib/server/db/schema/auth';
 import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { POST_TYPE } from '$lib/server/db/schema/post';
+import { posts, POST_TYPE } from '$lib/server/db/schema/post';
 import { residents } from '$lib/server/db/schema/resident';
 import { testDatabase } from '$lib/server/db/test-helpers';
 import { FakeClock } from '$lib/server/ports/fakes';
@@ -13,7 +14,12 @@ import {
 	PostNotFoundError,
 	type PostContent
 } from '$lib/server/services/post';
-import { getPublishedPost, listPublicPosts, POST_WHEN } from '$lib/server/services/post/public';
+import {
+	getPublishedPost,
+	listPublicPosts,
+	renderPublicPostBody,
+	POST_WHEN
+} from '$lib/server/services/post/public';
 
 /**
  * The announcement board's public reading side: what a visitor with no session may see through
@@ -73,7 +79,7 @@ function eventContent(overrides: Partial<PostContent> = {}): PostContent {
 		type: POST_TYPE.event,
 		title: unique('Kerja bakti publik'),
 		summary: 'Kerja bakti bulanan di lapangan komplek.',
-		bodyMarkdown: 'Bawa **sapu** dan cangkul.',
+		bodyHtml: '<p>Bawa <strong>sapu</strong> dan cangkul.</p>',
 		category: 'kerja-bakti',
 		startsAt: new Date(START),
 		endsAt: null,
@@ -88,7 +94,7 @@ function announcementContent(overrides: Partial<PostContent> = {}): PostContent 
 		type: POST_TYPE.announcement,
 		title: unique('Pengumuman publik'),
 		summary: 'Jadwal pengambilan sampah berubah.',
-		bodyMarkdown: 'Mulai pekan depan sampah diambil hari Selasa.',
+		bodyHtml: '<p>Mulai pekan depan sampah diambil hari Selasa.</p>',
 		category: 'umum',
 		startsAt: null,
 		endsAt: null,
@@ -112,7 +118,7 @@ describe('getPublishedPost', () => {
 		expect(found).toMatchObject({
 			id: created.id,
 			title: created.title,
-			bodyMarkdown: created.bodyMarkdown
+			bodyHtml: created.bodyHtml
 		});
 	});
 
@@ -156,6 +162,47 @@ describe('getPublishedPost', () => {
 		await expect(getPublishedPost(testDb.db, 'new')).rejects.toThrow(PostNotFoundError);
 		await expect(getPublishedPost(testDb.db, 'abc')).rejects.toThrow(PostNotFoundError);
 		await expect(getPublishedPost(testDb.db, '1')).rejects.toThrow(PostNotFoundError);
+	});
+});
+
+describe('renderPublicPostBody', () => {
+	it('renders a Post written through the service with its <strong> intact', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Publik Tebal'));
+		const clock = new FakeClock(START);
+		const created = await createPost(testDb.db, clock, {
+			actorId: adminId,
+			...announcementContent({
+				category: 'umum',
+				title: unique('Pengumuman tebal'),
+				bodyHtml: '<p>Bawa <strong>sapu</strong>.</p>'
+			})
+		});
+		await publishPost(testDb.db, clock, { actorId: adminId, postId: created.id });
+
+		const found = await getPublishedPost(testDb.db, created.id);
+
+		expect(renderPublicPostBody(found.bodyHtml)).toBe('<p>Bawa <strong>sapu</strong>.</p>');
+	});
+
+	it('filters a stored body again, so narrowing the whitelist reaches rows already written', async () => {
+		// The row is written straight to the table rather than through the service — which is what a
+		// row written before the whitelist last changed looks like from here. The render pass is the
+		// last thing standing between it and a visitor's browser.
+		const adminId = await insertAdmin(unique('Pengurus Publik Kotor'));
+		const clock = new FakeClock(START);
+		const created = await createPost(testDb.db, clock, {
+			actorId: adminId,
+			...announcementContent({ category: 'umum', title: unique('Pengumuman kotor') })
+		});
+		await testDb.db
+			.update(posts)
+			.set({ bodyHtml: '<p onclick="steal()">halo</p><script>alert(1)</script>' })
+			.where(eq(posts.id, created.id));
+		await publishPost(testDb.db, clock, { actorId: adminId, postId: created.id });
+
+		const found = await getPublishedPost(testDb.db, created.id);
+
+		expect(renderPublicPostBody(found.bodyHtml)).toBe('<p>halo</p>');
 	});
 });
 

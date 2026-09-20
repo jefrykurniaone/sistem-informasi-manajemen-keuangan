@@ -3,6 +3,13 @@
 @import 'shadcn-svelte/tailwind.css';
 @import '@fontsource-variable/inter';
 
+/*
+	The `prose` utilities a rich-text Post body is styled with. Registered here so that the editor
+	#140 builds and the pages that render its output share one typographic scale instead of each
+	screen restating the tag-by-tag rules a sanitized body can contain.
+*/
+@plugin '@tailwindcss/typography';
+
 @custom-variant dark (&:is(.dark *));
 
 :root {

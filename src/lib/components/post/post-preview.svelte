@@ -9,11 +9,12 @@
 	 *
 	 * ## `bodyHtml` and `{@html …}`
 	 *
-	 * `bodyHtml` must be the output of `renderPostBody` in
-	 * `src/lib/server/services/post/markdown.ts`, and nothing else. That function parses the author's
-	 * Markdown and then rebuilds the result from a whitelist of tags and attributes, so what arrives
-	 * here has no `<script>`, no event handler and no `javascript:` link left in it —
-	 * `tests/unit/markdown-sanitize.test.ts` is the proof, and it is the reason this component may use
+	 * `bodyHtml` must be the output of `sanitizePostHtml` in
+	 * `src/lib/server/services/post/sanitize.ts`, and nothing else — reached through
+	 * `previewPostBody` on the admin screen or `renderPublicPostBody` on the public one. That
+	 * function rebuilds the HTML from a whitelist of tags and attributes, so what arrives here has no
+	 * `<script>`, no event handler and no `javascript:` link left in it —
+	 * `tests/unit/post-sanitize.test.ts` is the proof, and it is the reason this component may use
 	 * `{@html …}` at all.
 	 *
 	 * The two screens that use this component both get `bodyHtml` from a server `load` or a form
@@ -26,7 +27,7 @@
 		readonly category: string;
 		readonly title: string;
 		readonly summary: string;
-		/** Sanitized HTML from `renderPostBody`. Never raw Markdown and never a stored body. */
+		/** Sanitized HTML from `sanitizePostHtml`. Never a stored body handed over unfiltered. */
 		readonly bodyHtml: string;
 		/** The kegiatan's start, already formatted for reading, or `null`. */
 		readonly startsAtLabel?: string | null;
@@ -84,7 +85,7 @@
 	{/if}
 
 	<!--
-		Sanitized by `renderPostBody`, which is the whole reason this component exists — see the doc
+		Sanitized by `sanitizePostHtml`, which is the whole reason this component exists — see the doc
 		comment above. `svelte/no-at-html-tags` is disabled for this one line because there is no other
 		way to render HTML in Svelte, and the value being rendered is the output of the sanitizer this
 		spec is built around rather than anything a caller composed.

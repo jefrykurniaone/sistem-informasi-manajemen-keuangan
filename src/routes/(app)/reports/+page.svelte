@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import * as m from '$lib/paraglide/messages.js';
+	import { formatDateTime } from '$lib/time';
 	import type { PageProps } from './$types';
 
 	/**
@@ -13,12 +14,6 @@
 	 */
 
 	let { data }: PageProps = $props();
-
-	/** A publication instant is read against a clock, so it is shown whole. */
-	const PUBLISHED_AT_FORMAT = new Intl.DateTimeFormat('id-ID', {
-		dateStyle: 'long',
-		timeStyle: 'short'
-	});
 </script>
 
 <svelte:head>
@@ -39,7 +34,7 @@
 				<h3 class="text-base font-medium">{report.period}</h3>
 				<p class="text-sm text-muted-foreground">
 					{m.reports_revisionLabel({ revision: report.revision })} ·
-					{m.reports_publishedAt({ date: PUBLISHED_AT_FORMAT.format(report.publishedAt) })}
+					{m.reports_publishedAt({ date: formatDateTime(report.publishedAt) })}
 				</p>
 				{#if report.revisionReason !== null}
 					<p class="text-sm text-muted-foreground">

@@ -43,7 +43,7 @@
 		readonly type: string;
 		readonly title: string;
 		readonly summary: string;
-		readonly bodyMarkdown: string;
+		readonly bodyHtml: string;
 		readonly category: string;
 		readonly startsAt: string;
 		readonly endsAt: string;
@@ -64,7 +64,7 @@
 		type: EVENT_TYPE,
 		title: '',
 		summary: '',
-		bodyMarkdown: '',
+		bodyHtml: '',
 		category: 'umum',
 		startsAt: '',
 		endsAt: '',
@@ -219,12 +219,12 @@
 		</label>
 		<textarea
 			id="post-form-body-{uid}"
-			name="bodyMarkdown"
+			name="bodyHtml"
 			rows="12"
 			required
 			aria-describedby="post-form-body-hint-{uid}"
 			class="rounded-md border border-border bg-background px-3 py-2 font-mono text-sm"
-			>{values.bodyMarkdown}</textarea
+			>{values.bodyHtml}</textarea
 		>
 		<p class="text-xs text-muted-foreground" id="post-form-body-hint-{uid}">
 			{m.adminPosts_form_bodyHint()}

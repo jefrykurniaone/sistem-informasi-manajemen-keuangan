@@ -121,7 +121,7 @@ function eventContent(overrides: Partial<PostContent> = {}): PostContent {
 		type: POST_TYPE.event,
 		title: unique('Kerja bakti'),
 		summary: 'Kerja bakti bulanan di lapangan komplek.',
-		bodyMarkdown: 'Bawa **sapu** dan cangkul.',
+		bodyHtml: '<p>Bawa <strong>sapu</strong> dan cangkul.</p>',
 		category: 'kerja-bakti',
 		startsAt: EVENT_START,
 		endsAt: EVENT_END,
@@ -136,7 +136,7 @@ function announcementContent(overrides: Partial<PostContent> = {}): PostContent 
 		type: POST_TYPE.announcement,
 		title: unique('Perubahan jadwal'),
 		summary: 'Jadwal pengambilan sampah berubah.',
-		bodyMarkdown: 'Mulai pekan depan sampah diambil hari Selasa.',
+		bodyHtml: '<p>Mulai pekan depan sampah diambil hari Selasa.</p>',
 		category: 'umum',
 		startsAt: null,
 		endsAt: null,
@@ -198,17 +198,19 @@ describe('createPost', () => {
 			...announcementContent({
 				title: `  ${title}  `,
 				summary: '  ringkas  ',
-				bodyMarkdown: '  isi  '
+				bodyHtml: '  isi  '
 			})
 		});
 
-		expect(created).toMatchObject({ title, summary: 'ringkas', bodyMarkdown: 'isi' });
+		// The body is trimmed and then wrapped: plain text carries no tags, so the service gives it
+		// the paragraph the public page needs — see `normalizePostBodyHtml`.
+		expect(created).toMatchObject({ title, summary: 'ringkas', bodyHtml: '<p>isi</p>' });
 	});
 
 	it.each([
 		['an empty title', { title: '   ' }],
 		['an empty summary', { summary: '' }],
-		['an empty body', { bodyMarkdown: '  \n ' }]
+		['an empty body', { bodyHtml: '  \n ' }]
 	])('rejects %s with a TypeError', async (_name, overrides) => {
 		const adminId = await insertAdmin(unique('Pengurus Kosong'));
 
@@ -448,10 +450,10 @@ describe('previewPostBody', () => {
 		const rendered = await previewPostBody(
 			testDb.db,
 			adminId,
-			'<script>alert(1)</script>\n\nBawa **sapu**.'
+			'<script>alert(1)</script><p>Bawa <strong>sapu</strong>.</p>'
 		);
 
-		expect(rendered).toContain('<strong>sapu</strong>');
+		expect(rendered).toBe('<p>Bawa <strong>sapu</strong>.</p>');
 		expect(rendered).not.toContain('alert');
 		const after = await getPost(testDb.db, adminId, created.id);
 		expect(after.status).toBe(POST_STATUS.draft);
@@ -769,7 +771,7 @@ describe('publishing queues the new-post email — #41', () => {
 		const created = await createPost(testDb.db, clock, {
 			actorId: adminId,
 			...announcementContent({
-				bodyMarkdown: 'Isi lengkap yang tidak boleh pernah muncul di email.'
+				bodyHtml: '<p>Isi lengkap yang tidak boleh pernah muncul di email.</p>'
 			})
 		});
 
@@ -788,7 +790,7 @@ describe('publishing queues the new-post email — #41', () => {
 			url: `${readOrigin()}/posts/${created.id}`,
 			locale: 'id'
 		});
-		expect(JSON.stringify(own.payload)).not.toContain(created.bodyMarkdown);
+		expect(JSON.stringify(own.payload)).not.toContain(created.bodyHtml);
 	});
 
 	it('does not queue a second email when an already-published Post is edited', async () => {

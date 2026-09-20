@@ -1,24 +1,29 @@
-import { marked } from 'marked';
 import sanitizeHtml from 'sanitize-html';
 
 /**
- * Turning a Post's Markdown into the HTML a browser is allowed to see.
+ * Filtering a Post's HTML down to what a browser is allowed to see.
  *
- * This module is the security boundary of the announcement board. `docs/spec-konten-v1.md` settles
- * both halves of it: "Isi ditulis Markdown dan dibersihkan saat ditampilkan" — Markdown becomes
- * HTML and is filtered against a whitelist of tags and attributes before it is displayed — and the
- * reason it matters even though the authors are trusted admins: "halaman ini bisa dibuka tanpa
- * masuk, dan skrip yang lolos di halaman publik adalah kerugian yang tidak bisa ditarik kembali".
+ * This module is the security boundary of the announcement board. `docs/spec-post-editor-v1.md`
+ * replaces the Markdown body the board started with by the HTML a rich-text editor produces, and
+ * `docs/spec-konten-v1.md`'s reason for filtering it is unchanged and is the reason both callers
+ * below exist: "halaman ini bisa dibuka tanpa masuk, dan skrip yang lolos di halaman publik adalah
+ * kerugian yang tidak bisa ditarik kembali".
  *
- * ## Two stages, and why the second one is not optional
+ * ## One filter, called at two points
  *
- * `marked` turns Markdown into HTML. It is not a sanitizer and has not tried to be one since it
- * removed its own `sanitize` option: Markdown lets an author write raw HTML, and `marked` passes
- * that raw HTML through untouched — `<script>alert(1)</script>` in the body comes out of `marked`
- * as `<script>alert(1)</script>`. `sanitize-html` then parses that HTML and rebuilds it from a
- * whitelist, dropping every tag and every attribute the list below does not name. Nothing here
- * tries to recognise dangerous input; the list says what is allowed and everything else is gone,
- * which is the only shape of this rule that stays correct against an attack nobody thought of.
+ * `sanitizePostHtml` runs **when a Post is saved**, so that nothing dangerous is ever written to
+ * `posts.body_html` in the first place, and **again when a Post is rendered**, so that narrowing
+ * the whitelist below reaches rows that were written while it was wider. Neither pass makes the
+ * other redundant: the save-time pass is what keeps a stored row honest against anything that reads
+ * it later, and the render-time pass is what keeps a page honest against anything that wrote the
+ * row — including a row written before this list was last changed, or by a path nobody has thought
+ * of yet. `src/lib/server/services/post/index.ts` holds the first call and
+ * `src/lib/server/services/post/public.ts` the second.
+ *
+ * `sanitize-html` parses the HTML and rebuilds it from a whitelist, dropping every tag and every
+ * attribute the list below does not name. Nothing here tries to recognise dangerous input; the list
+ * says what is allowed and everything else is gone, which is the only shape of this rule that stays
+ * correct against an attack nobody thought of.
  *
  * No part of this is hand-rolled with a regular expression. A whitelist written as a pattern over
  * HTML is both wrong (HTML is not a regular language) and a backtracking hazard; the parser does
@@ -26,20 +31,20 @@ import sanitizeHtml from 'sanitize-html';
  *
  * ## Where the output goes
  *
- * `renderPostBody` returns HTML meant for `{@html …}`. That is the whole point of it, and it is the
+ * The rendered result is HTML meant for `{@html …}`. That is the whole point of it, and it is the
  * only value in this application for which that is true. A caller that puts anything else through
  * `{@html …}` is outside what this module promises.
  *
  * ## The whitelist, and why each decision went the way it did
  *
  * What the spec's user stories actually ask the body to carry is lists, emphasis, headings, links,
- * quotes, code and tables. Every one of those survives; the list was checked against real `marked`
- * output for each of them rather than guessed, because a whitelist that quietly kills the tables an
- * author needs is as much a failure as one that lets a script through.
+ * quotes, code and tables. Every one of those survives. The list is unchanged from the one this
+ * module replaced — same tags, same attributes, same link schemes — because the editor #140 builds
+ * is being fitted to the whitelist rather than the whitelist widened to the editor.
  *
- * - **Tables survive, alignment included.** GFM alignment reaches the browser as `align="left"` on
- *   `th` and `td`, so those two attributes are on the list. `align` is a presentational attribute
- *   with no scripting surface; dropping it would silently reflow every table an author aligned.
+ * - **Tables survive, alignment included.** Alignment reaches the browser as `align="left"` on `th`
+ *   and `td`, so those two attributes are on the list. `align` is a presentational attribute with
+ *   no scripting surface; dropping it would silently reflow every table an author aligned.
  * - **Links survive; their schemes do not, unless they are one of four.** `http`, `https`, `mailto`
  *   and `tel` — enough for a link to a map, a government page, a phone number or an email address,
  *   and nothing else. `javascript:` is the attack this closes, and `data:` is refused too, because
@@ -52,20 +57,15 @@ import sanitizeHtml from 'sanitize-html';
  *   image, which is uploaded through the `FileStore` port and stored by this application. A body
  *   `<img>` would point at a host this application does not control, on a page that is open without
  *   an account: every visitor's address would be handed to that host on load, and the author who
- *   pasted the URL would have no idea. Nothing in the spec's user stories asks for images inside
- *   the body — story 6 asks for a cover image and stops there. The admin write screen says so in
- *   its own hint rather than letting an author wonder where their picture went. Widening this later
- *   is one entry plus a rule about which origins a `src` may name; widening it now would be
- *   widening it without either.
- * - **GFM task-list checkboxes lose their `<input>` and keep their text.** `- [ ] beli air` becomes
- *   a plain list item reading "beli air". An `<input>` on a public page is form surface for the sake
- *   of a tick mark nobody can click, so the tag goes and the words stay.
+ *   pasted the URL would have no idea. Widening this later is one entry plus a rule about which
+ *   origins a `src` may name; widening it now would be widening it without either.
+ * - **A checkbox loses its `<input>` and keeps its text.** An `<input>` on a public page is form
+ *   surface for the sake of a tick mark nobody can click, so the tag goes and the words stay.
  * - **A code block keeps its `<pre><code>` and loses its `language-…` class.** No syntax
  *   highlighter reads that class today. `class` is not on the list at all, which also means no
  *   author can reach into this application's stylesheet from inside a post body.
- * - **`h1` through `h6` all survive.** An author who typed `#` gets a heading rather than a line
- *   that silently lost its markup. The page that displays a Post owns where those headings sit in
- *   its own outline — this module owns whether they are safe, and a heading is.
+ * - **`h1` through `h6` all survive.** The page that displays a Post owns where those headings sit
+ *   in its own outline — this module owns whether they are safe, and a heading is.
  * - **`script`, `style`, `textarea`, `option` and `noscript` lose their text as well as their
  *   tags.** For every other disallowed tag the text between the tags is kept, which is what makes a
  *   stray `<div>` harmless rather than destructive. For these five, the text *is* the payload —
@@ -76,7 +76,7 @@ import sanitizeHtml from 'sanitize-html';
  *   enumerate the dangerous attributes would be one release behind the next one invented.
  */
 
-/** Every HTML tag a rendered Post body may contain. Anything else loses its tag. */
+/** Every HTML tag a Post body may contain. Anything else loses its tag. */
 export const ALLOWED_POST_BODY_TAGS: readonly string[] = [
 	'p',
 	'br',
@@ -106,7 +106,7 @@ export const ALLOWED_POST_BODY_TAGS: readonly string[] = [
 	'td'
 ];
 
-/** Every attribute a rendered Post body may carry, per tag. Anything else is dropped. */
+/** Every attribute a Post body may carry, per tag. Anything else is dropped. */
 export const ALLOWED_POST_BODY_ATTRIBUTES: Readonly<Record<string, readonly string[]>> = {
 	a: ['href', 'title'],
 	th: ['align'],
@@ -122,19 +122,7 @@ export const ALLOWED_POST_BODY_SCHEMES: readonly string[] = ['http', 'https', 'm
  */
 const NON_TEXT_TAGS: readonly string[] = ['script', 'style', 'textarea', 'option', 'noscript'];
 
-/** How `marked` is asked to read a Post body. Named so that a test parses exactly what a page does. */
-const MARKDOWN_OPTIONS = {
-	/** Tables and strikethrough, which the whitelist above keeps. */
-	gfm: true,
-	/** A single newline stays a single newline; a paragraph break needs a blank line. */
-	breaks: false,
-	/** The CommonMark-ish rules `marked` uses by default, not the original perl script's bugs. */
-	pedantic: false,
-	/** Synchronous, so that this function can be one too and a test needs no await to read it. */
-	async: false
-} as const;
-
-/** How `sanitize-html` is asked to filter what `marked` produced. */
+/** How `sanitize-html` is asked to filter a Post body. */
 const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
 	allowedTags: [...ALLOWED_POST_BODY_TAGS],
 	allowedAttributes: Object.fromEntries(
@@ -149,14 +137,18 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
 };
 
 /**
- * The Markdown of a Post body, as HTML that is safe to put through `{@html …}`.
+ * `html`, rebuilt from the whitelist above — the only form of a Post body that may reach
+ * `{@html …}`.
  *
- * @param bodyMarkdown what the author typed, exactly as `posts.bodyMarkdown` stores it.
+ * Idempotent, which is what lets the service call it on the way in and a page call it again on the
+ * way out: the output already contains only allowed tags and attributes, so a second pass has
+ * nothing left to remove.
+ *
+ * @param html the editor's output on the way in, or `posts.bodyHtml` on the way out.
  * @returns HTML containing only the tags and attributes named above. Never a `<script>`, never an
  *   event handler, never a `javascript:` link — see this module's doc comment for the whole list
  *   and for what each decision costs.
  */
-export function renderPostBody(bodyMarkdown: string): string {
-	const html = marked.parse(bodyMarkdown, MARKDOWN_OPTIONS);
+export function sanitizePostHtml(html: string): string {
 	return sanitizeHtml(html, SANITIZE_OPTIONS);
 }

@@ -2,20 +2,10 @@
 	import { resolve } from '$app/paths';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as m from '$lib/paraglide/messages.js';
+	import { formatDay } from '$lib/time';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
-
-	/**
-	 * Instants are shown in UTC, and said to be — same reasoning as
-	 * `src/routes/(app)/admin/jobs/+page.svelte`'s copy of this constant: the alternative is the zone
-	 * of whichever machine renders the page, which differs between the first server render and the
-	 * browser after hydration.
-	 */
-	const CREATED_AT_FORMAT = new Intl.DateTimeFormat('id-ID', {
-		dateStyle: 'medium',
-		timeZone: 'UTC'
-	});
 </script>
 
 <svelte:head>
@@ -48,7 +38,7 @@
 		<dt class="text-muted-foreground">{m.adminUnits_detailOccupants()}</dt>
 		<dd>{data.unit.activeOccupantCount}</dd>
 		<dt class="text-muted-foreground">{m.adminUnits_detailCreatedAt()}</dt>
-		<dd>{CREATED_AT_FORMAT.format(data.unit.createdAt)}</dd>
+		<dd>{formatDay(data.unit.createdAt)}</dd>
 	</dl>
 
 	<div>

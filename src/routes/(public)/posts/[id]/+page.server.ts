@@ -2,10 +2,9 @@ import { error } from '@sveltejs/kit';
 import * as m from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 import { database } from '$lib/server/db';
-import { renderPostBody } from '$lib/server/services/post/markdown';
 import { assertUuidParam } from '$lib/server/services/identifier';
 import { PostNotFoundError } from '$lib/server/services/post';
-import { getPublishedPost } from '$lib/server/services/post/public';
+import { getPublishedPost, renderPublicPostBody } from '$lib/server/services/post/public';
 import { systemClock } from '$lib/server/ports/clock';
 import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
 import type { PageServerLoad } from './$types';
@@ -21,7 +20,7 @@ import type { PageServerLoad } from './$types';
  * like one that was never written: `PostNotFoundError` becomes `error(404, …)`, the same
  * translation `(app)/admin/posts/[id]/+page.server.ts` makes for the same class.
  *
- * `bodyHtml` is `renderPostBody`'s output and nothing else, handed to `+page.svelte`'s
+ * `bodyHtml` is `renderPublicPostBody`'s output and nothing else, handed to `+page.svelte`'s
  * `post-preview.svelte` exactly the way `(app)/admin/posts/[id]/+page.server.ts` already does for
  * its own preview — see `post-preview.svelte`'s doc comment for why nothing else may reach
  * `{@html …}`.
@@ -69,7 +68,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 			endsAtLabel: formatInstant(post.endsAt),
 			coverImageUrl
 		},
-		bodyHtml: renderPostBody(post.bodyMarkdown),
+		bodyHtml: renderPublicPostBody(post.bodyHtml),
 		shareUrl: `${url.origin}${url.pathname}`
 	};
 };

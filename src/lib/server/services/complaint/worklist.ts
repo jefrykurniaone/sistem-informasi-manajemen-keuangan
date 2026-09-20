@@ -1,4 +1,5 @@
 import { and, count, eq, gte, lt } from 'drizzle-orm';
+import { civilMonthOf } from '$lib/time';
 import { ACTION, requirePermission, type DatabaseWriter } from '../../authz';
 import { COMPLAINT_STATUS, complaints } from '../../db/schema/complaint';
 import type { Clock } from '../../ports/clock';
@@ -26,14 +27,9 @@ import type { Clock } from '../../ports/clock';
  *
  * "Bulan berjalan" is the calendar month the clock is currently in — the 1st through the last day
  * — not "the last 30 days", so a test can move a fake clock to the last day of a month and prove
- * the count resets on the next call after the 1st. **The boundaries are UTC calendar months**,
- * deliberately matching `currentDay(clock)` in `../occupancy/visibility.ts` — `clock.now().toISOString().slice(0, 10)`
- * — which is the one convention this repository has actually landed for turning an instant into a
- * calendar concept. `Clock` deliberately knows nothing about zones (see its own doc comment in
- * `../../ports/clock.ts`), and the complex's real time zone is not decided yet: #26 registers the
- * monthly invoice job and owns what "the 1st" means there, and it has not landed. This module does
- * not depend on it and files no follow-up ticket; when #26's zone constant exists, this count moves
- * to the complex's own zone the same day everything else building on "the 1st" does.
+ * the count resets on the next call after the 1st. **The boundaries are WIB calendar months**,
+ * read with `civilMonthOf` from `$lib/time` — the complex's own zone, `Asia/Jakarta` — the same
+ * module `currentDay(clock)` in `../occupancy/visibility.ts` reads its own calendar day from.
  *
  * ## Gated the same way the admin queue itself is
  *
@@ -90,15 +86,21 @@ export async function complaintWorklistSummary(
 	};
 }
 
+/** How many hours WIB sits ahead of UTC. `Asia/Jakarta` has no daylight saving, so this is fixed. */
+const WIB_OFFSET_HOURS = 7;
+
 /**
- * The `[start, end)` instants of the **UTC** calendar month `instant` falls in. `end` is exclusive
+ * The `[start, end)` instants of the **WIB** calendar month `instant` falls in. `end` is exclusive
  * — the first instant of the *next* month — so the range is built from plain `>=`/`<` comparisons
  * rather than an inclusive upper bound that would need its own end-of-month arithmetic.
+ *
+ * The month itself is read with `civilMonthOf`; the boundary instants are then the first moment of
+ * that month, and of the month after it, at 00:00 WIB — which `Date.UTC` reaches directly by asking
+ * for hour `-7`, the same as 17:00 UTC the day before.
  */
 function currentMonthRange(instant: Date): { start: Date; end: Date } {
-	const start = new Date(Date.UTC(instant.getUTCFullYear(), instant.getUTCMonth(), 1, 0, 0, 0, 0));
-	const end = new Date(
-		Date.UTC(instant.getUTCFullYear(), instant.getUTCMonth() + 1, 1, 0, 0, 0, 0)
-	);
+	const [year, month] = civilMonthOf(instant).split('-').map(Number);
+	const start = new Date(Date.UTC(year, month - 1, 1, -WIB_OFFSET_HOURS, 0, 0, 0));
+	const end = new Date(Date.UTC(year, month, 1, -WIB_OFFSET_HOURS, 0, 0, 0));
 	return { start, end };
 }

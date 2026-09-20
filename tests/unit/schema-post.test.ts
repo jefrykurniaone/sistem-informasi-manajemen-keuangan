@@ -111,7 +111,7 @@ function post(authorId: string, overrides: Partial<NewPost> = {}): NewPost {
 		type: POST_TYPE.announcement,
 		title: 'Pengumuman uji',
 		summary: 'Ringkasan uji',
-		bodyMarkdown: '# Pengumuman uji',
+		bodyHtml: '<h1>Pengumuman uji</h1>',
 		category: 'umum',
 		status: POST_STATUS.draft,
 		authorId,
@@ -130,7 +130,7 @@ describe('posts', () => {
 				post(authorId, {
 					title: 'Rapat warga bulan April',
 					summary: 'Rapat rutin bulanan',
-					bodyMarkdown: '## Agenda\n- Iuran\n- Keamanan',
+					bodyHtml: '<h2>Agenda</h2><ul><li>Iuran</li><li>Keamanan</li></ul>',
 					coverImageKey: 'posts/rapat-april/cover.jpg',
 					category: 'rapat',
 					status: POST_STATUS.published,
@@ -143,7 +143,7 @@ describe('posts', () => {
 			type: POST_TYPE.announcement,
 			title: 'Rapat warga bulan April',
 			summary: 'Rapat rutin bulanan',
-			bodyMarkdown: '## Agenda\n- Iuran\n- Keamanan',
+			bodyHtml: '<h2>Agenda</h2><ul><li>Iuran</li><li>Keamanan</li></ul>',
 			coverImageKey: 'posts/rapat-april/cover.jpg',
 			category: 'rapat',
 			status: POST_STATUS.published,
@@ -193,7 +193,7 @@ describe('posts', () => {
 
 		const refusal = await refused(
 			testDb.db.execute(
-				sql`insert into posts (type, title, summary, body_markdown, category, status, author_id, created_at)
+				sql`insert into posts (type, title, summary, body_html, category, status, author_id, created_at)
 				    values ('webinar', 'Judul', 'Ringkasan', 'Isi', 'umum', ${POST_STATUS.draft}, ${authorId}, ${NOW})`
 			)
 		);
@@ -206,7 +206,7 @@ describe('posts', () => {
 
 		const refusal = await refused(
 			testDb.db.execute(
-				sql`insert into posts (type, title, summary, body_markdown, category, status, author_id, created_at)
+				sql`insert into posts (type, title, summary, body_html, category, status, author_id, created_at)
 				    values (${POST_TYPE.announcement}, 'Judul', 'Ringkasan', 'Isi', 'umum', 'sudah-terbit', ${authorId}, ${NOW})`
 			)
 		);

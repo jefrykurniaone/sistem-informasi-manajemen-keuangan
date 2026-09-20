@@ -1,5 +1,6 @@
 import { and, asc, eq, gte, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import { civilDayOf } from '$lib/time';
 import { ACTION, isAllowed, rolesOf, type DatabaseWriter } from '../../authz';
 import { occupancies } from '../../db/schema/occupancy';
 import { residents } from '../../db/schema/resident';
@@ -211,21 +212,13 @@ export function visibilityDateFilter(
  *   for a superuser to record, and reading it as "already gone" tells a resident their home is not
  *   theirs.
  *
- * **The instant is read as a UTC day.** `Clock.now()` answers which *moment* it is, never which day
- * it is somewhere, and `src/lib/server/ports/clock.ts` settled that a zone is a property of the
- * complex rather than of the clock. Nothing in this repository names the complex's zone yet, and
- * inventing one here would put it in the wrong place — the iuran spec, which has to decide what "the
- * first of the month" means, is where it belongs. Until then this reads the instant the same way
- * `(app)/admin/units/[id]/+page.svelte` and `(app)/admin/jobs/+page.svelte` already display one: in
- * UTC.
- *
- * The consequence is worth stating plainly rather than discovering later. The complex is at UTC+7,
- * so between midnight and 07:00 local the UTC day is still yesterday, and a stay whose last day was
- * yesterday counts as running for those few hours. The error is at most one day and always in the
- * direction of keeping someone visible in their own house, never of cutting them off early.
+ * **The instant is read as a day in the complex's own zone.** `Clock.now()` answers which *moment*
+ * it is, never which day it is somewhere, and `src/lib/time.ts` settles the zone the complex reads
+ * every calendar day in — `Asia/Jakarta`, WIB. This reads `civilDayOf` from that module rather than
+ * defining a second idea of "today".
  */
 export function currentDay(clock: Clock): string {
-	return clock.now().toISOString().slice(0, 10);
+	return civilDayOf(clock.now());
 }
 
 /**
