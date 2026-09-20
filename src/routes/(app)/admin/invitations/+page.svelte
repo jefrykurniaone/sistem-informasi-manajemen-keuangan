@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as m from '$lib/paraglide/messages.js';
+	import { formatDay } from '$lib/time';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -9,7 +10,7 @@
 
 	/** A day a person reads, out of the instant the row stores. */
 	function asDay(instant: Date): string {
-		return instant.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+		return formatDay(instant);
 	}
 
 	/** The one label each status renders as. */

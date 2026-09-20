@@ -4,6 +4,7 @@
 	import ReportSummary from '$lib/components/report/report-summary.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as m from '$lib/paraglide/messages.js';
+	import { formatDateTime } from '$lib/time';
 	import type { PageProps } from './$types';
 
 	/**
@@ -23,12 +24,6 @@
 	 */
 
 	let { data, form }: PageProps = $props();
-
-	/** A publication instant is read against a clock, so it is shown whole. */
-	const PUBLISHED_AT_FORMAT = new Intl.DateTimeFormat('id-ID', {
-		dateStyle: 'long',
-		timeStyle: 'short'
-	});
 </script>
 
 <svelte:head>
@@ -100,7 +95,7 @@
 					<li class="text-sm">
 						{m.adminReports_revisionRow({
 							revision: revision.revision,
-							date: PUBLISHED_AT_FORMAT.format(revision.publishedAt)
+							date: formatDateTime(revision.publishedAt)
 						})}
 						{#if revision.revisionReason !== null}
 							<span class="block text-xs text-muted-foreground">

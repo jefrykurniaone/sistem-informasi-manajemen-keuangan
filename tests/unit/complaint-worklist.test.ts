@@ -96,21 +96,27 @@ describe('complaintWorklistSummary', () => {
 
 	// One fixture per case, each with its own before/after delta, so a one-sided boundary mistake
 	// cannot cancel against another fixture the way a single `toBe(2)` over four inserts could — see
-	// this ticket's hand-back. Months are UTC, matching `currentDay(clock)` in
-	// `../occupancy/visibility.ts`, so these four instants are exactly the ones that matter:
-	// the last instant of May, the first and last instants of June, and the first instant of July.
-	// The fifth case is the one that actually distinguishes UTC from this machine's own zone
-	// (`Asia/Jakarta`, UTC+7): `2026-06-30T20:00:00.000Z` is 03:00 on 1 July in Jakarta, so a
-	// local-time implementation would wrongly drop it from June.
+	// this ticket's hand-back. Months are WIB (`Asia/Jakarta`, UTC+7), read with `civilMonthOf` from
+	// `$lib/time`, matching `currentDay(clock)` in `../occupancy/visibility.ts`. WIB June runs from
+	// `2026-05-31T17:00:00.000Z` (00.00 WIB on the 1st) up to but not including `2026-06-30T17:00:00.000Z`
+	// (00.00 WIB on 1 July), so these four instants are exactly the ones that matter: the last instant
+	// before WIB June starts, the first and last instants of WIB June, and the first instant of WIB July.
+	// The fifth case is the one that actually distinguishes WIB from plain UTC: `2026-06-30T20:00:00.000Z`
+	// is still 30 June in UTC but already 03.00 on 1 July in Jakarta, so a UTC-boundary implementation
+	// would wrongly keep it in June.
 	it.each([
-		{ createdAt: '2026-05-31T23:59:59.999Z', expected: 0, label: 'the last instant of May' },
-		{ createdAt: '2026-06-01T00:00:00.000Z', expected: 1, label: 'the first instant of June' },
-		{ createdAt: '2026-06-30T23:59:59.999Z', expected: 1, label: 'the last instant of June' },
-		{ createdAt: '2026-07-01T00:00:00.000Z', expected: 0, label: 'the first instant of July' },
+		{
+			createdAt: '2026-05-31T16:59:59.999Z',
+			expected: 0,
+			label: 'the last instant before WIB June starts'
+		},
+		{ createdAt: '2026-05-31T17:00:00.000Z', expected: 1, label: 'the first instant of WIB June' },
+		{ createdAt: '2026-06-30T16:59:59.999Z', expected: 1, label: 'the last instant of WIB June' },
+		{ createdAt: '2026-06-30T17:00:00.000Z', expected: 0, label: 'the first instant of WIB July' },
 		{
 			createdAt: '2026-06-30T20:00:00.000Z',
-			expected: 1,
-			label: 'inside June in UTC, inside July in Asia/Jakarta'
+			expected: 0,
+			label: 'still 30 June in UTC, already 1 July in Asia/Jakarta'
 		}
 	])(
 		'counts a complaint created at $label ($createdAt) as $expected',
@@ -127,6 +133,19 @@ describe('complaintWorklistSummary', () => {
 			expect(after.openedThisMonth - before.openedThisMonth).toBe(expected);
 		}
 	);
+
+	it('counts a complaint created 2026-08-31T17:30:00Z, 00.30 WIB on 1 September, in September', async () => {
+		const reporterUserId = await insertAccount(unique('Warga Lewat Tengah Malam'));
+		const adminUserId = await insertAccount(unique('Pengurus Lewat Tengah Malam'), ROLE.admin);
+		const clock = new FakeClock('2026-09-15T12:00:00.000Z');
+		const before = await complaintWorklistSummary(testDb.db, clock, adminUserId);
+
+		await insertComplaint(reporterUserId, { createdAt: '2026-08-31T17:30:00.000Z' });
+
+		const after = await complaintWorklistSummary(testDb.db, clock, adminUserId);
+
+		expect(after.openedThisMonth - before.openedThisMonth).toBe(1);
+	});
 
 	it('counts as resolved only what is resolved and moved into that status this month', async () => {
 		const reporterUserId = await insertAccount(unique('Warga Selesai Bulan Ini'));

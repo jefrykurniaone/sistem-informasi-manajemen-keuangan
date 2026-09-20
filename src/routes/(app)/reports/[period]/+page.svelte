@@ -4,6 +4,7 @@
 	import ReportSummary from '$lib/components/report/report-summary.svelte';
 	import { formatRupiah } from '$lib/money';
 	import * as m from '$lib/paraglide/messages.js';
+	import { formatDateTime, formatDay } from '$lib/time';
 	import type { PageProps } from './$types';
 
 	/**
@@ -24,26 +25,12 @@
 
 	let { data }: PageProps = $props();
 
-	/** A publication instant is read against a clock, so it is shown whole. */
-	const PUBLISHED_AT_FORMAT = new Intl.DateTimeFormat('id-ID', {
-		dateStyle: 'long',
-		timeStyle: 'short'
-	});
-
-	/**
-	 * Days are shown in UTC, the zone `occurredOn` is stored and compared in — the same reasoning
-	 * `src/lib/components/cash/cash-book-table.svelte` records: the alternative is the zone of
-	 * whichever machine renders the page, which differs between the first server render and the
-	 * browser after hydration and would move a date by a day either side of midnight.
-	 */
-	const DAY_FORMAT = new Intl.DateTimeFormat('id-ID', { dateStyle: 'long', timeZone: 'UTC' });
-
 	/** The stored value that means money coming in, as `cash_transactions.type` writes it. */
 	const INCOME = 'income';
 
-	/** A stored `YYYY-MM-DD` as a day a person reads. */
+	/** A stored `YYYY-MM-DD` as a day a person reads — `$lib/time`'s `formatDay`. */
 	function asDay(day: string): string {
-		return DAY_FORMAT.format(new Date(`${day}T00:00:00.000Z`));
+		return formatDay(new Date(`${day}T00:00:00.000Z`));
 	}
 </script>
 
@@ -187,7 +174,7 @@
 						<span class="font-medium">
 							{m.reports_detail_revisionLink({
 								revision: revision.revision,
-								date: PUBLISHED_AT_FORMAT.format(revision.publishedAt)
+								date: formatDateTime(revision.publishedAt)
 							})}
 						</span>
 						<span class="text-muted-foreground">({m.reports_detail_revisionCurrent()})</span>
@@ -198,7 +185,7 @@
 						>
 							{m.reports_detail_revisionLink({
 								revision: revision.revision,
-								date: PUBLISHED_AT_FORMAT.format(revision.publishedAt)
+								date: formatDateTime(revision.publishedAt)
 							})}
 						</a>
 					{/if}

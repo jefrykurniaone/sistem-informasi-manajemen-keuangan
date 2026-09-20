@@ -327,18 +327,20 @@ describe('unitVisibilityFor', () => {
 });
 
 describe('currentDay', () => {
-	it('reads the instant as a UTC calendar day', () => {
+	it('reads the instant as a WIB calendar day', () => {
 		expect(currentDay(new FakeClock('2026-08-01T12:00:00.000Z'))).toBe('2026-08-01');
 	});
 
 	it.each([
-		['the first moment of a day', '2026-08-01T00:00:00.000Z', '2026-08-01'],
-		['the last moment of a day', '2026-08-01T23:59:59.999Z', '2026-08-01'],
-		// The complex is at UTC+7, so this instant is already the 2nd in Jakarta. The module's doc
-		// comment states that consequence rather than hiding it: the answer can lag the local day by
-		// the offset, and the lag only ever keeps someone counted as living in their house for
-		// longer.
-		['an instant that is already tomorrow in Jakarta', '2026-08-01T18:00:00.000Z', '2026-08-01']
+		['the first moment of a UTC day', '2026-08-01T00:00:00.000Z', '2026-08-01'],
+		// The complex is at UTC+7, so `23:59:59.999Z` on the 1st is already `06:59:59.999` WIB on the
+		// 2nd — `currentDay` answers the WIB day rather than the UTC one.
+		[
+			'the last moment of a UTC day, already tomorrow in Jakarta',
+			'2026-08-01T23:59:59.999Z',
+			'2026-08-02'
+		],
+		['an instant that is already tomorrow in Jakarta', '2026-08-01T18:00:00.000Z', '2026-08-02']
 	])('answers %s', (_description, instant, expected) => {
 		expect(currentDay(new FakeClock(instant))).toBe(expected);
 	});

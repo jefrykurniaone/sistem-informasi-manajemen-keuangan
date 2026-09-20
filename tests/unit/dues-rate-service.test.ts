@@ -255,6 +255,17 @@ describe('listDuesRates', () => {
 		expect(history.rates.some((rate) => rate.isInForce)).toBe(false);
 	});
 
+	it('marks a rate starting 2026-09-21 as in force at 2026-09-20T18:30:00Z, which is 01.30 WIB on the 21st', async () => {
+		const superuserId = await insertSuperuser('Pengurus Tarif Lewat Tengah Malam');
+		const clock = new FakeClock('2026-09-20T18:30:00.000Z');
+		const rateId = await insertRate('2026-09-21', NEW_AMOUNT);
+
+		const history = await listDuesRates(testDb.db, clock, superuserId);
+
+		expect(history.today).toBe('2026-09-21');
+		expect(history.rates.find((rate) => rate.id === rateId)).toMatchObject({ isInForce: true });
+	});
+
 	it('reports a rate that has billed as no longer editable, naming since when', async () => {
 		const superuserId = await insertSuperuser('Pengurus Tarif Terpakai');
 		const billed = await insertRate('2026-01-01', OLD_AMOUNT);

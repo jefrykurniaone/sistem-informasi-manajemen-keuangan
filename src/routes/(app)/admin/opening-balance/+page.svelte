@@ -3,23 +3,16 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { formatRupiah } from '$lib/money';
 	import * as m from '$lib/paraglide/messages.js';
+	import { formatDay } from '$lib/time';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
 
 	const uid = $props.id();
 
-	/**
-	 * Days are shown in UTC, the zone `occurredOn` is stored and compared in — same reasoning as
-	 * `src/routes/(app)/admin/units/[id]/+page.svelte`'s copy of this constant: the alternative is the
-	 * zone of whichever machine renders the page, which differs between the first server render and
-	 * the browser after hydration, and would move the date by a day either side of midnight.
-	 */
-	const DAY_FORMAT = new Intl.DateTimeFormat('id-ID', { dateStyle: 'long', timeZone: 'UTC' });
-
-	/** A stored `YYYY-MM-DD` as a day a person reads. */
+	/** A stored `YYYY-MM-DD` as a day a person reads — `$lib/time`'s `formatDay`. */
 	function asDay(day: string): string {
-		return DAY_FORMAT.format(new Date(`${day}T00:00:00.000Z`));
+		return formatDay(new Date(`${day}T00:00:00.000Z`));
 	}
 </script>
 

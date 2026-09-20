@@ -29,6 +29,7 @@
 	import type { CorrectableCashTransaction } from '$lib/components/cash/correction-dialog.svelte';
 	import { formatRupiah } from '$lib/money';
 	import * as m from '$lib/paraglide/messages.js';
+	import { formatDay } from '$lib/time';
 
 	/**
 	 * The buku kas itself: every line in date order with its running balance, used by
@@ -56,21 +57,12 @@
 
 	let { rows, onCorrect }: Readonly<Props> = $props();
 
-	/**
-	 * Days are shown in UTC, the zone `occurredOn` is stored and compared in — the same reasoning as
-	 * `src/routes/(app)/admin/opening-balance/+page.svelte`'s copy of this constant: the alternative
-	 * is the zone of whichever machine renders the page, which differs between the first server
-	 * render and the browser after hydration, and would move the date by a day either side of
-	 * midnight.
-	 */
-	const DAY_FORMAT = new Intl.DateTimeFormat('id-ID', { dateStyle: 'long', timeZone: 'UTC' });
-
 	/** The stored value that means money coming in, as `cash_categories.type` writes it. */
 	const INCOME = 'income';
 
-	/** A stored `YYYY-MM-DD` as a day a person reads. */
+	/** A stored `YYYY-MM-DD` as a day a person reads — `$lib/time`'s `formatDay`. */
 	function asDay(day: string): string {
-		return DAY_FORMAT.format(new Date(`${day}T00:00:00.000Z`));
+		return formatDay(new Date(`${day}T00:00:00.000Z`));
 	}
 
 	/** What the dialog needs about the line whose button was pressed. */

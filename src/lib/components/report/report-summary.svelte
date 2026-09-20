@@ -32,6 +32,7 @@
 <script lang="ts">
 	import { formatRupiah } from '$lib/money';
 	import * as m from '$lib/paraglide/messages.js';
+	import { formatDateTime } from '$lib/time';
 
 	/**
 	 * The headline of a Laporan Bulanan: which revision it is, the four cash figures user story 18
@@ -63,12 +64,6 @@
 
 	let { period, figures, dues, revision }: Readonly<Props> = $props();
 
-	/** A publication instant is read against a clock, so it is shown whole. */
-	const PUBLISHED_AT_FORMAT = new Intl.DateTimeFormat('id-ID', {
-		dateStyle: 'long',
-		timeStyle: 'short'
-	});
-
 	/** The four cash figures, in the order user story 18 lists them. */
 	const cashRows = $derived([
 		{ label: m.reports_summary_openingBalance(), amount: figures.openingBalance },
@@ -84,7 +79,7 @@
 			<p class="text-sm font-medium">
 				{m.reports_summary_revision({
 					revision: revision.revision,
-					date: PUBLISHED_AT_FORMAT.format(revision.publishedAt)
+					date: formatDateTime(revision.publishedAt)
 				})}
 			</p>
 			{#if revision.revisionReason !== null}
