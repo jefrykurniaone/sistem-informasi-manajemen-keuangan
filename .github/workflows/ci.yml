@@ -64,6 +64,15 @@ jobs:
           # value is identical to DATABASE_URL, and it creates this database itself on the first
           # connection, so it does not need to be declared through POSTGRES_DB above.
           TEST_DATABASE_URL: postgres://komplek_ci:kata-sandi-ci-sekali-pakai@localhost:5432/komplek_ci_test
+          # The notification services build every email link on `readOrigin()`, which throws when
+          # `ORIGIN` is unset. Locally `vite.config.ts` copies `.env` into the process, so the unit
+          # tests never noticed; the runner has no `.env`, and every gate since the first
+          # notification test (#41, 2026-09-19) failed here. The value is never dereferenced by a
+          # test, so any absolute http(s) address works.
+          ORIGIN: http://localhost:5173
+          # The monthly-report notification tests sign unsubscribe links with the auth secret and
+          # fail the same way when it is unset. Single-use value for this job only, not a secret.
+          BETTER_AUTH_SECRET: rahasia-ci-sekali-pakai-bukan-rahasia-sungguhan-32
 
       - name: build
         run: bun run build
