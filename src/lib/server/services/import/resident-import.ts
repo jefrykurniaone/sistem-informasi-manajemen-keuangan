@@ -10,18 +10,20 @@ import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
 import { currentDay } from '../occupancy/visibility';
 import { ensureDefaultSubscriptions } from '../subscription';
+import { readResidentRows } from './xlsx';
 import {
 	IMPORT_PROBLEM,
 	unitKey,
 	unitLabel,
-	validateImportCsv,
+	validateImportRows,
 	type ImportProblemReason,
 	type ImportRowProblem,
 	type ParsedImportRow
 } from './validation';
 
 /**
- * Filling the house register from a CSV file: a hundred houses and the people in them, in two steps.
+ * Filling the house register from a spreadsheet: a hundred houses and the people in them, in two
+ * steps.
  *
  * `spec-warga-unit-v1.md` asks for exactly this shape — "Unggah menghasilkan pratinjau … Baru setelah
  * dikonfirmasi, seluruh impor dijalankan dalam satu transaksi — semuanya masuk atau tidak sama
@@ -29,22 +31,28 @@ import {
  * hundreds of rows is almost impossible to clean up by hand, and the person who imported it is the
  * person least equipped to clean it.
  *
- * `./validation.ts` holds everything that can be decided from the file alone. This module adds the
- * two questions only stored data answers, and owns the write.
+ * `./xlsx.ts` turns the uploaded workbook into rows of text, `./validation.ts` holds everything that
+ * can be decided from those rows alone, and this module adds the two questions only stored data
+ * answers and owns the write.
  *
  * ## Two steps, and nothing stored in between
  *
  * There is no staging table: this spec adds no migration, so the preview may not put a row anywhere.
- * The file's text therefore travels back to the server in a hidden field of the confirm form, and
- * **the confirm step re-parses and re-validates it from scratch**, exactly as if it had been
+ * The file's bytes therefore travel back to the server in a hidden field of the confirm form, and
+ * **the confirm step re-reads and re-validates them from scratch**, exactly as if the file had been
  * uploaded again. Nothing the preview computed is trusted on the way back — not the counts, not the
  * list of problems, not the rows. What comes out of a form is input, whoever put it there.
  *
- * Carrying the text rather than asking for the file a second time is a deliberate choice between the
- * two the ticket offered. Making the superuser pick the file again puts a second file-picker between
- * reading the preview and acting on it, which is precisely where the wrong file gets confirmed, and
- * it gives no safety in return: a second upload is re-validated the same way this text is. A hundred
- * rows is roughly six kilobytes, far below adapter-node's 512 KiB `BODY_SIZE_LIMIT`, and
+ * A workbook is binary, and a hidden form field carries text, so what travels is **base64 of the
+ * uploaded bytes**: `ImportPreview.content` is the encoded string, `ResidentImportRequest.content`
+ * is the decoded `Buffer`, and the route is the one place that converts between them. Base64 rather
+ * than a second upload for the reason the two-step rule exists at all — making the superuser pick
+ * the file again puts a second file-picker between reading the preview and acting on it, which is
+ * precisely where the wrong file gets confirmed, and it gives no safety in return, since a second
+ * upload is re-validated exactly the way these bytes are.
+ *
+ * Base64 costs a third more bytes than the file. A hundred-row workbook is a few tens of kilobytes,
+ * so the encoded field stays well inside adapter-node's 512 KiB `BODY_SIZE_LIMIT`, and
  * `MAX_IMPORT_ROWS` in `./validation.ts` keeps it that way.
  *
  * A conflict that appears between the two steps — somebody else registers the house, or the address
@@ -73,13 +81,13 @@ import {
  * ## One transaction, and one audit row
  *
  * Every insert above, for every row, plus the audit entry, happen inside one `db.transaction`. A
- * single failure anywhere takes the whole file back out — `tests/unit/import-csv.test.ts` proves the
- * row counts of all five tables return to what they were. The audit row is written inside the same
- * transaction, which is what makes it true rather than optimistic: it exists if and only if the
+ * single failure anywhere takes the whole file back out — `tests/unit/import-xlsx.test.ts` proves
+ * the row counts of all five tables return to what they were. The audit row is written inside the
+ * same transaction, which is what makes it true rather than optimistic: it exists if and only if the
  * import did.
  */
 
-/** The audit log's `action` for a completed CSV import. */
+/** The audit log's `action` for a completed import. */
 export const RESIDENTS_IMPORTED_ACTION = 'residents_imported';
 
 /** Who is importing, which file they picked, and what is in it. */
@@ -88,14 +96,21 @@ export interface ResidentImportRequest {
 	readonly actorId: string;
 	/** The name of the uploaded file, recorded in the audit row. */
 	readonly fileName: string;
-	/** The file's text, as uploaded or as carried back by the confirm form. */
-	readonly content: string;
+	/** The workbook's bytes, as uploaded or as decoded from what the confirm form carried back. */
+	readonly content: Buffer;
 }
 
 /** What the superuser reads before deciding whether to confirm. Nothing here has been written. */
 export interface ImportPreview {
 	readonly fileName: string;
-	/** The file's text, for the confirm form to carry back. Re-validated there, never trusted. */
+	/**
+	 * The uploaded workbook's bytes in base64, for the confirm form to carry back in a hidden field.
+	 *
+	 * Text rather than a `Buffer` because a form field is text; base64 rather than any other encoding
+	 * because the bytes are a zip container and must come back unchanged. The route decodes it before
+	 * calling `importResidents`, which re-reads and re-validates it from scratch — this is transport,
+	 * never a result that is trusted on the way back.
+	 */
 	readonly content: string;
 	/** How many rows would be imported. */
 	readonly validRowCount: number;
@@ -171,7 +186,7 @@ function asPreview(
 ): ImportPreview {
 	return {
 		fileName: request.fileName,
-		content: request.content,
+		content: request.content.toString('base64'),
 		validRowCount: rows.length,
 		// Each importable row is one new house and one new person, because a house named twice and an
 		// address written twice are both refused rows. The two counts are reported separately because
@@ -215,9 +230,9 @@ export async function importResidents(
 /** The file's own verdict, plus the two questions only the database answers. */
 async function examine(
 	reader: DatabaseWriter,
-	content: string
+	content: Buffer
 ): Promise<{ rows: readonly ParsedImportRow[]; problems: readonly ImportRowProblem[] }> {
-	const validation = validateImportCsv(content);
+	const validation = validateImportRows(await readResidentRows(content));
 	const conflicts = await findStoredConflicts(reader, validation.rows);
 
 	return {

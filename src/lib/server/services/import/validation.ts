@@ -1,15 +1,16 @@
 import { OCCUPANCY_ROLE, type OccupancyRole } from '../../db/schema/occupancy';
 
 /**
- * Reading a resident CSV file and deciding, without a database, which of its rows are usable.
+ * Deciding, without a database, which rows of an uploaded import file are usable.
  *
- * This module is deliberately pure: it parses the text, checks every field a row carries on its own,
- * and finds the repeats a row only has because of another row in the same file. The two questions
+ * This module is deliberately pure: it is handed the file's rows as text and checks every field a
+ * row carries on its own, then finds the repeats a row only has because of another row in the same
+ * file. Turning an uploaded workbook into those rows belongs to `./xlsx.ts`, and the two questions
  * that need stored data — "does this house already exist" and "does this address already have an
- * account" — belong to `./resident-csv.ts`, which asks them of a database and appends its answers to
- * the same list of problems. Splitting it this way is what lets the whole reporting format be tested
- * without a connection, and it keeps the parsing, the checking and the writing in three separate
- * places, as the ticket's quality rules ask.
+ * account" — belong to `./resident-import.ts`, which asks them of a database and appends its answers
+ * to the same list of problems. Splitting it this way is what lets the whole reporting format be
+ * tested without a connection or a workbook, and it keeps the reading, the checking and the writing
+ * in three separate places, as the ticket's quality rules ask.
  *
  * ## What a problem looks like, and why it is a code rather than a sentence
  *
@@ -19,9 +20,12 @@ import { OCCUPANCY_ROLE, type OccupancyRole } from '../../db/schema/occupancy';
  * or a second catalogue nobody translates. The screen maps a code to a message and fills `{value}`
  * with whichever block, address or word the row actually carried.
  *
- * **`rowNumber` is the line of the file as a person counts lines**, with the header as line 1, so the
- * first row of data is line 2. That is the number their spreadsheet shows them, and a number that
- * counts data rows instead would send them to the wrong line of a hundred.
+ * **`rowNumber` is derived from the row's position, not from any number the file itself carries.**
+ * It counts the header as line 1, so the first data row is line 2, which is the line a spreadsheet
+ * shows beside a file whose rows run without gaps. A row the reader skipped — one whose cells were
+ * all empty — shifts every row after it, so the number is where the row sits in the import rather
+ * than where it sat in the sheet. Sending someone to the row of the import they must fix is the
+ * useful answer; a sheet coordinate would be exact about a row nobody is being asked about.
  *
  * ## Every row of a repeated pair is a problem, not just the second one
  *
@@ -35,11 +39,23 @@ import { OCCUPANCY_ROLE, type OccupancyRole } from '../../db/schema/occupancy';
  * `blok,nomor,nama,email,peran` — Indonesian, because a superuser writes this file in a spreadsheet,
  * and the columns are their words rather than the schema's. A file whose header is anything else is
  * refused whole, with `ImportHeaderError`, rather than reported row by row: every row of it would be
- * wrong for the same reason, and a hundred identical problems say less than one.
+ * wrong for the same reason, and a hundred identical problems say less than one. The header is read
+ * and checked in `./xlsx.ts`, which is the only place that has the file; the error and the constant
+ * live here, with the rest of the contract.
  */
 
 /** The header row every import file must start with, in this order. */
-export const IMPORT_CSV_HEADER: readonly string[] = ['blok', 'nomor', 'nama', 'email', 'peran'];
+export const IMPORT_HEADER: readonly string[] = ['blok', 'nomor', 'nama', 'email', 'peran'];
+
+/**
+ * One data row of the import file: its columns as text, in the header's order.
+ *
+ * A bare list of strings, so that **a row's identity is its position in the list and nothing else**.
+ * Nothing here is keyed by a line number or a sheet coordinate: neither is unique once empty rows
+ * are skipped, and a map keyed by one would merge two rows into a single resident, attaching both of
+ * their houses to the same person.
+ */
+export type ImportRow = readonly string[];
 
 /**
  * The largest number of data rows one file may carry. The spec sizes the feature at a hundred rows;
@@ -50,7 +66,14 @@ export const MAX_IMPORT_ROWS = 500;
 
 /** Why one row of the file cannot be imported. The screen turns each of these into a sentence. */
 export const IMPORT_PROBLEM = {
-	/** The row does not have the five columns the header promises. */
+	/**
+	 * The row does not have the five columns the header promises.
+	 *
+	 * Nothing emits this today: `readResidentRows` reads a grid, and a grid always hands over exactly
+	 * `IMPORT_HEADER.length` cells for every row, filling the ones the sheet left out with `''`. The
+	 * code and its check are kept because this module is a pure function over rows from any source,
+	 * and because a screen that already translates the code should keep doing so.
+	 */
 	malformedRow: 'malformedRow',
 	missingBlock: 'missingBlock',
 	missingNumber: 'missingNumber',
@@ -102,7 +125,7 @@ export interface ParsedImportRow {
 }
 
 /** What one file adds up to before a database has seen it. */
-export interface CsvValidation {
+export interface ImportValidation {
 	/** Every row nothing in the file itself refuses, in the order the file lists them. */
 	readonly rows: readonly ParsedImportRow[];
 	/** Every refused row, by line number. */
@@ -110,7 +133,7 @@ export interface CsvValidation {
 }
 
 /**
- * Thrown when the file's first line is not the header this import expects. Whole-file, not per-row:
+ * Thrown when the file's first row is not the header this import expects. Whole-file, not per-row:
  * see this module's doc comment.
  */
 export class ImportHeaderError extends Error {
@@ -121,7 +144,7 @@ export class ImportHeaderError extends Error {
 
 	constructor(actualHeader: readonly string[]) {
 		super(
-			`The import file must start with the header "${IMPORT_CSV_HEADER.join(',')}", not "${actualHeader.join(',')}".`
+			`The import file must start with the header "${IMPORT_HEADER.join(',')}", not "${actualHeader.join(',')}".`
 		);
 		this.actualHeader = actualHeader;
 	}
@@ -152,83 +175,41 @@ export class ImportTooLargeError extends Error {
 	}
 }
 
-/** The Indonesian words a superuser writes in the `peran` column, and what each one means. */
+/**
+ * The Indonesian words a superuser writes in the `peran` column, in the order the Template Impor
+ * offers them.
+ *
+ * Exported because the template's dropdown is built from it. A template offering a word this module
+ * refuses would be a file the import itself told the superuser to write, so there is one list and
+ * the table below is keyed off it.
+ */
+export const IMPORT_ROLE_WORDS = ['pemilik', 'penyewa'] as const;
+
+/** What each of those words means. */
 const ROLE_BY_INDONESIAN_WORD: Readonly<Record<string, OccupancyRole | undefined>> = {
-	pemilik: OCCUPANCY_ROLE.owner,
-	penyewa: OCCUPANCY_ROLE.tenant
+	[IMPORT_ROLE_WORDS[0]]: OCCUPANCY_ROLE.owner,
+	[IMPORT_ROLE_WORDS[1]]: OCCUPANCY_ROLE.tenant
 };
 
-/** One record of the file: the line it starts on, and its columns as written. */
-export interface CsvRecord {
-	readonly lineNumber: number;
-	readonly fields: readonly string[];
-}
-
-/** How many columns a row must have. */
-const COLUMN_COUNT = 5;
-
-const FIELD_SEPARATOR = ',';
-const QUOTE = '"';
-const LINE_FEED = '\n';
-const CARRIAGE_RETURN = '\r';
-/** The byte-order mark a spreadsheet writes in front of a UTF-8 file. */
-const BYTE_ORDER_MARK = String.fromCodePoint(0xfeff);
-
-/** Where the parser has got to. The line counter is what gives every record its `lineNumber`. */
-interface Scanner {
-	readonly text: string;
-	index: number;
-	line: number;
-}
+/** The header occupies the first line of the file, so the first data row is the second. */
+const FIRST_DATA_ROW_NUMBER = 2;
 
 /**
- * Splits CSV text into records, honouring quoted fields — a name with a comma in it, or an address
- * written between quotes, is one field rather than two.
+ * Reads every row of a file and says which are usable and which are not.
  *
- * Exported because the quoting rules are worth a test of their own: a parser that silently splits
- * `"Budi, S.T."` in half would turn a correct file into a hundred malformed rows, and the reason
- * would be nowhere near the message the superuser reads.
- *
- * Blank lines are skipped rather than reported: a file that ends with a newline has one, and a
- * spreadsheet often leaves a few behind.
- */
-export function parseCsvRecords(content: string): readonly CsvRecord[] {
-	const scanner: Scanner = { text: stripByteOrderMark(content), index: 0, line: 1 };
-	const records: CsvRecord[] = [];
-
-	while (scanner.index < scanner.text.length) {
-		const lineNumber = scanner.line;
-		const fields = readRecord(scanner);
-		if (!isBlank(fields)) {
-			records.push({ lineNumber, fields });
-		}
-	}
-
-	return records;
-}
-
-/**
- * Reads a whole file and says which of its rows are usable and which are not.
- *
- * @throws {ImportHeaderError} when the first line is not `blok,nomor,nama,email,peran`.
  * @throws {EmptyImportFileError} when there is no data row at all.
  * @throws {ImportTooLargeError} when there are more than `MAX_IMPORT_ROWS` of them.
  */
-export function validateImportCsv(content: string): CsvValidation {
-	const [header, ...dataRecords] = parseCsvRecords(content);
-	assertHeader(header);
-
-	if (dataRecords.length === 0) {
+export function validateImportRows(rows: readonly ImportRow[]): ImportValidation {
+	if (rows.length === 0) {
 		throw new EmptyImportFileError();
 	}
-	if (dataRecords.length > MAX_IMPORT_ROWS) {
-		throw new ImportTooLargeError(dataRecords.length);
+	if (rows.length > MAX_IMPORT_ROWS) {
+		throw new ImportTooLargeError(rows.length);
 	}
 
 	const reasonsByPosition = new Map<number, ImportProblemReason[]>();
-	const candidates = dataRecords.map((record, position) =>
-		readCandidate(record, position, reasonsByPosition)
-	);
+	const candidates = rows.map((row, position) => readCandidate(row, position, reasonsByPosition));
 	flagRepeats(candidates, reasonsByPosition);
 
 	return {
@@ -263,10 +244,9 @@ function normalizeEmail(value: string): string {
 /**
  * A row on its way through validation, before it is known whether anything refuses it.
  *
- * **`position` is the key everything internal is held by, never `rowNumber`.** A line number is not
- * unique — a file written with bare `\r` endings, or a stray character after a closing quote, can
- * put two records on one line — and keying reasons or resident ids by it would merge two rows into
- * one. `rowNumber` is reported, and nothing is looked up by it.
+ * **`position` is the key everything internal is held by, never `rowNumber`.** Keeping reasons and
+ * resident ids under the position is what stops two rows collapsing into one, and it is the only
+ * number this module can be sure is unique — see `ImportRow`.
  */
 interface Candidate {
 	/** Where this row sits among the data rows, counting from 0. Unique by construction. */
@@ -279,28 +259,24 @@ interface Candidate {
 	readonly role: OccupancyRole | undefined;
 }
 
-/** Throws unless `header` is exactly the header this import expects. */
-function assertHeader(header: CsvRecord | undefined): void {
-	const actual = (header?.fields ?? []).map((field) => field.trim().toLowerCase());
-	const matches =
-		actual.length === IMPORT_CSV_HEADER.length &&
-		actual.every((field, position) => field === IMPORT_CSV_HEADER[position]);
-	if (!matches) {
-		throw new ImportHeaderError(header?.fields ?? []);
-	}
-}
-
-/** Reads one data record, recording every reason the row is refused on its own terms. */
+/**
+ * Reads one data row, recording every reason the row is refused on its own terms.
+ *
+ * Every cell is trimmed here rather than trusted to arrive trimmed. This module is a pure function
+ * over rows from any source, and a rule that only holds when the caller prepared its input is not a
+ * rule. `readResidentRows` trims too, so for an uploaded workbook this is a second pass over text
+ * that is already clean.
+ */
 function readCandidate(
-	record: CsvRecord,
+	row: ImportRow,
 	position: number,
 	reasonsByPosition: Map<number, ImportProblemReason[]>
 ): Candidate {
-	if (record.fields.length !== COLUMN_COUNT) {
+	if (row.length !== IMPORT_HEADER.length) {
 		addReason(reasonsByPosition, position, IMPORT_PROBLEM.malformedRow);
 	}
 
-	const [block = '', number = '', name = '', email = '', role = ''] = record.fields.map((field) =>
+	const [block = '', number = '', name = '', email = '', role = ''] = row.map((field) =>
 		field.trim()
 	);
 
@@ -310,7 +286,7 @@ function readCandidate(
 
 	return {
 		position,
-		rowNumber: record.lineNumber,
+		rowNumber: position + FIRST_DATA_ROW_NUMBER,
 		block,
 		number,
 		name,
@@ -475,8 +451,7 @@ function groupBy(
 /**
  * The recorded reasons as the list a screen renders, in the order the rows appear in the file.
  *
- * Built by walking the candidates rather than the map, so the order is the file's own and two rows
- * that happen to share a line number each keep their own entry.
+ * Built by walking the candidates rather than the map, so the order is the file's own.
  */
 function collectProblems(
 	candidates: readonly Candidate[],
@@ -510,118 +485,4 @@ function asParsedRow(candidate: Candidate): ParsedImportRow {
 		email: candidate.email,
 		role: candidate.role
 	};
-}
-
-/** `content` without the byte-order mark a spreadsheet may have written in front of it. */
-function stripByteOrderMark(content: string): string {
-	return content.startsWith(BYTE_ORDER_MARK) ? content.slice(1) : content;
-}
-
-/** Whether a record is an empty line rather than a row. */
-function isBlank(fields: readonly string[]): boolean {
-	return fields.length === 1 && fields[0].trim() === '';
-}
-
-/** Reads one record: fields separated by commas, up to a line break or the end of the text. */
-function readRecord(scanner: Scanner): string[] {
-	const fields: string[] = [];
-	for (;;) {
-		fields.push(readField(scanner));
-		if (scanner.text[scanner.index] === FIELD_SEPARATOR) {
-			scanner.index += 1;
-			continue;
-		}
-		consumeLineBreak(scanner);
-		return fields;
-	}
-}
-
-/**
- * Reads one field, quoted or bare.
- *
- * Anything written after a closing quote and before the next comma or line break — `"pemilik"X` —
- * is kept as part of the same field rather than ending the record where it stands. Ending it there
- * would start a second record on the same line, and a line number is what the superuser is sent to
- * look at; two records on one line is a row nobody can find.
- */
-function readField(scanner: Scanner): string {
-	if (scanner.text[scanner.index] !== QUOTE) {
-		return readBareField(scanner);
-	}
-	return readQuotedField(scanner) + readBareField(scanner);
-}
-
-/**
- * Reads a field written between quotes, where `""` means one quote character and a line break is
- * part of the value. An unterminated quote takes the rest of the file, which is what makes the row
- * it belongs to malformed rather than the whole file unreadable.
- */
-function readQuotedField(scanner: Scanner): string {
-	scanner.index += 1;
-	let value = '';
-	while (scanner.index < scanner.text.length) {
-		const character = scanner.text[scanner.index];
-		if (character === QUOTE) {
-			if (scanner.text[scanner.index + 1] !== QUOTE) {
-				scanner.index += 1;
-				return value;
-			}
-			scanner.index += 2;
-			value += QUOTE;
-			continue;
-		}
-		if (isLineStart(scanner, character)) {
-			scanner.line += 1;
-		}
-		scanner.index += 1;
-		value += character;
-	}
-	return value;
-}
-
-/**
- * Whether the character at the scanner's position begins a new line inside a quoted field: a `\n`,
- * or a `\r` that no `\n` follows. The `\r` of a `\r\n` is left to its `\n`, so a pair counts once.
- */
-function isLineStart(scanner: Scanner, character: string): boolean {
-	if (character === LINE_FEED) {
-		return true;
-	}
-	return character === CARRIAGE_RETURN && scanner.text[scanner.index + 1] !== LINE_FEED;
-}
-
-/** Reads a field written without quotes: everything up to the next comma or line break. */
-function readBareField(scanner: Scanner): string {
-	const start = scanner.index;
-	while (scanner.index < scanner.text.length && !isFieldEnd(scanner.text[scanner.index])) {
-		scanner.index += 1;
-	}
-	return scanner.text.slice(start, scanner.index);
-}
-
-/** Whether `character` ends a bare field. */
-function isFieldEnd(character: string): boolean {
-	return character === FIELD_SEPARATOR || character === LINE_FEED || character === CARRIAGE_RETURN;
-}
-
-/**
- * Steps over a `\n`, a `\r\n`, a bare `\r`, or the end of the text, counting the line.
- *
- * A bare `\r` counts too. Some spreadsheets still write files that way, and a parser that stepped
- * over one without counting would give every record in such a file line 1 — which is both a useless
- * number to send someone to and, worse, a number two rows would share.
- */
-function consumeLineBreak(scanner: Scanner): void {
-	const hadCarriageReturn = scanner.text[scanner.index] === CARRIAGE_RETURN;
-	if (hadCarriageReturn) {
-		scanner.index += 1;
-	}
-	if (hadCarriageReturn && scanner.text[scanner.index] !== LINE_FEED) {
-		scanner.line += 1;
-		return;
-	}
-	if (scanner.text[scanner.index] === LINE_FEED) {
-		scanner.index += 1;
-		scanner.line += 1;
-	}
 }

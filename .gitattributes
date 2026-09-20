@@ -18,6 +18,9 @@ bun.lock text eol=lf -diff linguist-generated
 *.avif binary
 *.ico binary
 
+# The committed import fixtures. An `.xlsx` is a zip container, so the same reason applies twice over.
+*.xlsx binary
+
 # Web fonts, for the same reason.
 *.woff binary
 *.woff2 binary

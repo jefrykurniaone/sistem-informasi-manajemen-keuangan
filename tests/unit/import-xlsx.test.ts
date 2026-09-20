@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { count, eq } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
+// A default import — see the note at the top of `src/lib/server/services/import/xlsx.ts`.
+import ExcelJS, { type CellValue } from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import { PermissionDeniedError } from '$lib/errors';
 import { auditEntriesFor } from '$lib/server/audit';
@@ -20,17 +22,23 @@ import {
 	RESIDENTS_IMPORTED_ACTION,
 	importResidents,
 	previewResidentImport
-} from '$lib/server/services/import/resident-csv';
-import { IMPORT_CSV_HEADER, IMPORT_PROBLEM } from '$lib/server/services/import/validation';
+} from '$lib/server/services/import/resident-import';
+import { readResidentRows } from '$lib/server/services/import/xlsx';
+import {
+	IMPORT_HEADER,
+	IMPORT_PROBLEM,
+	ImportHeaderError
+} from '$lib/server/services/import/validation';
 import { SUBSCRIPTION_KINDS } from '$lib/server/services/subscription/kinds';
 
 /**
- * The two-step CSV import against a real PostgreSQL: who may run it, that a preview stores nothing,
- * the two refusals only stored data can see, what one confirmed row creates, and that a failure
- * partway through leaves the database exactly as it was.
+ * Reading an uploaded workbook, and the two-step import that follows it against a real PostgreSQL:
+ * what a cell becomes, which rows and sheets are read at all, who may import, that a preview stores
+ * nothing, the two refusals only stored data can see, what one confirmed row creates, and that a
+ * failure partway through leaves the database exactly as it was.
  *
- * `tests/unit/import-validation.test.ts` already proves the parsing and every refusal the file
- * carries in itself; this file does not repeat them.
+ * `tests/unit/import-validation.test.ts` already proves every refusal a row carries in itself; this
+ * file does not repeat them.
  */
 
 const testDb = testDatabase();
@@ -39,12 +47,22 @@ const START = '2026-03-05T08:00:00.000Z';
 /** The day `START` falls on, which is the day an import gives every Masa Huni it records. */
 const IMPORT_DAY = '2026-03-05';
 
-const HEADER = IMPORT_CSV_HEADER.join(',');
-
 /** The committed file of a hundred good rows. */
-const VALID_FIXTURE = 'residents-valid.csv';
+const VALID_FIXTURE = 'residents-valid.xlsx';
 /** The committed file carrying one row of every kind of problem. */
-const BROKEN_FIXTURE = 'residents-broken.csv';
+const BROKEN_FIXTURE = 'residents-broken.xlsx';
+
+/** The sheet name the Template Impor uses, and therefore the one every fixture here uses. */
+const SHEET_NAME = 'Warga';
+
+/** A file name for the tests that only need the audit row to carry one. */
+const UPLOADED_NAME = 'warga.xlsx';
+
+/** One sheet of a workbook this file builds: its name and its rows, header included. */
+interface SheetSpec {
+	readonly name: string;
+	readonly rows: readonly (readonly CellValue[])[];
+}
 
 /** Makes every block this file writes different from every other one, and from the fixtures'. */
 let sequence = 0;
@@ -54,18 +72,38 @@ function uniqueBlock(): string {
 }
 
 /** The committed fixture named by `name`, read as the upload would hand it over. */
-function fixture(name: string): string {
-	return readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8');
+function fixture(name: string): Buffer {
+	return readFileSync(new URL(`../fixtures/${name}`, import.meta.url));
+}
+
+/** The bytes of a workbook carrying the given sheets, in the given order. */
+async function workbookOf(sheets: readonly SheetSpec[]): Promise<Buffer> {
+	const workbook = new ExcelJS.Workbook();
+	for (const sheet of sheets) {
+		const added = workbook.addWorksheet(sheet.name);
+		for (const row of sheet.rows) {
+			added.addRow([...row]);
+		}
+	}
+	return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
+/** A one-sheet workbook: the header this import expects, then the given data rows. */
+async function sheetOf(...rows: readonly (readonly CellValue[])[]): Promise<Buffer> {
+	return workbookOf([{ name: SHEET_NAME, rows: [[...IMPORT_HEADER], ...rows] }]);
 }
 
 /** A file of `rows` houses in one block, with addresses nothing else in this file uses. */
-function fileOf(block: string, rows: number): string {
-	const lines = Array.from(
-		{ length: rows },
-		(_, index) =>
-			`${block},${index + 1},Warga ${block} ${index + 1},warga.${block.toLowerCase()}.${index + 1}@komplek.id,${index % 2 === 0 ? 'pemilik' : 'penyewa'}`
+async function fileOf(block: string, rows: number): Promise<Buffer> {
+	return sheetOf(
+		...Array.from({ length: rows }, (_unused, index) => [
+			block,
+			index + 1,
+			`Warga ${block} ${index + 1}`,
+			`warga.${block.toLowerCase()}.${index + 1}@komplek.id`,
+			index % 2 === 0 ? 'pemilik' : 'penyewa'
+		])
 	);
-	return [HEADER, ...lines].join('\n');
 }
 
 /** Inserts a bare `user` row, picking up the trigger's default `resident` role like any real sign-up. */
@@ -141,6 +179,108 @@ function codesAt(
 	return (problem?.reasons ?? []).map((reason) => reason.code);
 }
 
+/** What one cell holds, and the text `readResidentRows` is expected to read it as. */
+const CELL_CASES: readonly (readonly [string, CellValue, string])[] = [
+	['a whole number without decimals', 12, '12'],
+	['a number that has decimals', 12.5, '12.5'],
+	['a boolean', true, 'true'],
+	['a date, as an ISO day', new Date('2026-03-05T00:00:00.000Z'), '2026-03-05'],
+	['a formula, as its cached result', { formula: 'B2&""', result: 'Budi Santoso' }, 'Budi Santoso'],
+	[
+		'rich text, as its runs joined',
+		{ richText: [{ text: 'Budi ' }, { text: 'Santoso' }] },
+		'Budi Santoso'
+	],
+	[
+		'a hyperlink, as the text it shows',
+		{ text: 'budi@komplek.id', hyperlink: 'mailto:budi@komplek.id' },
+		'budi@komplek.id'
+	],
+	['an error, as nothing at all', { error: '#N/A' }, ''],
+	['an empty cell, as nothing at all', null, ''],
+	['text with stray spaces, trimmed', '  Budi Santoso  ', 'Budi Santoso']
+];
+
+describe('readResidentRows, what a cell becomes', () => {
+	it.each(CELL_CASES)('reads %s', async (_description, written, expected) => {
+		const [first] = await readResidentRows(
+			await sheetOf(['A', '1', written, 'budi@komplek.id', 'pemilik'])
+		);
+
+		expect(first[2]).toBe(expected);
+	});
+});
+
+describe('readResidentRows, which rows and sheets it reads', () => {
+	it('skips a row whose every cell is empty, and does not let it shift the rows after it', async () => {
+		const rows = await readResidentRows(
+			await sheetOf(
+				['A', 1, 'Budi', 'budi@komplek.id', 'pemilik'],
+				['', '', '', '', ''],
+				['A', 2, 'Sari', 'sari@komplek.id', 'penyewa']
+			)
+		);
+
+		expect(rows).toHaveLength(2);
+		expect(rows.map((row) => row[2])).toEqual(['Budi', 'Sari']);
+	});
+
+	it('reads the first sheet only, ignoring every sheet after it', async () => {
+		const buffer = await workbookOf([
+			{
+				name: SHEET_NAME,
+				rows: [[...IMPORT_HEADER], ['A', 1, 'Budi', 'budi@komplek.id', 'pemilik']]
+			},
+			{
+				name: 'Catatan',
+				rows: [[...IMPORT_HEADER], ['B', 2, 'Sari', 'sari@komplek.id', 'penyewa']]
+			}
+		]);
+
+		const rows = await readResidentRows(buffer);
+
+		expect(rows).toHaveLength(1);
+		expect(rows[0][2]).toBe('Budi');
+	});
+
+	it('refuses a header whose columns are in the wrong order, naming the ones it wants', async () => {
+		const buffer = await workbookOf([
+			{ name: SHEET_NAME, rows: [['nomor', 'blok', 'nama', 'email', 'peran']] }
+		]);
+
+		await expect(readResidentRows(buffer)).rejects.toThrow(ImportHeaderError);
+		await expect(readResidentRows(buffer)).rejects.toThrow('blok,nomor,nama,email,peran');
+	});
+
+	it('refuses a header written in another language', async () => {
+		const buffer = await workbookOf([
+			{ name: SHEET_NAME, rows: [['block', 'number', 'name', 'email', 'role']] }
+		]);
+
+		await expect(readResidentRows(buffer)).rejects.toThrow(ImportHeaderError);
+	});
+
+	it('accepts a header written in capitals and with stray spaces around it', async () => {
+		const buffer = await workbookOf([
+			{
+				name: SHEET_NAME,
+				rows: [
+					[' BLOK ', ' Nomor ', 'NAMA', 'Email', ' Peran '],
+					['A', 1, 'Budi', 'budi@komplek.id', 'pemilik']
+				]
+			}
+		]);
+
+		expect(await readResidentRows(buffer)).toHaveLength(1);
+	});
+
+	it('refuses a header carrying a sixth column, however its first five read', async () => {
+		const buffer = await workbookOf([{ name: SHEET_NAME, rows: [[...IMPORT_HEADER, 'catatan']] }]);
+
+		await expect(readResidentRows(buffer)).rejects.toThrow(ImportHeaderError);
+	});
+});
+
 describe('permission', () => {
 	it('refuses a preview asked for by someone who is not a superuser', async () => {
 		const actorId = await insertUser('Warga Penasaran Impor');
@@ -148,8 +288,8 @@ describe('permission', () => {
 		await expect(
 			previewResidentImport(testDb.db, {
 				actorId,
-				fileName: 'warga.csv',
-				content: fileOf(uniqueBlock(), 1)
+				fileName: UPLOADED_NAME,
+				content: await fileOf(uniqueBlock(), 1)
 			})
 		).rejects.toThrow(PermissionDeniedError);
 	});
@@ -161,8 +301,8 @@ describe('permission', () => {
 		await expect(
 			importResidents(testDb.db, new FakeClock(START), {
 				actorId,
-				fileName: 'warga.csv',
-				content: fileOf(uniqueBlock(), 1)
+				fileName: UPLOADED_NAME,
+				content: await fileOf(uniqueBlock(), 1)
 			})
 		).rejects.toThrow(PermissionDeniedError);
 
@@ -204,7 +344,7 @@ describe('previewResidentImport', () => {
 
 	it('names a house that is already in the register, and an address that already has an account', async () => {
 		const actorId = await insertSuperuser('Pengurus Pratinjau Bentrok');
-		// Row 15 of the broken fixture names V-12, and row 2 carries budi@komplek.id. The stored
+		// Row 14 of the broken fixture names V-12, and row 2 carries budi@komplek.id. The stored
 		// address is written in capitals on purpose: the two are one address.
 		await testDb.db.insert(units).values({ block: 'V', number: '12', createdAt: new Date(START) });
 		await insertUser('Budi Sudah Terdaftar', 'BUDI@Komplek.ID');
@@ -216,21 +356,24 @@ describe('previewResidentImport', () => {
 		});
 
 		expect(codesAt(preview.problems, 2)).toContain(IMPORT_PROBLEM.emailAlreadyRegistered);
-		expect(codesAt(preview.problems, 15)).toContain(IMPORT_PROBLEM.unitAlreadyExists);
+		expect(codesAt(preview.problems, 14)).toContain(IMPORT_PROBLEM.unitAlreadyExists);
 		expect(preview.validRowCount).toBe(0);
 	});
 
-	it('carries the file back unchanged, for the confirm step to read again', async () => {
+	it('carries the file back as base64, so the confirm step can read the same bytes again', async () => {
 		const actorId = await insertSuperuser('Pengurus Pratinjau Isi Berkas');
-		const content = fileOf(uniqueBlock(), 2);
+		const content = await fileOf(uniqueBlock(), 2);
 
 		const preview = await previewResidentImport(testDb.db, {
 			actorId,
-			fileName: 'warga.csv',
+			fileName: UPLOADED_NAME,
 			content
 		});
 
-		expect(preview.content).toBe(content);
+		expect(preview.content).toBe(content.toString('base64'));
+		// The round trip is what the confirm action does, and it has to give back the same bytes: a
+		// workbook is a zip, and a single byte changed makes it unreadable rather than merely wrong.
+		expect(Buffer.from(preview.content, 'base64')).toEqual(content);
 	});
 });
 
@@ -238,12 +381,19 @@ describe('importResidents, what one confirmed row creates', () => {
 	it('writes the unit, the account, the resident, their subscriptions and the occupancy', async () => {
 		const actorId = await insertSuperuser('Pengurus Impor Satu Baris');
 		const block = uniqueBlock();
-		// Written in capitals on purpose: the address is stored lowercased.
-		const content = [HEADER, `${block},7,Budi Santoso,Budi.${block}@Komplek.ID,penyewa`].join('\n');
+		// The address is written in capitals on purpose: it is stored lowercased. The house number is
+		// a real numeric cell, which is what a spreadsheet stores when somebody types 7.
+		const content = await sheetOf([
+			block,
+			7,
+			'Budi Santoso',
+			`Budi.${block}@Komplek.ID`,
+			'penyewa'
+		]);
 
 		const result = await importResidents(testDb.db, new FakeClock(START), {
 			actorId,
-			fileName: 'warga.csv',
+			fileName: UPLOADED_NAME,
 			content
 		});
 
@@ -262,6 +412,7 @@ describe('importResidents, what one confirmed row creates', () => {
 			.where(eq(occupancies.residentId, resident.id));
 
 		expect(result.importedRowCount).toBe(1);
+		// `'7'` and never `'7.0'`: the numeric cell became the text the register stores.
 		expect(unit).toMatchObject({ block, number: '7', isActive: true });
 		// The address is stored lowercased, and the account cannot sign in until an invitation is
 		// accepted — hence `emailVerified` false here and no `account` row at all below.
@@ -280,8 +431,8 @@ describe('importResidents, what one confirmed row creates', () => {
 
 		await importResidents(testDb.db, new FakeClock(START), {
 			actorId,
-			fileName: 'warga.csv',
-			content: fileOf(uniqueBlock(), 2)
+			fileName: UPLOADED_NAME,
+			content: await fileOf(uniqueBlock(), 2)
 		});
 
 		// Nothing in this test file ever writes one, so the whole table is the assertion.
@@ -294,8 +445,8 @@ describe('importResidents, what one confirmed row creates', () => {
 
 		await importResidents(testDb.db, new FakeClock(START), {
 			actorId,
-			fileName: 'warga.csv',
-			content: fileOf(block, 1)
+			fileName: UPLOADED_NAME,
+			content: await fileOf(block, 1)
 		});
 
 		const [imported] = await testDb.db
@@ -327,8 +478,8 @@ describe('importResidents, what one confirmed row creates', () => {
 
 		const result = await importResidents(testDb.db, new FakeClock(START), {
 			actorId,
-			fileName: 'warga-maret.csv',
-			content: fileOf(uniqueBlock(), 3)
+			fileName: 'warga-maret.xlsx',
+			content: await fileOf(uniqueBlock(), 3)
 		});
 
 		const entries = await auditEntriesFor(testDb.db, result.importId);
@@ -341,7 +492,7 @@ describe('importResidents, what one confirmed row creates', () => {
 			actorId,
 			action: RESIDENTS_IMPORTED_ACTION,
 			occurredAt: new Date(START),
-			after: { fileName: 'warga-maret.csv', importedRowCount: 3 }
+			after: { fileName: 'warga-maret.xlsx', importedRowCount: 3 }
 		});
 	});
 });
@@ -365,7 +516,7 @@ describe('importResidents, all or nothing', () => {
 	it('refuses a house registered between the preview and the confirmation, naming its row', async () => {
 		const actorId = await insertSuperuser('Pengurus Impor Bentrok Di Tengah');
 		const block = uniqueBlock();
-		const request = { actorId, fileName: 'warga.csv', content: fileOf(block, 3) };
+		const request = { actorId, fileName: UPLOADED_NAME, content: await fileOf(block, 3) };
 		const preview = await previewResidentImport(testDb.db, request);
 		expect(preview.problems).toEqual([]);
 
@@ -392,8 +543,8 @@ describe('importResidents, all or nothing', () => {
 		await expect(
 			importResidents(testDb.db, new FailingClock(2), {
 				actorId,
-				fileName: 'warga.csv',
-				content: fileOf(uniqueBlock(), 3)
+				fileName: UPLOADED_NAME,
+				content: await fileOf(uniqueBlock(), 3)
 			})
 		).rejects.toThrow(CLOCK_FAILURE);
 
@@ -430,8 +581,8 @@ describe('importResidents, a hundred rows', () => {
 
 		await importResidents(testDb.db, new FakeClock(START), {
 			actorId,
-			fileName: 'warga.csv',
-			content: fileOf(block, 20)
+			fileName: UPLOADED_NAME,
+			content: await fileOf(block, 20)
 		});
 
 		const written = await testDb.db
