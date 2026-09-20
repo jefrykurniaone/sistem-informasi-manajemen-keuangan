@@ -6,6 +6,7 @@
 | Run | `komplek-v1` |
 | Peta eksekusi | [#47](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/47) |
 | Disalin pada | 2026-09-16 |
+| Lintasan penutup | 2026-09-20 — klaim yang dibalik run ini ditandai di badan, tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
@@ -85,8 +86,21 @@ sebelas kolomnya sama akan menghasilkan dua layar daftar, dua layar sunting, dan
 memperbaiki bug yang sama. Batasan bahwa `pengumuman` tidak boleh punya waktu kegiatan dipaksakan
 di lapisan service.
 
+> [!note] Dibalik oleh run `komplek-v1`
+> Nilai tipe yang tersimpan berbahasa Inggris: `posts_type_check` mengizinkan `event` dan
+> `announcement`, bukan `kegiatan` dan `pengumuman` (#38, `15600a2`,
+> `src/lib/server/db/schema/post.ts`), mengikuti konvensi "nama di kode berbahasa Inggris" yang
+> mendarat di `e43bde6`. Letak batasannya mendarat apa adanya — aturan tipe hidup di lapisan service
+> #39 (`50de7b3`), dan peta eksekusi mengutip `docs/spec-konten-v1.md:85-86` sebagai sumbernya.
+
 **Tiga status, bukan bendera boolean.** `draf`, `terbit`, `arsip`. Hanya `terbit` yang terlihat
 publik. Alasannya: dua boolean menghasilkan empat kombinasi yang dua di antaranya tidak punya arti.
+
+> [!note] Dibalik oleh run `komplek-v1`
+> Ketiga nilainya tersimpan berbahasa Inggris: `posts_status_check` mengizinkan `draft`,
+> `published`, dan `archived` (#38, `15600a2`, `src/lib/server/db/schema/post.ts`). Keputusan "tiga
+> status, bukan dua boolean" sendiri mendarat apa adanya, dan penyaringannya ada di
+> `src/lib/server/services/post/public.ts` (#40, `b8370d7`).
 
 **Isi ditulis Markdown dan dibersihkan saat ditampilkan.** Markdown diubah menjadi HTML dan disaring
 dengan daftar-putih tag sebelum ditampilkan. Ini penulis tepercaya, tetapi halaman ini bisa dibuka
@@ -99,6 +113,15 @@ masuk tidak pernah melihat menu atau tautan ke bagian mana pun yang butuh akun.
 **Gambar sampul lewat port penyimpanan.** Memakai `FileStore` dari spec fondasi. Berbeda dengan
 bukti pembayaran, gambar sampul boleh diakses publik tanpa tautan bertanda tangan, karena halamannya
 memang publik.
+
+> [!note] Dibalik oleh run `komplek-v1`
+> Gambar sampul tetap dilayani lewat tautan bertanda tangan. Kedua pemuat halaman publik mencetak
+> `await fileStore.signedLink(post.coverImageKey)` — `src/routes/(public)/posts/+page.server.ts:74`
+> dan `src/routes/(public)/posts/[id]/+page.server.ts:57` (#40, `b8370d7`) — dan rute penyaji
+> `src/routes/files/[...key]/+server.ts` (#83, `09b0e7c`) menyajikannya **tanpa** memeriksa sesi
+> maupun peran, jadi sifat publiknya tidak hilang; tanda tangan itulah otorisasinya. Dibuktikan
+> runtime lewat `og:image` sebuah Post pada gelombang 13, dan dijaga
+> `tests/e2e/file-serving.spec.ts`.
 
 **Email terbitan baru bersifat memilih-masuk.** Jenis notifikasi ini dimatikan secara bawaan. Email
 berisi judul, ringkasan, dan tautan, bukan seluruh isi. Alasannya: warga yang kebanjiran email

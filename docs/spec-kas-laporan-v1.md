@@ -6,6 +6,7 @@
 | Run | `komplek-v1` |
 | Peta eksekusi | [#47](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/47) |
 | Disalin pada | 2026-09-16 |
+| Lintasan penutup | 2026-09-20 — klaim yang dibalik run ini ditandai di badan, tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
@@ -122,10 +123,26 @@ aktif. Kategori sistem "Iuran warga" dibuat oleh migrasi, tidak bisa dihapus, ti
 tipe, dan **tidak menerima pencatatan manual** — satu-satunya jalan uang masuk ke kategori itu
 adalah verifikasi pembayaran dari spec iuran.
 
+> [!note] Dibalik oleh run `komplek-v1`
+> Pengecualiannya dua, bukan satu, dan aturannya digeneralisasi: migrasi `0009_cash_report` (#32,
+> `49f3bad`) menyemai `dues` **dan** `opening-balance`, keduanya dicari lewat `SYSTEM_CATEGORY_KEY`
+> dan bukan lewat nama tampilannya, dan **setiap** kategori sistem menolak pencatatan manual (#34,
+> `fc4bf14`) — entri manual ke `opening-balance` akan melewati kunci baris milik #33 (`8a21da9`).
+> Penghapusan tidak ditolak per kasus melainkan tidak ada sama sekali: `src/lib/server/services/cash/`
+> tidak mengekspor satu pun operasi hapus kategori, dan sebuah pengujian menjaga daftar ekspornya.
+
 **Periode adalah entitas dengan status.** Satu Periode per bulan kalender, berstatus terbuka atau
 terkunci. Transaksi Kas bertanggal di dalam periode terkunci ditolak. Penerbitan laporan mengunci
 periodenya. Alasannya: penguncian adalah satu-satunya hal yang membuat laporan yang sudah dibaca
 punya arti.
+
+> [!note] Dibalik oleh run `komplek-v1`
+> Baris `periods` tidak ada untuk setiap bulan kalender: ia dibuat saat dibutuhkan oleh tulisan uang
+> pertama di bulan itu. `requireOpenPeriodFor(transaction, clock, occurredOn)` di
+> `src/lib/server/services/cash/period.ts` (#35, `cf35211`) membuat baris yang belum ada dalam
+> keadaan `open` lewat penyisipan spekulatif lalu menguncinya `for share`, jadi bulan yang belum
+> pernah menerima uang tidak punya baris sama sekali. Nilai statusnya tersimpan `open`/`locked`, dan
+> urutan kuncinya tunggal — baris uang dulu, Periode kedua.
 
 **Basis kas, dan dua angka yang berbeda.** Transaksi Kas bertanggal pada tanggal uang diterima atau
 dikeluarkan, bukan pada periode tagihan yang dilunasinya. Akibatnya "iuran terkumpul untuk periode
@@ -139,9 +156,26 @@ dibekukan pada saat terbit sehingga laporan revisi 1 tetap bisa dibaca setelah r
 Membuka kunci periode tidak menghapus laporan mana pun. Alasannya: kalau laporan ditimpa diam-diam,
 penguncian periode kehilangan seluruh manfaatnya.
 
+> [!note] Dibalik oleh run `komplek-v1`
+> Yang dibekukan adalah kedelapan angka ditambah `category_breakdown` `jsonb` (satu baris per
+> kategori per arah); yang **dihitung ulang saat dibaca** adalah pratinjau pengurus dan setiap baris
+> transaksi di balik sebuah kategori — terpaksa, karena `monthly_reports` sengaja tidak punya kunci
+> asing ke `cash_transactions`. Muatannya karena itu membawa angka beku dan angka hidup
+> berdampingan dan mengatakannya ketika keduanya berbeda. Nomor revisi **diturunkan, tidak pernah
+> dialokasikan** — `coalesce(max(revision), 0) + 1` dibaca sesudah `lockPeriod` memegang
+> `for update`, jadi penerbitan yang gagal tidak menghabiskan nomor. #32 (`49f3bad`) dan #36
+> (`8be3c03`), di `src/lib/server/services/report/`.
+
 **Privasi penunggak.** Laporan yang dilihat warga menampilkan jumlah rumah yang lunas dan belum
 lunas serta total terkumpul — tidak pernah nama. Daftar nama penunggak adalah layar terpisah yang
 hanya bisa dibuka admin.
+
+> [!note] Dibalik oleh run `komplek-v1`
+> Penjagaannya lebih keras daripada yang diminta, dan itu memangkas user story 20:
+> `src/lib/server/services/report/resident-payload.ts` (#36, `8be3c03`) **menolak penelusuran
+> kategori sistem `dues` secara menyeluruh, untuk semua peran**, karena satu barisnya adalah
+> pembayaran satu rumah dan daftarnya dibaca terhadap jumlah rumah belum lunas menjadi daftar
+> penunggak lewat pengurangan. Nama penerbit laporan juga dikecualikan dari muatan warga.
 
 **Email laporan bulanan.** Sebuah pekerjaan terjadwal, berjalan setelah periode ditutup, mengirim
 ringkasan angka dan tautan ke halaman laporan kepada setiap warga yang berlangganan — bukan
