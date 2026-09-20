@@ -523,6 +523,7 @@
 	"adminCash_rule_descriptionMissing": "Keterangan wajib diisi. Pada koreksi, keterangan itu adalah alasannya.",
 	"adminCash_rule_receiptTooLarge": "Foto nota terlalu besar. Batasnya 256 KB.",
 	"adminCash_rule_receiptNotAnImage": "Foto nota harus berupa berkas JPEG, PNG, atau WebP yang benar-benar gambar.",
+	"adminCash_periodLocked": "Periode {period} sudah terkunci, jadi transaksi kas bertanggal di dalamnya tidak bisa dicatat. Seorang superuser perlu membuka kunci periode itu dengan alasan lebih dulu.",
 	"adminPeriods_pageTitle": "Periode buku kas — Komplek",
 	"adminPeriods_heading": "Periode buku kas",
 	"adminPeriods_description": "Setiap bulan buku kas berstatus terbuka atau terkunci. Bulan yang laporan bulanannya sudah terbit dikunci, dan transaksi bertanggal di dalamnya ditolak sampai superuser membuka kuncinya dengan alasan.",

@@ -17,6 +17,7 @@ import {
 	CashTransactionNotFoundError,
 	recordCashCorrection
 } from '$lib/server/services/cash/correction';
+import { PeriodLockedError } from '$lib/server/services/cash/period';
 import { CashRuleError } from '$lib/server/services/cash/transaction';
 import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
 import type { Actions, PageServerLoad } from './$types';
@@ -156,6 +157,9 @@ function failAsRejectedForm(caught: unknown) {
 	}
 	if (caught instanceof CashRuleError) {
 		return fail(400, { message: m.adminCash_correctionInvalidForm() });
+	}
+	if (caught instanceof PeriodLockedError) {
+		return fail(400, { message: m.adminCash_periodLocked({ period: caught.period }) });
 	}
 	throwAsRouteError(caught);
 }

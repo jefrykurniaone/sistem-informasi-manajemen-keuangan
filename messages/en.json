@@ -523,6 +523,7 @@
 	"adminCash_rule_descriptionMissing": "A description is required. On a correction, that description is its reason.",
 	"adminCash_rule_receiptTooLarge": "The receipt photo is too large. The limit is 256 KB.",
 	"adminCash_rule_receiptNotAnImage": "The receipt photo has to be a JPEG, PNG or WebP file that really is an image.",
+	"adminCash_periodLocked": "Periode {period} is already locked, so a cash transaction dated inside it cannot be recorded. A superuser has to reopen that periode with a reason first.",
 	"adminPeriods_pageTitle": "Cash book periods — Komplek",
 	"adminPeriods_heading": "Cash book periods",
 	"adminPeriods_description": "Every month of the cash book is either open or locked. A month whose monthly report has been published is locked, and transactions dated inside it are refused until a superuser reopens it with a reason.",

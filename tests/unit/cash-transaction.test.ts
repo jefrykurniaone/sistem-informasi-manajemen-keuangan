@@ -413,6 +413,74 @@ describe('recordCashTransaction', () => {
 		expect(accepted.occurredOn).toBe('2026-08-13');
 	});
 
+	it('refuses a day inside a locked Periode by name, the way a correction of it does too', async () => {
+		// #97: `requireOpenPeriodFor` throws `PeriodLockedError`, which is not a `CashRuleError` and is
+		// caught by each route on its own — see this ticket's pull request for the decision not to fold
+		// it into `CASH_RULE`. The service-layer contract this test proves is the same for both write
+		// paths: `recordCashTransaction` reads the check against its own `occurredOn`, and
+		// `recordCashCorrection` reads it against the *corrected row's* `occurredOn` — see
+		// `src/lib/server/services/cash/correction.ts`. September, a month no other test in this file
+		// locks, so the lock reaches nothing else.
+		const adminId = await insertAdmin('Pengurus Catat Dan Koreksi Periode Terkunci');
+		const superuserId = await insertSuperuser('Pengurus Buka Kunci Catat Dan Koreksi');
+		const category = await addCategory('Perbaikan pagar belakang');
+
+		// An ordinary row dated in September, recorded before the month is locked — the way a
+		// transaction would already exist when a Laporan Bulanan later freezes its month.
+		const original = await record({
+			actorId: adminId,
+			categoryId: category.id,
+			occurredOn: '2026-09-05'
+		});
+
+		await testDb.db.transaction((transaction) =>
+			lockPeriod(transaction, new FakeClock(START), {
+				actorId: adminId,
+				year: 2026,
+				month: 9,
+				reason: 'Laporan Bulanan September terbit.'
+			})
+		);
+
+		await expect(
+			record({ actorId: adminId, categoryId: category.id, occurredOn: '2026-09-11' })
+		).rejects.toThrow(PeriodLockedError);
+		await expect(
+			recordCashCorrection(testDb.db, new FakeClock(START), {
+				actorId: adminId,
+				transactionId: original.id,
+				reason: 'Nominalnya keliru.'
+			})
+		).rejects.toThrow(PeriodLockedError);
+		expect(
+			await testDb.db
+				.select()
+				.from(cashTransactions)
+				.where(eq(cashTransactions.categoryId, category.id))
+		).toHaveLength(1);
+
+		await unlockPeriod(testDb.db, new FakeClock(START), {
+			actorId: superuserId,
+			year: 2026,
+			month: 9,
+			reason: 'Nota bulan itu baru ditemukan dan harus masuk.'
+		});
+
+		const accepted = await record({
+			actorId: adminId,
+			categoryId: category.id,
+			occurredOn: '2026-09-11'
+		});
+		expect(accepted.occurredOn).toBe('2026-09-11');
+
+		const corrected = await recordCashCorrection(testDb.db, new FakeClock(START), {
+			actorId: adminId,
+			transactionId: original.id,
+			reason: 'Nominalnya keliru.'
+		});
+		expect(corrected.correctionOf).toBe(original.id);
+	});
+
 	it('refuses a superuser who is not also an admin, and a resident, and writes nothing', async () => {
 		// `mencatat Transaksi Kas` is Admin's in `CONTEXT.md` and is not on Superuser's list, and
 		// `docs/spec-fondasi-v1.md` makes the three roles a set rather than a ladder.
