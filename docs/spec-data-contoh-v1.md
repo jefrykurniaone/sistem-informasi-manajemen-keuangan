@@ -96,7 +96,7 @@ mengulang.
 
 **Akun dibuat lewat better-auth,** bukan disisipkan langsung, supaya kata sandi ter-hash dengan
 cara yang sama dan masuk benar-benar bekerja. Email ditandai terverifikasi dan Pendaftaran disetujui
-oleh skrip. Akun: `pengurus@komplek.local` (superuser, juga admin), `admin@komplek.local` (admin),
+oleh skrip. Akun: `superuser@komplek.local` (superuser, juga admin), `admin@komplek.local` (admin),
 `warga01@komplek.local` sampai `warga25@komplek.local`. Kata sandi semua akun `kata-sandi-dummy-123`,
 dicetak di README bagian pengembangan lokal.
 
@@ -134,7 +134,7 @@ memakainya juga, dan cara menjalankannya didokumentasikan sekali di README.
 - `bun run db:seed-dev -- --yes` pada basis data lokal selesai tanpa galat dan mencetak ringkasan
   jumlah per entitas.
 - Tanpa `--yes`, atau dengan `NODE_ENV=production`, perintah keluar dengan kode 1 dan pesan.
-- Masuk sebagai `pengurus@komplek.local` dan `warga01@komplek.local` berhasil.
+- Masuk sebagai `superuser@komplek.local` dan `warga01@komplek.local` berhasil.
 - Beranda admin dan warga, layar Menunggak, Verifikasi Pembayaran, Buku Kas, Kelola Post, dan Semua
   Keluhan menampilkan data.
 - Job penerbitan Tagihan tidak menerbitkan Tagihan kedua untuk bulan ini setelah skrip.
