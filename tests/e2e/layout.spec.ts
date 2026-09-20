@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
 /**
  * The app shell — the sidebar drawer and the language switcher — at 390 pixels, the narrowest
@@ -21,15 +21,37 @@ test.use({ viewport: { width: 390, height: 844 } });
 const MENU_BUTTON_ID = 'Buka atau tutup menu';
 const MENU_BUTTON_EN = 'Open or close menu';
 
+/** The accessible name of the sidebar landmark, `appShell_mainNavigation`. */
+const MAIN_NAV_ID = 'Navigasi utama';
+
+/**
+ * Presses the menu button until the drawer it opens is on screen.
+ *
+ * The drawer is opened by the component's own script, so a click that lands before the page has
+ * hydrated is simply lost. The old navigation needed no script and never had this race. Hydration
+ * leaves nothing on the button to wait for either — its attributes are the same at
+ * `domcontentloaded` and 1500 ms later — and a marker added to the application only for the tests
+ * would be worse than repeating the click here, so the click is repeated until the drawer answers.
+ *
+ * `drawerContent` is something the open drawer shows: the navigation landmark, or the language
+ * select in its footer once the interface is English and the landmark's name has changed with it.
+ */
+async function openDrawer(page: Page, buttonName: string, drawerContent: Locator): Promise<void> {
+	await expect(async () => {
+		await page.getByRole('button', { name: buttonName }).click();
+		await expect(drawerContent).toBeVisible({ timeout: 1000 });
+	}).toPass();
+}
+
 test('an anonymous visitor opens the drawer from the menu button and sees only the public navigation, with no horizontal overflow at 390px', async ({
 	page
 }) => {
 	await page.goto('/');
 
-	const nav = page.getByRole('navigation', { name: 'Navigasi utama' });
+	const nav = page.getByRole('navigation', { name: MAIN_NAV_ID });
 	await expect(nav).toBeHidden();
 
-	await page.getByRole('button', { name: MENU_BUTTON_ID }).click();
+	await openDrawer(page, MENU_BUTTON_ID, nav);
 
 	await expect(nav).toBeVisible();
 	await expect(nav.getByRole('link', { name: 'Masuk' })).toBeVisible();
@@ -45,9 +67,10 @@ test('an anonymous visitor opens the drawer from the menu button and sees only t
 
 test('every link in the open drawer is at least 44 pixels tall', async ({ page }) => {
 	await page.goto('/');
-	await page.getByRole('button', { name: MENU_BUTTON_ID }).click();
 
-	const nav = page.getByRole('navigation', { name: 'Navigasi utama' });
+	const nav = page.getByRole('navigation', { name: MAIN_NAV_ID });
+	await openDrawer(page, MENU_BUTTON_ID, nav);
+
 	const links = await nav.getByRole('link').all();
 	expect(links.length).toBeGreaterThan(0);
 
@@ -59,9 +82,10 @@ test('every link in the open drawer is at least 44 pixels tall', async ({ page }
 
 test('choosing a link in the drawer closes it and moves to that page', async ({ page }) => {
 	await page.goto('/');
-	await page.getByRole('button', { name: MENU_BUTTON_ID }).click();
 
-	const nav = page.getByRole('navigation', { name: 'Navigasi utama' });
+	const nav = page.getByRole('navigation', { name: MAIN_NAV_ID });
+	await openDrawer(page, MENU_BUTTON_ID, nav);
+
 	await nav.getByRole('link', { name: 'Masuk' }).click();
 
 	await expect(page).toHaveURL(/\/login$/);
@@ -72,9 +96,10 @@ test('the language switcher is a labelled, keyboard-usable control whose choice 
 	page
 }) => {
 	await page.goto('/');
-	await page.getByRole('button', { name: MENU_BUTTON_ID }).click();
 
 	const switcher = page.getByLabel('Bahasa');
+	await openDrawer(page, MENU_BUTTON_ID, switcher);
+
 	await expect(switcher).toBeVisible();
 	await switcher.focus();
 	await expect(switcher).toBeFocused();
@@ -84,11 +109,12 @@ test('the language switcher is a labelled, keyboard-usable control whose choice 
 	await switcher.selectOption('en');
 	await expect(page.locator('html')).toHaveAttribute('lang', 'en');
 
-	await page.getByRole('button', { name: MENU_BUTTON_EN }).click();
-	await expect(page.getByLabel('Language')).toHaveValue('en');
+	const englishSwitcher = page.getByLabel('Language');
+	await openDrawer(page, MENU_BUTTON_EN, englishSwitcher);
+	await expect(englishSwitcher).toHaveValue('en');
 
 	await page.reload();
 	await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-	await page.getByRole('button', { name: MENU_BUTTON_EN }).click();
-	await expect(page.getByLabel('Language')).toHaveValue('en');
+	await openDrawer(page, MENU_BUTTON_EN, englishSwitcher);
+	await expect(englishSwitcher).toHaveValue('en');
 });
