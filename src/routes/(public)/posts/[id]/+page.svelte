@@ -36,8 +36,7 @@
 	The page's real heading, for the document outline and for anyone using a screen reader — a
 	single Post's own title is what this whole page is about, so it belongs at level 1. It stays
 	visually hidden rather than shown twice: `post-preview.svelte` already renders the same title as
-	its own `<h3>`, styled the way both this page and the admin preview screen want it to look, and
-	`post-preview.svelte` is a `reads:` file this ticket may not edit to change that.
+	its own `<h3>`, styled the way this page wants it to look.
 -->
 <h1 class="sr-only">{data.post.title}</h1>
 

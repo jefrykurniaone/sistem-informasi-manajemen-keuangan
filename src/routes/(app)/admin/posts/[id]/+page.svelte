@@ -5,19 +5,13 @@
 		POST_STATUS_LABEL,
 		type PostFormValues
 	} from '$lib/components/post/post-form.svelte';
-	import PostPreview from '$lib/components/post/post-preview.svelte';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
 
-	const uid = $props.id();
-
 	/** What the fields hold: whatever the last submission carried, or what is stored. */
 	const values: PostFormValues = $derived(form?.values ?? data.values);
-
-	/** The preview of the unsaved body when there is one, otherwise of the saved body. */
-	const previewHtml = $derived(form?.previewHtml ?? data.previewHtml);
 </script>
 
 <svelte:head>
@@ -48,72 +42,10 @@
 		{values}
 		categories={data.categories}
 		types={data.types}
+		coverImageContentTypes={data.coverImageContentTypes}
+		coverImageKey={data.post.coverImageKey}
 		submitLabel={m.adminPosts_form_submitUpdate()}
 	/>
-
-	<section class="flex flex-col gap-3">
-		<h2 class="text-lg font-semibold">{m.adminPosts_previewHeading()}</h2>
-		<p class="text-sm text-muted-foreground">{m.adminPosts_previewHint()}</p>
-
-		<form method="POST" action="?/preview">
-			<input type="hidden" name="bodyHtml" value={values.bodyHtml} />
-			<input type="hidden" name="type" value={values.type} />
-			<input type="hidden" name="title" value={values.title} />
-			<input type="hidden" name="summary" value={values.summary} />
-			<input type="hidden" name="category" value={values.category} />
-			<input type="hidden" name="startsAt" value={values.startsAt} />
-			<input type="hidden" name="endsAt" value={values.endsAt} />
-			<input type="hidden" name="location" value={values.location} />
-			<Button type="submit" variant="outline" class="h-11 w-full sm:w-auto">
-				{m.adminPosts_previewSubmit()}
-			</Button>
-		</form>
-
-		<PostPreview
-			type={values.type}
-			category={values.category}
-			title={values.title}
-			summary={values.summary}
-			bodyHtml={previewHtml}
-			startsAtLabel={data.post.startsAtLabel}
-			endsAtLabel={data.post.endsAtLabel}
-			location={data.post.location}
-		/>
-	</section>
-
-	<section class="flex flex-col gap-3 rounded-lg border border-border p-4">
-		<h2 class="text-lg font-semibold">{m.adminPosts_coverHeading()}</h2>
-		<p class="text-sm text-muted-foreground">
-			{data.post.coverImageKey
-				? m.adminPosts_coverCurrent({ key: data.post.coverImageKey })
-				: m.adminPosts_coverNone()}
-		</p>
-
-		<form
-			method="POST"
-			action="?/uploadCover"
-			enctype="multipart/form-data"
-			class="flex flex-col gap-3"
-		>
-			<label class="text-sm font-medium" for="admin-posts-cover-{uid}">
-				{m.adminPosts_coverLabel()}
-			</label>
-			<input
-				id="admin-posts-cover-{uid}"
-				name="cover"
-				type="file"
-				accept={data.coverImageContentTypes.join(',')}
-				aria-describedby="admin-posts-cover-hint-{uid}"
-				class="rounded-md border border-border bg-background px-3 py-2.5 text-sm"
-			/>
-			<p class="text-xs text-muted-foreground" id="admin-posts-cover-hint-{uid}">
-				{m.adminPosts_coverHint()}
-			</p>
-			<Button type="submit" variant="outline" class="h-11 w-full sm:w-auto sm:self-start">
-				{m.adminPosts_coverSubmit()}
-			</Button>
-		</form>
-	</section>
 
 	<section class="flex flex-col gap-3 rounded-lg border border-border p-4">
 		<h2 class="text-lg font-semibold">{m.adminPosts_statusHeading()}</h2>

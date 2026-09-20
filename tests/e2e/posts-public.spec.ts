@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { Pool } from 'pg';
 
 /**
@@ -13,13 +13,16 @@ import { Pool } from 'pg';
  * reasoning that file's own comments give for reading a queued email straight out of `email_queue`
  * rather than waiting for a worker that is not running under this harness.
  *
- * ## What this spec does not attempt
+ * ## The body is typed into a rich-text editor
  *
- * It never uploads a cover image. `(public)/posts/+page.server.ts`'s own doc comment names the
- * reason: `LocalFileStore.signedLink` returns a path under `/files/…`, and no route in this
- * repository answers a request there yet, so an `<img>` or an `og:image` built from a real upload
- * would 404 for reasons outside this ticket's `writes:`. The `og:title`, `og:description` and
- * `og:url` tags this spec does check do not depend on that gap.
+ * Since #140 there is no `<textarea>` to `fill`. The body is a Tiptap editor, so this spec clicks
+ * into `.ProseMirror`, types, and presses the toolbar the way an admin would — which is also what
+ * makes it worth walking at all, because the markup the public page renders is now produced by the
+ * editor rather than typed out by hand.
+ *
+ * The Sampul is chosen on the same form, so this spec uploads one and checks the `og:image` a shared
+ * link would carry. `tests/e2e/file-serving.spec.ts` owns the deeper claim about that address — that
+ * `/files/…` really answers with the bytes and their `Content-Type`.
  */
 
 /** The database the application under test is using. Bun loads it out of `.env`. */
@@ -135,6 +138,49 @@ async function signUpAdmin(page: Page, email: string): Promise<void> {
 	await expect(page).toHaveURL(/\/$/);
 }
 
+/**
+ * A 1×1 transparent PNG — a real image, so the signature check in `setPostCoverImage` accepts it and
+ * a browser can decode it. The same bytes `tests/e2e/file-serving.spec.ts` plants; copied rather than
+ * imported, for the reason that file gives for copying the sign-up helpers.
+ */
+const PNG = Buffer.from(
+	'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+	'base64'
+);
+
+/**
+ * The Post body editor, once it has mounted and will take what is typed into it.
+ *
+ * `.ProseMirror` exists only after hydration has run and `rich-text-editor.svelte`'s `onMount` has
+ * finished its dynamic import, so waiting for it is the strongest hydration marker this screen has:
+ * every field filled after this call is filled on a page whose Svelte effects have already written
+ * their `value={…}` bindings back. The click itself is wrapped in the `toPass` retry
+ * `tests/e2e/layout.spec.ts` and `tests/e2e/smoke.spec.ts` use, because under parallel workers the
+ * first JS-driven click can still land a frame early.
+ */
+async function bodyEditor(page: Page): Promise<Locator> {
+	const editor = page.locator('.ProseMirror');
+	await expect(editor).toBeVisible();
+	await expect(editor).toHaveAttribute('contenteditable', 'true');
+	await expect(async () => {
+		await editor.click();
+		await expect(editor).toBeFocused({ timeout: 1000 });
+	}).toPass();
+	return editor;
+}
+
+/**
+ * Presses one toolbar button and waits until the caret is back in the editor.
+ *
+ * Every toolbar command ends in `chain().focus()`, so the editor takes focus back from the button it
+ * was given by the click; waiting for that is what makes the `page.keyboard.type` after it land in
+ * the document rather than on the button.
+ */
+async function pressToolbar(page: Page, editor: Locator, name: string): Promise<void> {
+	await page.getByRole('button', { name, exact: true }).click();
+	await expect(editor).toBeFocused();
+}
+
 /** A `datetime-local` value for `daysAhead` days from now, in the server's own zone. */
 function futureLocalDateTime(daysAhead: number): string {
 	const date = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000);
@@ -152,11 +198,24 @@ test('an admin publishes a kegiatan, and a browser with no session opens it from
 	await signUpAdmin(page, email);
 
 	await open(page, '/admin/posts/new');
+
+	// The body is typed, and its markup is made with the toolbar: bold on, the word, bold off, then a
+	// bulleted list on the next line. Pressing the buttons rather than selecting text afterwards is
+	// what an admin does, and it needs no fragile drag across a rendered range.
+	const editor = await bodyEditor(page);
+	await pressToolbar(page, editor, 'Tebal');
+	await page.keyboard.type('sapu');
+	await pressToolbar(page, editor, 'Tebal');
+	await page.keyboard.type(' dan cangkul.');
+	await page.keyboard.press('Enter');
+	await pressToolbar(page, editor, 'Daftar berbutir');
+	await page.keyboard.type('Bawa ember');
+
 	await page.getByLabel('Judul').fill(title);
 	await page.getByLabel('Ringkasan').fill('Kerja bakti bulanan di lapangan komplek.');
-	// The body field carries HTML since #135, not Markdown — the textarea sends it as typed and the
-	// service sanitizes it before storing it.
-	await page.getByLabel('Isi').fill('<p>Bawa <strong>sapu</strong> dan cangkul.</p>');
+	await page
+		.getByLabel('Berkas gambar')
+		.setInputFiles({ name: 'sampul.png', mimeType: 'image/png', buffer: PNG });
 	await page.getByLabel('Waktu mulai').fill(futureLocalDateTime(7));
 	await page.getByLabel('Waktu selesai').fill(futureLocalDateTime(7));
 	await page.getByLabel('Lokasi').fill('Lapangan komplek');
@@ -183,8 +242,16 @@ test('an admin publishes a kegiatan, and a browser with no session opens it from
 	// The link itself — what a visitor who followed it from WhatsApp would actually open.
 	await anonymousPage.goto(`/posts/${postId}`);
 	await expect(anonymousPage.getByRole('heading', { level: 1 })).toHaveText(title);
-	await expect(anonymousPage.locator('.post-body')).toContainText('Bawa');
-	await expect(anonymousPage.locator('.post-body strong')).toHaveText('sapu');
+	// `.prose` is the `@tailwindcss/typography` container the editor and this page share since #140.
+	await expect(anonymousPage.locator('.prose')).toContainText('dan cangkul.');
+	await expect(anonymousPage.locator('.prose strong')).toHaveText('sapu');
+	await expect(anonymousPage.locator('.prose ul li')).toContainText('Bawa ember');
+
+	// The Sampul chosen on the write form, on the Post the same submission created.
+	await expect(anonymousPage.locator('meta[property="og:image"]')).toHaveAttribute(
+		'content',
+		new RegExp(`/files/posts/${postId}/cover\\.png`)
+	);
 
 	await expect(anonymousPage.locator('meta[property="og:title"]')).toHaveAttribute(
 		'content',
@@ -225,9 +292,10 @@ test('a draft Post answers 404 to a browser with no session, even with its real 
 	await signUpAdmin(page, email);
 
 	await open(page, '/admin/posts/new');
+	await bodyEditor(page);
+	await page.keyboard.type('Isi belum final.');
 	await page.getByLabel('Judul').fill(`Draf tidak terbit ${Date.now()}`);
 	await page.getByLabel('Ringkasan').fill('Belum siap dibagikan.');
-	await page.getByLabel('Isi').fill('Isi belum final.');
 	await page.getByLabel('Tipe').selectOption('announcement');
 	await page.getByRole('button', { name: 'Simpan draf' }).click();
 

@@ -5,12 +5,17 @@ import { AUTH_PATHS } from '$lib/server/auth';
 import { database } from '$lib/server/db';
 import { POST_TYPES, type PostType } from '$lib/server/db/schema/post';
 import { systemClock } from '$lib/server/ports/clock';
+import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
 import {
+	assertAcceptableCoverImage,
 	assertMayManagePosts,
+	COVER_IMAGE_CONTENT_TYPES,
 	createPost,
 	POST_CATEGORIES,
 	POST_RULE,
 	PostRuleError,
+	setPostCoverImage,
+	type CoverImageUpload,
 	type PostRule
 } from '$lib/server/services/post';
 import type { Actions, PageServerLoad } from './$types';
@@ -18,8 +23,12 @@ import type { Actions, PageServerLoad } from './$types';
 /**
  * The screen an admin writes a new Post on. It always saves a draft — publishing is a separate,
  * audited step on `(app)/admin/posts/[id]`, per `docs/spec-konten-v1.md`'s stories 5 and 8 — and it
- * redirects to that screen on success so that previewing, uploading a cover and publishing all
- * happen in one place.
+ * redirects to that screen on success so that publishing happens in one place.
+ *
+ * Since #140 the Sampul is chosen on this form too, so the `create` action reads a file as well as
+ * the typed fields. It checks that file *before* it writes anything: see
+ * `assertAcceptableCoverImage` in `$lib/server/services/post` for the whole argument, and
+ * `coverImageRefusal` below for the one line of it that lives here.
  *
  * Follows the shape `(app)/admin/units/+page.server.ts` settled: nobody who is not signed in reaches
  * the service layer, `PermissionDeniedError` becomes `error(403, …)` here and never in the service,
@@ -40,7 +49,11 @@ export const load: PageServerLoad = async ({ locals }) => {
 		throwAsRouteError(caught);
 	}
 
-	return { categories: POST_CATEGORIES, types: POST_TYPES };
+	return {
+		categories: POST_CATEGORIES,
+		types: POST_TYPES,
+		coverImageContentTypes: COVER_IMAGE_CONTENT_TYPES
+	};
 };
 
 export const actions: Actions = {
@@ -61,6 +74,16 @@ export const actions: Actions = {
 			return fail(400, { message: m.adminPosts_invalidTime(), values });
 		}
 
+		// The Sampul is checked before the Post is written, so that a picture this application refuses
+		// leaves no Post behind — see `assertAcceptableCoverImage` for why this order rather than one
+		// transaction around both. Every typed value comes back with the refusal, so the only field the
+		// admin has to fill in again is the file, which no browser lets a server repopulate anyway.
+		const coverImage = await readCoverImage(form);
+		const coverRefusal = coverImage && coverImageRefusal(coverImage);
+		if (coverRefusal) {
+			return fail(400, { message: coverRefusal, values });
+		}
+
 		let createdId: string;
 		try {
 			const created = await createPost(database(), systemClock, {
@@ -75,6 +98,14 @@ export const actions: Actions = {
 				location: values.location || null
 			});
 			createdId = created.id;
+			if (coverImage) {
+				await setPostCoverImage(
+					database(),
+					systemClock,
+					localFileStoreFromEnvironment(systemClock),
+					{ actorId: locals.user.id, postId: created.id, ...coverImage }
+				);
+			}
 		} catch (caught) {
 			if (caught instanceof PostRuleError) {
 				return fail(400, { message: ruleMessage(caught.rule), values });
@@ -107,6 +138,34 @@ function readPostFormValues(form: FormData) {
 		endsAt: String(form.get('endsAt') ?? ''),
 		location: String(form.get('location') ?? '').trim()
 	};
+}
+
+/**
+ * The Sampul the form carried, or `undefined` when its field was left empty.
+ *
+ * An untouched `<input type="file">` still posts a `File` — an empty one with an empty name — so the
+ * size is what tells "no picture was chosen" apart from "a picture was chosen", exactly as the
+ * upload form this replaced already did.
+ */
+async function readCoverImage(form: FormData): Promise<CoverImageUpload | undefined> {
+	const file = form.get('coverImage');
+	if (!(file instanceof File) || file.size === 0) {
+		return undefined;
+	}
+	return { contentType: file.type, content: new Uint8Array(await file.arrayBuffer()) };
+}
+
+/** The sentence for a Sampul the service refuses, or `undefined` when it accepts it. */
+function coverImageRefusal(image: CoverImageUpload): string | undefined {
+	try {
+		assertAcceptableCoverImage(image);
+		return undefined;
+	} catch (caught) {
+		if (caught instanceof PostRuleError) {
+			return ruleMessage(caught.rule);
+		}
+		throw caught;
+	}
 }
 
 /** The submitted type, defaulted to the first one the schema knows when nothing recognisable came. */

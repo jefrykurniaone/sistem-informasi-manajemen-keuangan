@@ -76,6 +76,8 @@ export const POST_PUBLISHED_ACTION = 'post_published';
 export const POST_ARCHIVED_ACTION = 'post_archived';
 /** The audit log's `action` for a Post whose cover image was uploaded or replaced. */
 export const POST_COVER_IMAGE_SET_ACTION = 'post_cover_image_set';
+/** The audit log's `action` for a Post whose cover image was taken off it. */
+export const POST_COVER_IMAGE_REMOVED_ACTION = 'post_cover_image_removed';
 
 /** The default page size for the admin Post list. */
 export const DEFAULT_POST_PAGE_SIZE = 20;
@@ -660,14 +662,23 @@ async function changePostStatus(
 	});
 }
 
-/** Who is uploading, onto which Post, and the file itself. */
-export interface SetPostCoverImageRequest {
-	/** The signed-in admin. Checked against `ACTION.managePosts` before anything else. */
-	readonly actorId: string;
-	readonly postId: string;
+/**
+ * The bytes of an uploaded cover image, and what the upload claims they are.
+ *
+ * Named on its own so that a screen which has no Post to hang the image on yet can still check an
+ * upload — see `assertAcceptableCoverImage`.
+ */
+export interface CoverImageUpload {
 	/** What the upload claims the file is. Checked against the bytes, not believed. */
 	readonly contentType: string;
 	readonly content: Uint8Array;
+}
+
+/** Who is uploading, onto which Post, and the file itself. */
+export interface SetPostCoverImageRequest extends CoverImageUpload {
+	/** The signed-in admin. Checked against `ACTION.managePosts` before anything else. */
+	readonly actorId: string;
+	readonly postId: string;
 }
 
 /**
@@ -728,30 +739,131 @@ export async function setPostCoverImage(
 	return updated;
 }
 
+/**
+ * Checks an upload against exactly the rules `setPostCoverImage` applies, and answers nothing when
+ * it passes.
+ *
+ * It exists so that `(app)/admin/posts/new` can refuse an unacceptable cover image **before** it
+ * calls `createPost`. `docs/spec-post-editor-v1.md` asks that a refused Sampul leave no Post behind,
+ * and of the two ways to get that — one transaction covering both, or checking the file first — this
+ * is the second. The first would have to hold a `FileStore.store` inside a database transaction, so
+ * a slow or unreachable store would hold a write lock on `posts` for as long as it took to give up;
+ * the rules this function applies need nothing but the bytes, so they can all be applied before a
+ * row exists.
+ *
+ * What the order does not cover is a store that accepts the checked bytes and then fails: the Post
+ * is already written by then, and it keeps it, without a cover image. That is a Post the admin did
+ * write, on a screen that says so, and the cover image can be attached again by editing it — which
+ * is a much smaller wrong than an admin's whole draft disappearing because a disk was full.
+ *
+ * `setPostCoverImage` applies these rules again for itself. Checking twice is deliberate: this is a
+ * convenience for a caller that wants to fail early, never the only place the rules live, so a
+ * caller that forgets it still cannot store a file that breaks them.
+ *
+ * @throws {PostRuleError} `coverImageTooLarge` or `coverImageNotAnImage`.
+ */
+export function assertAcceptableCoverImage(image: CoverImageUpload): void {
+	acceptedCoverImageExtension(image);
+}
+
+/** Who is taking a cover image off which Post. */
+export interface RemovePostCoverImageRequest {
+	/** The signed-in admin. Checked against `ACTION.managePosts` before anything else. */
+	readonly actorId: string;
+	readonly postId: string;
+}
+
+/**
+ * Takes a Post's cover image off it: the row stops naming a key, and the file behind that key is
+ * deleted.
+ *
+ * A Post that has no cover image is answered with unchanged, and nothing is written — no row, no
+ * audit entry, no call to the store. The caller's intent is that the Post has no cover image, and it
+ * has none, which is the same reasoning `FileStore.delete` itself records for a key that is not
+ * there.
+ *
+ * The row is cleared before the file is deleted, the mirror image of the order `setPostCoverImage`
+ * uses and for the same reason: between the two steps, a Post naming no file is right and a Post
+ * naming a file that is already gone is not.
+ *
+ * @throws {PermissionDeniedError} when `actorId` may not manage Posts.
+ * @throws {PostNotFoundError} when `postId` names no Post.
+ */
+export async function removePostCoverImage(
+	db: Database,
+	clock: Clock,
+	fileStore: FileStore,
+	request: RemovePostCoverImageRequest
+): Promise<Post> {
+	const existing = await db.transaction(async (transaction) => {
+		await requirePermission(transaction, request.actorId, ACTION.managePosts);
+		return findPost(transaction, request.postId);
+	});
+
+	const removedKey = existing.coverImageKey;
+	if (!removedKey) {
+		return existing;
+	}
+
+	const updated = await db.transaction(async (transaction) => {
+		const [row] = await transaction
+			.update(posts)
+			.set({ coverImageKey: null })
+			.where(eq(posts.id, request.postId))
+			.returning();
+
+		await recordAuditEntry(transaction, clock, {
+			actorId: request.actorId,
+			action: POST_COVER_IMAGE_REMOVED_ACTION,
+			targetId: row.id,
+			before: { coverImageKey: removedKey },
+			after: { coverImageKey: row.coverImageKey }
+		});
+
+		return row;
+	});
+
+	await fileStore.delete(removedKey);
+
+	return updated;
+}
+
 /** Checks an upload and works out the storage key it belongs at. */
 function coverImageKeyFor(request: SetPostCoverImageRequest): string {
-	if (request.content.byteLength > MAXIMUM_COVER_IMAGE_BYTES) {
+	return `posts/${request.postId}/cover.${acceptedCoverImageExtension(request)}`;
+}
+
+/**
+ * Checks an upload against the size rule and the two format rules, and returns the extension the
+ * accepted format is stored under.
+ *
+ * @throws {PostRuleError} `coverImageTooLarge` past `MAXIMUM_COVER_IMAGE_BYTES`, or
+ *   `coverImageNotAnImage` when the content type is not an accepted one or the bytes do not start
+ *   the way that format really starts.
+ */
+function acceptedCoverImageExtension(image: CoverImageUpload): string {
+	if (image.content.byteLength > MAXIMUM_COVER_IMAGE_BYTES) {
 		throw new PostRuleError(
 			POST_RULE.coverImageTooLarge,
-			`The uploaded cover image is ${request.content.byteLength} bytes; the limit is ${MAXIMUM_COVER_IMAGE_BYTES}.`
+			`The uploaded cover image is ${image.content.byteLength} bytes; the limit is ${MAXIMUM_COVER_IMAGE_BYTES}.`
 		);
 	}
 
-	const extension = COVER_IMAGE_EXTENSIONS.get(request.contentType);
+	const extension = COVER_IMAGE_EXTENSIONS.get(image.contentType);
 	if (!extension) {
 		throw new PostRuleError(
 			POST_RULE.coverImageNotAnImage,
-			`"${request.contentType}" is not one of ${COVER_IMAGE_CONTENT_TYPES.join(', ')}.`
+			`"${image.contentType}" is not one of ${COVER_IMAGE_CONTENT_TYPES.join(', ')}.`
 		);
 	}
-	if (!hasSignatureOf(request.content, request.contentType)) {
+	if (!hasSignatureOf(image.content, image.contentType)) {
 		throw new PostRuleError(
 			POST_RULE.coverImageNotAnImage,
-			`The uploaded bytes do not start the way a "${request.contentType}" file starts.`
+			`The uploaded bytes do not start the way a "${image.contentType}" file starts.`
 		);
 	}
 
-	return `posts/${request.postId}/cover.${extension}`;
+	return extension;
 }
 
 /**

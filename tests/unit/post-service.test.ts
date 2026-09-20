@@ -14,12 +14,14 @@ import { NEW_POST_KIND } from '$lib/server/email/templates/new-post';
 import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
 import {
 	archivePost,
+	assertAcceptableCoverImage,
 	createPost,
 	getPost,
 	isAllowedPostTransition,
 	listPosts,
 	MAXIMUM_COVER_IMAGE_BYTES,
 	POST_ARCHIVED_ACTION,
+	POST_COVER_IMAGE_REMOVED_ACTION,
 	POST_COVER_IMAGE_SET_ACTION,
 	POST_CREATED_ACTION,
 	POST_PUBLISHED_ACTION,
@@ -30,8 +32,10 @@ import {
 	PostTransitionError,
 	previewPostBody,
 	publishPost,
+	removePostCoverImage,
 	setPostCoverImage,
 	updatePost,
+	type CoverImageUpload,
 	type PostContent
 } from '$lib/server/services/post';
 import { setSubscriptionPreference } from '$lib/server/services/subscription';
@@ -553,6 +557,119 @@ describe('the cover image, through the FileStore port', () => {
 		await expect(failure).rejects.toThrow(PostRuleError);
 		await expect(failure).rejects.toMatchObject({ rule });
 		expect(store.keys).toEqual([]);
+	});
+});
+
+describe('writing a Post and its cover image in one submission — #140', () => {
+	/**
+	 * The order `(app)/admin/posts/new/+page.server.ts` writes in: the Sampul is checked first, and
+	 * the Post is written only once it has passed.
+	 *
+	 * Reproduced here rather than driven through the route, because the claim being made is about
+	 * that order — a refused picture leaves no Post behind — and not about SvelteKit's form handling.
+	 * The route is one `assertAcceptableCoverImage` call away from this function, and
+	 * `tests/e2e/posts-public.spec.ts` walks the real screen.
+	 */
+	async function createPostWithCoverImage(
+		adminId: string,
+		clock: FakeClock,
+		store: FakeFileStore,
+		content: PostContent,
+		cover: CoverImageUpload
+	) {
+		assertAcceptableCoverImage(cover);
+		const created = await createPost(testDb.db, clock, { actorId: adminId, ...content });
+		return setPostCoverImage(testDb.db, clock, store, {
+			actorId: adminId,
+			postId: created.id,
+			...cover
+		});
+	}
+
+	it('stores the key on the Post the same submission created', async () => {
+		const adminId = await insertAdmin('Pengurus Tulis Dengan Sampul');
+		const clock = new FakeClock(START);
+		const store = new FakeFileStore(clock);
+		const content = eventContent();
+
+		const created = await createPostWithCoverImage(adminId, clock, store, content, {
+			contentType: 'image/png',
+			content: PNG_BYTES
+		});
+
+		expect(created.coverImageKey).toBe(`posts/${created.id}/cover.png`);
+		expect(store.keys).toEqual([`posts/${created.id}/cover.png`]);
+	});
+
+	it('refuses a cover image past the size limit, and writes no Post at all', async () => {
+		const adminId = await insertAdmin('Pengurus Sampul Kebesaran');
+		const clock = new FakeClock(START);
+		const store = new FakeFileStore(clock);
+		const content = eventContent();
+
+		const failure = createPostWithCoverImage(adminId, clock, store, content, {
+			contentType: 'image/png',
+			content: new Uint8Array(MAXIMUM_COVER_IMAGE_BYTES + 1)
+		});
+
+		await expect(failure).rejects.toThrow(PostRuleError);
+		await expect(failure).rejects.toMatchObject({ rule: POST_RULE.coverImageTooLarge });
+		const page = await listPosts(testDb.db, { actorId: adminId, pageSize: 100 });
+		expect(page.posts.map((row) => row.title)).not.toContain(content.title);
+		expect(store.keys).toEqual([]);
+	});
+});
+
+describe('removePostCoverImage', () => {
+	it('empties the key and deletes the file behind it', async () => {
+		const adminId = await insertAdmin('Pengurus Hapus Sampul');
+		const clock = new FakeClock(START);
+		const store = new FakeFileStore(clock);
+		const created = await createPost(testDb.db, clock, { actorId: adminId, ...eventContent() });
+		await setPostCoverImage(testDb.db, clock, store, {
+			actorId: adminId,
+			postId: created.id,
+			contentType: 'image/png',
+			content: PNG_BYTES
+		});
+
+		const removed = await removePostCoverImage(testDb.db, clock, store, {
+			actorId: adminId,
+			postId: created.id
+		});
+
+		expect(removed.coverImageKey).toBeNull();
+		expect(store.keys).toEqual([]);
+		const entries = await auditEntriesFor(testDb.db, created.id);
+		expect(entries.map((entry) => entry.action)).toContain(POST_COVER_IMAGE_REMOVED_ACTION);
+	});
+
+	it('writes nothing for a Post that has no cover image', async () => {
+		const adminId = await insertAdmin('Pengurus Hapus Sampul Kosong');
+		const clock = new FakeClock(START);
+		const store = new FakeFileStore(clock);
+		const created = await createPost(testDb.db, clock, { actorId: adminId, ...eventContent() });
+
+		const unchanged = await removePostCoverImage(testDb.db, clock, store, {
+			actorId: adminId,
+			postId: created.id
+		});
+
+		expect(unchanged.coverImageKey).toBeNull();
+		const entries = await auditEntriesFor(testDb.db, created.id);
+		expect(entries.map((entry) => entry.action)).not.toContain(POST_COVER_IMAGE_REMOVED_ACTION);
+	});
+
+	it('rejects a resident with PermissionDeniedError', async () => {
+		const residentId = await insertAccount(unique('Warga Hapus Sampul'));
+		const clock = new FakeClock(START);
+
+		await expect(
+			removePostCoverImage(testDb.db, clock, new FakeFileStore(clock), {
+				actorId: residentId,
+				postId: randomUUID()
+			})
+		).rejects.toThrow(PermissionDeniedError);
 	});
 });
 
