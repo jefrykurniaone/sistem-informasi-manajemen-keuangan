@@ -22,9 +22,9 @@ import type { LayoutServerLoad } from './$types';
  * The redirect is for an account that has no `residents` row **and** is not a pengurus. Both halves
  * are needed:
  *
- * - **No `residents` row** is what "has not been admitted" means. The CSV import (#19) writes that
- *   row, accepting an invitation (#20) writes it, and approving a registration writes it; an account
- *   that has none has been through none of the three.
+ * - **No `residents` row** is what "has not been admitted" means. The XLSX import (Template Impor,
+ *   #19) writes that row, accepting an invitation (#20) writes it, and approving a registration
+ *   writes it; an account that has none has been through none of the three.
  * - **Not holding `admin` or `superuser`** is the exemption, and it is not a convenience. Those
  *   roles are granted by a superuser, which is a stronger admission than a `residents` row, and a
  *   pengurus is routinely an account with no house of their own — the first superuser of an
