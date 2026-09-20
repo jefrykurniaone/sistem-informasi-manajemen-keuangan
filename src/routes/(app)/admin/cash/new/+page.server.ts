@@ -18,6 +18,7 @@ import {
 	type CashReceiptUpload,
 	type CashRule
 } from '$lib/server/services/cash/transaction';
+import { PeriodLockedError } from '$lib/server/services/cash/period';
 import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -123,6 +124,12 @@ export const actions: Actions = {
 			}
 			if (caught instanceof CashCategoryNotFoundError) {
 				return fail(400, { message: m.adminCash_categoryNotFound(), values });
+			}
+			if (caught instanceof PeriodLockedError) {
+				return fail(400, {
+					message: m.adminCash_periodLocked({ period: caught.period }),
+					values
+				});
 			}
 			throwAsRouteError(caught);
 		}
