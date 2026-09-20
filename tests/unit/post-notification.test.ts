@@ -88,7 +88,7 @@ function announcementContent(overrides: Partial<PostContent> = {}): PostContent 
 		type: POST_TYPE.announcement,
 		title: unique('Pengumuman Notifikasi'),
 		summary: 'Ringkasan yang harus sampai ke kotak masuk.',
-		bodyMarkdown: 'Isi lengkap yang tidak boleh pernah dikirim lewat email.',
+		bodyHtml: 'Isi lengkap yang tidak boleh pernah dikirim lewat email.',
 		category: 'umum',
 		startsAt: null,
 		endsAt: null,
