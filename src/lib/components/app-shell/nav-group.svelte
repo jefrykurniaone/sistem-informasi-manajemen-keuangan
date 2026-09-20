@@ -46,6 +46,19 @@
 	 *
 	 * Hover is a shortcut and never the only way in: the trigger is a real button, so click, Enter,
 	 * Space and a tap all work, and Escape closes what hover opened (WCAG 1.4.13, riset §1).
+	 *
+	 * ## A group opened by click is pinned, and the pointer leaving never closes it
+	 *
+	 * Only hover undoes hover. A group this component's own 300 ms timer opened closes 500 ms after
+	 * the pointer leaves; a group opened any other way — a click, Enter, Space, a tap, or the
+	 * address landing inside it — stays open until a click on its own title, Escape, another group
+	 * opening, or a new address closes it.
+	 *
+	 * That is the usual menu convention, and here it is also a correctness rule. Clicking the title
+	 * of a group *below* the open one collapses the one above it, which lifts the clicked row out
+	 * from under the pointer with the pointer never having moved. The browser fires `pointerleave`
+	 * for that lift, and without this rule that stray event scheduled a close on the group the
+	 * click had just opened, so switching downward shut everything.
 	 */
 	interface Props {
 		readonly group: MenuGroup;
@@ -84,6 +97,20 @@
 	let openTimer: ReturnType<typeof setTimeout> | null = null;
 	let closeTimer: ReturnType<typeof setTimeout> | null = null;
 
+	/**
+	 * Whether the open group on screen is the one this component's hover timer opened. False for
+	 * every other way in, and that is what "pinned" means above.
+	 */
+	let hoverOpened = $state(false);
+
+	// A group closed by anything at all forgets how it was opened, so an open this component did
+	// not schedule is never mistaken later for hover's to undo.
+	$effect(() => {
+		if (!open) {
+			hoverOpened = false;
+		}
+	});
+
 	function cancelOpen(): void {
 		if (openTimer !== null) {
 			clearTimeout(openTimer);
@@ -116,6 +143,7 @@
 		cancelOpen();
 		openTimer = setTimeout(() => {
 			openTimer = null;
+			hoverOpened = true;
 			onOpenChange(true);
 		}, HOVER_OPEN_DELAY_MS);
 	}
@@ -126,7 +154,9 @@
 		}
 		cancelOpen();
 		cancelClose();
-		if (!open) {
+		// Only hover undoes hover. A pinned group ignores the pointer leaving, including the
+		// `pointerleave` a collapsing neighbour above it causes without the pointer moving at all.
+		if (!open || !hoverOpened) {
 			return;
 		}
 		closeTimer = setTimeout(() => {
@@ -135,14 +165,24 @@
 		}, HOVER_CLOSE_DELAY_MS);
 	}
 
+	/**
+	 * Every open and close that does not come from this component's hover timer: a click on the
+	 * title, Enter, Space, a tap, Escape, and bits-ui closing its own floating panel. All of them
+	 * pin, because none of them is hover.
+	 */
+	function handleOpenChange(next: boolean): void {
+		cancelOpen();
+		cancelClose();
+		hoverOpened = false;
+		onOpenChange(next);
+	}
+
 	/** Escape closes the panel hover opened, without moving the pointer — SC 1.4.13's "Dismissible". */
 	function handleKeydown(event: KeyboardEvent): void {
 		if (event.key !== 'Escape' || !open) {
 			return;
 		}
-		cancelOpen();
-		cancelClose();
-		onOpenChange(false);
+		handleOpenChange(false);
 	}
 
 	function isActive(itemKey: string): boolean {
@@ -158,7 +198,7 @@
 </script>
 
 {#if floating}
-	<DropdownMenu.Root {open} {onOpenChange}>
+	<DropdownMenu.Root {open} onOpenChange={handleOpenChange}>
 		<Sidebar.Menu>
 			<Sidebar.MenuItem
 				onpointerenter={handlePointerEnter}
@@ -173,11 +213,25 @@
 						</Sidebar.MenuButton>
 					{/snippet}
 				</DropdownMenu.Trigger>
-				<!-- Portalled, so it is no descendant of the item above and needs its own pointer pair. -->
+				<!--
+					Portalled, so it is no descendant of the item above and needs its own pointer pair.
+
+					`preventScroll={false}` is what makes this panel non-modal. bits-ui 2.19.2 has no
+					`modal` prop on a menu; what blocks the rest of the page is its body scroll lock,
+					which sets `document.body.style.pointerEvents = "none"`
+					(`bits-ui/dist/internal/body-scroll-lock.svelte.js:129`) and is switched by
+					`preventScroll` on the content, `true` by default
+					(`bits-ui/dist/bits/utilities/popper-layer/popper-layer-inner.svelte:56`, prop
+					documented on `ScrollLockProps`). With it off, the pointer reaches the next icon on
+					the rail and slides from one floating menu to the next. Focus is still scoped to the
+					open panel: `trapFocus` is written into `menu-content.svelte` after the consumer's
+					props and cannot be turned off from here.
+				-->
 				<DropdownMenu.Content
 					side="right"
 					align="start"
 					class="min-w-48"
+					preventScroll={false}
 					onpointerenter={handlePointerEnter}
 					onpointerleave={handlePointerLeave}
 				>
@@ -202,7 +256,7 @@
 		</Sidebar.Menu>
 	</DropdownMenu.Root>
 {:else}
-	<Collapsible.Root {open} {onOpenChange} class="group/collapsible">
+	<Collapsible.Root {open} onOpenChange={handleOpenChange} class="group/collapsible">
 		<Sidebar.Menu>
 			<Sidebar.MenuItem
 				onpointerenter={handlePointerEnter}
