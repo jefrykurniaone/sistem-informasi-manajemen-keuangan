@@ -109,6 +109,11 @@ _Hindari_: rekap, laporan kas
 Satu terbitan pada papan pengumuman, bertipe kegiatan atau pengumuman.
 _Hindari_: artikel, berita, konten
 
+**Sampul**:
+Satu berkas gambar yang mewakili sebuah Post pada daftar dan halaman detailnya. Paling banyak satu
+per Post, dan bukan bagian dari badan tulisan.
+_Hindari_: thumbnail, banner, cover (dalam prosa)
+
 **Keluhan**:
 Laporan seorang Warga tentang sesuatu yang perlu ditangani pengurus, dengan status yang bergerak
 dari baru sampai selesai.
@@ -152,6 +157,23 @@ _Hindari_: subscribe, preferensi
 Catatan yang tidak bisa dihapus tentang siapa melakukan apa, kapan, dan nilai apa yang berubah.
 _Hindari_: riwayat, log aktivitas
 
+## Layar dan alat bantu
+
+**Beranda**:
+Halaman pertama yang dilihat seseorang setelah masuk: ringkasan angka dan tautan yang paling
+relevan untuk perannya, bukan daftar fitur.
+_Hindari_: home, landing, dashboard (dalam prosa)
+
+**Template Impor**:
+Berkas contoh yang diunduh dari aplikasi, berisi kepala kolom dan baris contoh, untuk diisi lalu
+diunggah pada impor Warga.
+_Hindari_: format, contoh berkas
+
+**Data Contoh**:
+Isi basis data buatan untuk satu bulan kalender yang dipakai mencoba aplikasi, dibuat oleh satu
+perintah yang menghapus seluruh isi sebelumnya. Tidak pernah dipakai pada basis data produksi.
+_Hindari_: dummy, seed (dalam prosa), fixture
+
 ## Nama di kode
 
 Satu istilah, satu nama Inggris. Kolom **Tipe** adalah nama tipe dan model Drizzle dalam
@@ -177,6 +199,10 @@ kolom dari nama properti lewat `casing: 'snake_case'`, jadi nama kolom tidak dit
 | Kategori Kas | `CashCategory` | `cash_categories` |
 | Koreksi | `Correction` | penanda pada `cash_transactions` |
 | Periode | `Period` | `periods` |
+| Sampul | `CoverImage` | penanda pada `posts` |
+| Beranda | `Dashboard` | dihitung, tanpa tabel |
+| Template Impor | `ImportTemplate` | berkas, tanpa tabel |
+| Data Contoh | `SeedData` | perintah, tanpa tabel |
 | Laporan Bulanan | `MonthlyReport` | `monthly_reports` |
 | Post | `Post` | `posts` |
 | Keluhan | `Complaint` | `complaints` |
