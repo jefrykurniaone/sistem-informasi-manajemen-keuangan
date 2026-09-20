@@ -34,6 +34,7 @@
 		{values}
 		categories={data.categories}
 		types={data.types}
+		coverImageContentTypes={data.coverImageContentTypes}
 		submitLabel={m.adminPosts_form_submitCreate()}
 	/>
 

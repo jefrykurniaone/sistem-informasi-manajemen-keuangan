@@ -10,6 +10,7 @@ import { systemClock } from '$lib/server/ports/clock';
 import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
 import {
 	archivePost,
+	assertAcceptableCoverImage,
 	COVER_IMAGE_CONTENT_TYPES,
 	getPost,
 	isAllowedPostTransition,
@@ -18,18 +19,24 @@ import {
 	PostNotFoundError,
 	PostRuleError,
 	PostTransitionError,
-	previewPostBody,
 	publishPost,
+	removePostCoverImage,
 	setPostCoverImage,
 	updatePost,
+	type CoverImageUpload,
 	type PostRule
 } from '$lib/server/services/post';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
- * The one screen an admin does everything else to a Post from: edit it, preview it, upload its
- * cover image, publish it and archive it. `docs/spec-konten-v1.md`'s stories 4, 6, 8, 9 and 10 all
- * land here.
+ * The one screen an admin does everything else to a Post from: edit it, change its Sampul, publish
+ * it and archive it. `docs/spec-konten-v1.md`'s stories 6, 8, 9 and 10 land here.
+ *
+ * Story 4's separate preview is gone as of #140: the editor on the form renders the body as it is
+ * typed, so a `?/preview` round trip could only ever show what was already on the screen. The
+ * `?/uploadCover` action is gone with it — the Sampul is a field of the write form now, which is
+ * what lets a Post be created with its picture already on it rather than published without one
+ * because the admin left the screen too early.
  *
  * Follows the shape `(app)/admin/units/[id]/+page.server.ts` settled: `PermissionDeniedError`
  * becomes `error(403, …)` and `PostNotFoundError` becomes `error(404, …)`, both here rather than in
@@ -73,9 +80,6 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 				endsAt: toLocalInputValue(post.endsAt),
 				location: post.location ?? ''
 			},
-			// The saved body, sanitized again, so the preview is already correct on arrival. An edit
-			// that has not been saved yet gets its own preview through the `preview` action.
-			previewHtml: await previewPostBody(database(), locals.user.id, post.bodyHtml),
 			categories: POST_CATEGORIES,
 			types: POST_TYPES,
 			coverImageContentTypes: COVER_IMAGE_CONTENT_TYPES,
@@ -106,6 +110,14 @@ export const actions: Actions = {
 			return fail(400, { message: m.adminPosts_invalidTime(), values });
 		}
 
+		// Checked before anything is written, for the same reason the write screen checks it there —
+		// see `assertAcceptableCoverImage` in `$lib/server/services/post`.
+		const coverImage = await readCoverImage(form);
+		const coverRefusal = coverImage && coverImageRefusal(coverImage);
+		if (coverRefusal) {
+			return fail(400, { message: coverRefusal, values });
+		}
+
 		try {
 			await updatePost(database(), systemClock, {
 				actorId: locals.user.id,
@@ -119,6 +131,12 @@ export const actions: Actions = {
 				endsAt,
 				location: values.location || null
 			});
+			await saveCoverImage(
+				locals.user.id,
+				params.id,
+				coverImage,
+				form.get('removeCoverImage') !== null
+			);
 		} catch (caught) {
 			if (caught instanceof PostRuleError) {
 				return fail(400, { message: ruleMessage(caught.rule), values });
@@ -132,61 +150,70 @@ export const actions: Actions = {
 		return { message: m.adminPosts_updatedMessage() };
 	},
 
-	preview: async ({ locals, request }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
-
-		const form = await request.formData();
-		const values = readPostFormValues(form);
-
-		try {
-			// Nothing is written here at all, which is what the acceptance criterion asks for: a
-			// preview shows the final result without moving the Post's status.
-			const previewHtml = await previewPostBody(database(), locals.user.id, values.bodyHtml);
-			return { previewHtml, values };
-		} catch (caught) {
-			throwAsRouteError(caught);
-		}
-	},
-
 	publish: async ({ locals, params }) => {
 		return moveStatus(locals.user, params.id, publishPost, m.adminPosts_publishedMessage());
 	},
 
 	archive: async ({ locals, params }) => {
 		return moveStatus(locals.user, params.id, archivePost, m.adminPosts_archivedMessage());
-	},
-
-	uploadCover: async ({ locals, params, request }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
-		assertUuidParam(params.id, m.adminPosts_notFound());
-
-		const form = await request.formData();
-		const file = form.get('cover');
-		if (!(file instanceof File) || file.size === 0) {
-			return fail(400, { message: m.adminPosts_noFileChosen() });
-		}
-
-		try {
-			await setPostCoverImage(database(), systemClock, localFileStoreFromEnvironment(systemClock), {
-				actorId: locals.user.id,
-				postId: params.id,
-				contentType: file.type,
-				content: new Uint8Array(await file.arrayBuffer())
-			});
-		} catch (caught) {
-			if (caught instanceof PostRuleError) {
-				return fail(400, { message: ruleMessage(caught.rule) });
-			}
-			throwAsRouteError(caught);
-		}
-
-		return { message: m.adminPosts_coverSavedMessage() };
 	}
 };
+
+/**
+ * The Sampul the form carried, or `undefined` when its field was left empty. The copy on
+ * `(app)/admin/posts/new/+page.server.ts` carries the note about why an empty size is the test.
+ */
+async function readCoverImage(form: FormData): Promise<CoverImageUpload | undefined> {
+	const file = form.get('coverImage');
+	if (!(file instanceof File) || file.size === 0) {
+		return undefined;
+	}
+	return { contentType: file.type, content: new Uint8Array(await file.arrayBuffer()) };
+}
+
+/** The sentence for a Sampul the service refuses, or `undefined` when it accepts it. */
+function coverImageRefusal(image: CoverImageUpload): string | undefined {
+	try {
+		assertAcceptableCoverImage(image);
+		return undefined;
+	} catch (caught) {
+		if (caught instanceof PostRuleError) {
+			return ruleMessage(caught.rule);
+		}
+		throw caught;
+	}
+}
+
+/**
+ * Attaches, replaces or takes away this Post's Sampul, after its content has been saved.
+ *
+ * A chosen file beats a ticked "hapus Sampul". The two together are a contradiction, and of the two
+ * the file is the one the person went and picked, so it is the one this honours; the checkbox on its
+ * own still removes.
+ */
+async function saveCoverImage(
+	actorId: string,
+	postId: string,
+	image: CoverImageUpload | undefined,
+	removeRequested: boolean
+): Promise<void> {
+	if (image) {
+		await setPostCoverImage(database(), systemClock, localFileStoreFromEnvironment(systemClock), {
+			actorId,
+			postId,
+			...image
+		});
+		return;
+	}
+	if (removeRequested) {
+		await removePostCoverImage(
+			database(),
+			systemClock,
+			localFileStoreFromEnvironment(systemClock),
+			{ actorId, postId }
+		);
+	}
+}
 
 /** What `publishPost` and `archivePost` both look like to this route. */
 type StatusMove = typeof publishPost;

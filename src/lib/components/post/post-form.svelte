@@ -74,6 +74,7 @@
 
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button/index.js';
+	import RichTextEditor from '$lib/components/post/rich-text-editor.svelte';
 
 	/**
 	 * The write form for a Post, shared by `(app)/admin/posts/new` and `(app)/admin/posts/[id]`. It
@@ -83,6 +84,11 @@
 	 *
 	 * It posts to whichever action the screen around it names, so the same component serves "save a
 	 * draft" and "save changes".
+	 *
+	 * Since #140 the Sampul is chosen here rather than on a second form of its own, which is why the
+	 * form is `multipart/form-data`: `docs/spec-post-editor-v1.md` asks that writing a Post and giving
+	 * it its picture be one act, so that a new Post is never published with the cover an admin meant
+	 * to add and forgot on a screen they had already left.
 	 */
 	interface Props {
 		/** The action this form posts to, e.g. `?/create`. */
@@ -93,13 +99,35 @@
 		readonly categories: readonly string[];
 		/** Every type there is. */
 		readonly types: readonly string[];
+		/** Every content type a Sampul may be, as the service lists them, for the `accept` attribute. */
+		readonly coverImageContentTypes: readonly string[];
+		/** The key of the Sampul this Post already has, or `null` on a Post that has none and on the
+		 *  write screen, where there is no Post yet. Its presence is what offers "hapus Sampul". */
+		readonly coverImageKey?: string | null;
 		/** The label on the submit button. */
 		readonly submitLabel: string;
 	}
 
-	let { action, values, categories, types, submitLabel }: Readonly<Props> = $props();
+	let {
+		action,
+		values,
+		categories,
+		types,
+		coverImageContentTypes,
+		coverImageKey = null,
+		submitLabel
+	}: Readonly<Props> = $props();
 
 	const uid = $props.id();
+
+	/**
+	 * The name of the file picked for the Sampul, or `''` while none is picked.
+	 *
+	 * A file input shows its own file name in most browsers, but not in a way anything can style or
+	 * an assistive technology reliably announces after the fact, and this form has no other feedback
+	 * between choosing a picture and saving the Post.
+	 */
+	let chosenCoverName = $state('');
 
 	/**
 	 * Which type the person has picked since this form was rendered, or `undefined` while they have
@@ -117,7 +145,7 @@
 	const isEvent = $derived(type === EVENT_TYPE);
 </script>
 
-<form method="POST" {action} class="flex flex-col gap-5">
+<form method="POST" {action} enctype="multipart/form-data" class="flex flex-col gap-5">
 	{#key uid}
 		<!--
 			#119: `uid` never changes, so this `{#key}` never tears the field down — it exists purely to
@@ -134,7 +162,9 @@
 			'client'`) before and after this block: before, `$.set_value(input, $$props.values.title)`
 			sat inside the same `template_effect` as the `<select>`'s `value={type}` write; after,
 			`type` is read only inside this `{#key}` block's own effect, and the form-level effect that
-			writes `Judul`, `Ringkasan`, `Kategori`, `Isi` no longer reads `type` or `chosenType` at all.
+			writes `Judul`, `Ringkasan` and `Kategori` no longer reads `type` or `chosenType` at all. `Isi`
+			left that list in #140: it is the editor component below, which reads its `value` prop once
+			when it mounts and never again.
 
 			`values.title` (and `values.category`, `values.startsAt`, `values.endsAt`,
 			`values.location`) still get written back on every render, unconditionally — that part is
@@ -214,22 +244,61 @@
 	</div>
 
 	<div class="flex flex-col gap-1.5">
-		<label class="text-sm font-medium" for="post-form-body-{uid}">
+		<!--
+			A `<span>` rather than a `<label for>`: what it names is the editor's editable `<div>`, and a
+			`<div>` is not a labelable element, so `for` would point at nothing. `rich-text-editor.svelte`
+			attaches this id through `aria-labelledby` instead, which names the field for a screen reader
+			and for `getByLabel` alike.
+		-->
+		<span class="text-sm font-medium" id="post-form-body-label-{uid}">
 			{m.adminPosts_form_bodyLabel()}
-		</label>
-		<textarea
-			id="post-form-body-{uid}"
+		</span>
+		<RichTextEditor
 			name="bodyHtml"
-			rows="12"
-			required
-			aria-describedby="post-form-body-hint-{uid}"
-			class="rounded-md border border-border bg-background px-3 py-2 font-mono text-sm"
-			>{values.bodyHtml}</textarea
-		>
+			value={values.bodyHtml}
+			id="post-form-body-{uid}"
+			labelledBy="post-form-body-label-{uid}"
+			describedBy="post-form-body-hint-{uid}"
+		/>
 		<p class="text-xs text-muted-foreground" id="post-form-body-hint-{uid}">
 			{m.adminPosts_form_bodyHint()}
 		</p>
 	</div>
+
+	<fieldset class="flex flex-col gap-3 rounded-lg border border-border p-4">
+		<legend class="px-1 text-sm font-medium">{m.adminPosts_coverHeading()}</legend>
+
+		<label class="text-sm font-medium" for="post-form-cover-{uid}">
+			{m.adminPosts_coverLabel()}
+		</label>
+		<input
+			id="post-form-cover-{uid}"
+			name="coverImage"
+			type="file"
+			accept={coverImageContentTypes.join(',')}
+			aria-describedby="post-form-cover-hint-{uid}"
+			onchange={(event) => (chosenCoverName = event.currentTarget.files?.[0]?.name ?? '')}
+			class="rounded-md border border-border bg-background px-3 py-2.5 text-sm"
+		/>
+		{#if chosenCoverName}
+			<p class="text-xs">{m.adminPosts_coverChosen({ name: chosenCoverName })}</p>
+		{/if}
+		<p class="text-xs text-muted-foreground" id="post-form-cover-hint-{uid}">
+			{m.adminPosts_coverHint()}
+		</p>
+
+		{#if coverImageKey}
+			<p class="text-xs text-muted-foreground">
+				{m.adminPosts_coverCurrent({ key: coverImageKey })}
+			</p>
+			<label class="flex items-center gap-2 text-sm">
+				<input type="checkbox" name="removeCoverImage" value="1" class="size-4" />
+				{m.adminPosts_coverRemoveLabel()}
+			</label>
+		{:else}
+			<p class="text-xs text-muted-foreground">{m.adminPosts_coverNone()}</p>
+		{/if}
+	</fieldset>
 
 	{#if isEvent}
 		<fieldset class="flex flex-col gap-4 rounded-lg border border-border p-4">

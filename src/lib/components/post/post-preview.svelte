@@ -3,9 +3,13 @@
 	import { POST_CATEGORY_LABEL, POST_TYPE_LABEL } from './post-form.svelte';
 
 	/**
-	 * A Post as a resident would read it — `docs/spec-konten-v1.md`'s story 4, "saya ingin melihat
-	 * pratinjau tampilan sebelum menerbitkan". It shows and it changes nothing; the screen around it
-	 * owns every button.
+	 * A Post as a resident reads it. It shows and it changes nothing; the screen around it owns every
+	 * button.
+	 *
+	 * It was written for `docs/spec-konten-v1.md`'s story 4 — the admin preview before publishing —
+	 * and `(public)/posts/[id]` is its only caller since #140, where the editor on the write form
+	 * became the preview. The name is kept rather than churned: this is still the one place that
+	 * decides what a rendered Post looks like, which is what both callers ever wanted from it.
 	 *
 	 * ## `bodyHtml` and `{@html …}`
 	 *
@@ -17,10 +21,22 @@
 	 * `tests/unit/post-sanitize.test.ts` is the proof, and it is the reason this component may use
 	 * `{@html …}` at all.
 	 *
-	 * The two screens that use this component both get `bodyHtml` from a server `load` or a form
-	 * action that called that function. Passing anything else — a body straight out of the database,
-	 * a string built here — would put unsanitized markup into the page, which is the one failure this
-	 * whole spec is written around.
+	 * The screen that uses this component gets `bodyHtml` from a server `load` that called that
+	 * function. Passing anything else — a body straight out of the database, a string built here —
+	 * would put unsanitized markup into the page, which is the one failure this whole spec is written
+	 * around.
+	 *
+	 * ## `prose`
+	 *
+	 * The body wears `prose prose-neutral max-w-none` from `@tailwindcss/typography`, which
+	 * `src/app.css` registers, rather than the tag-by-tag rules this component used to carry in its
+	 * own scoped stylesheet. `rich-text-editor.svelte` puts the same classes on the editable area, so
+	 * what an admin sees while typing is what a resident gets, from one definition instead of two that
+	 * drift.
+	 *
+	 * (Spelling the tag out in this comment is what "`<script>` was left open" turned out to mean the
+	 * first time it was written that way: `svelte2tsx` scans the file for tag names without parsing
+	 * the comments out first, so a literal opening style tag here swallowed the rest of the file.)
 	 */
 	interface Props {
 		readonly type: string;
@@ -90,67 +106,21 @@
 		way to render HTML in Svelte, and the value being rendered is the output of the sanitizer this
 		spec is built around rather than anything a caller composed.
 	-->
-	<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-	<div class="post-body flex flex-col gap-3 text-sm break-words">{@html bodyHtml}</div>
+	<div class="post-body prose max-w-none text-sm break-words prose-neutral dark:prose-invert">
+		<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+		{@html bodyHtml}
+	</div>
 </article>
 
 <style>
 	/*
-		The sanitizer's whitelist is the list of tags that can appear in `.post-body`, so these are the
-		only selectors that can ever match. Tailwind's preflight strips the browser's own list and
-		heading styles, which would otherwise make a rendered body indistinguishable from a paragraph.
+		The one rule `@tailwindcss/typography` does not give a Post body. Its tables are laid out to the
+		width of their content, so a wide one at 390 pixels pushes the whole page sideways; this makes
+		the table itself the thing that scrolls. Everything else the sanitizer's whitelist allows —
+		headings, lists, links, quotes, code — is styled by the `prose` classes on the element above.
 	*/
-	.post-body :global(h1),
-	.post-body :global(h2),
-	.post-body :global(h3),
-	.post-body :global(h4),
-	.post-body :global(h5),
-	.post-body :global(h6) {
-		font-weight: 600;
-		line-height: 1.3;
-	}
-
-	.post-body :global(ul),
-	.post-body :global(ol) {
-		padding-left: 1.5rem;
-	}
-
-	.post-body :global(ul) {
-		list-style: disc;
-	}
-
-	.post-body :global(ol) {
-		list-style: decimal;
-	}
-
-	.post-body :global(a) {
-		text-decoration: underline;
-		text-underline-offset: 2px;
-	}
-
-	.post-body :global(blockquote) {
-		border-left: 2px solid var(--border);
-		padding-left: 0.75rem;
-	}
-
-	.post-body :global(pre) {
-		overflow-x: auto;
-		border-radius: 0.375rem;
-		border: 1px solid var(--border);
-		padding: 0.75rem;
-	}
-
-	/* A table at 390 pixels scrolls sideways rather than pushing the page wider than the screen. */
 	.post-body :global(table) {
 		display: block;
 		overflow-x: auto;
-		border-collapse: collapse;
-	}
-
-	.post-body :global(th),
-	.post-body :global(td) {
-		border: 1px solid var(--border);
-		padding: 0.25rem 0.5rem;
-		text-align: left;
 	}
 </style>
