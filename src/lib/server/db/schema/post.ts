@@ -34,10 +34,12 @@ import { residents } from './resident';
  *   check constraint here would mean a migration every time that list changes, which is exactly the
  *   cost `email_queue.kind`'s doc comment already argues against. The registry that knows which
  *   categories really exist is given to the service layer that #39 builds, not to this table.
- * - **`bodyMarkdown` stores what the author typed, unsanitized.** The spec's decision is to
- *   sanitize Markdown-turned-HTML *when a post is displayed*, not when it is saved, so that a
- *   change to the sanitizer's whitelist reaches posts that already exist. Rendering and sanitizing
- *   is a later ticket's job; this column is just the source text.
+ * - **`bodyHtml` stores sanitized HTML, not Markdown and not what the author typed verbatim.**
+ *   `docs/spec-post-editor-v1.md` replaces the Markdown body with the HTML a rich-text editor
+ *   produces, and `src/lib/server/services/post/sanitize.ts` filters it against a whitelist twice:
+ *   once by the service before this column is written, so nothing dangerous is ever stored, and
+ *   again when a page renders the column, so a later narrowing of the whitelist reaches rows that
+ *   were written before it. Neither pass is optional; see that module's doc comment.
  * - **`coverImageKey` is nullable text, no foreign key.** It is a `FileStore` key (see
  *   `src/lib/server/ports/file-store.ts`), a caller-chosen string rather than a row this table could
  *   reference, and a post may exist — as a fresh draft — before an admin has uploaded a cover image.
@@ -119,8 +121,8 @@ export const posts = pgTable(
 		type: text().$type<PostType>().notNull(),
 		title: text().notNull(),
 		summary: text().notNull(),
-		/** The author's Markdown, unsanitized. Sanitized only when a post is displayed. */
-		bodyMarkdown: text().notNull(),
+		/** The body as sanitized HTML. Sanitized again when a post is displayed. */
+		bodyHtml: text().notNull(),
 		/** The `FileStore` key of the cover image, or null while none has been uploaded. */
 		coverImageKey: text(),
 		/** An admin-facing choice, not a closed set the database enforces. See the doc comment. */

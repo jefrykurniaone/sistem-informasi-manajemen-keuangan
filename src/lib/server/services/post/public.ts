@@ -4,6 +4,7 @@ import { posts, POST_STATUS, POST_TYPE, type Post } from '../../db/schema/post';
 import { isUuid } from '../identifier';
 import type { Clock } from '../../ports/clock';
 import { PostNotFoundError, type PostCategory } from './index';
+import { sanitizePostHtml } from './sanitize';
 
 /**
  * The announcement board's public reading side: a visitor with no session opening `/posts` or
@@ -18,7 +19,7 @@ import { PostNotFoundError, type PostCategory } from './index';
  * at all: there is no session, so there is nothing to check permission against. Bolting an
  * `actorId?: string` onto `listPosts` to skip the check when it is missing would make one function
  * do two unrelated things and would put "does this request need permission at all" inside the
- * function instead of in its name — the same one-concern-one-file idiom `./markdown.ts`,
+ * function instead of in its name — the same one-concern-one-file idiom `./sanitize.ts`,
  * `../occupancy/visibility.ts` and `../subscription/kinds.ts` already follow.
  *
  * ## The one rule this module exists to hold
@@ -152,6 +153,21 @@ export async function getPublishedPost(db: Database, postId: string): Promise<Po
 		throw new PostNotFoundError(postId);
 	}
 	return row;
+}
+
+/**
+ * A stored body as the HTML the public detail page puts through `{@html …}`.
+ *
+ * `posts.bodyHtml` was already sanitized by `./index.ts` before it was written, so this pass
+ * normally removes nothing at all. It runs anyway, and it is not redundant: it is what makes a
+ * narrowing of the whitelist in `./sanitize.ts` reach rows written while the list was wider, and
+ * what keeps the page safe against a row written by any path that did not go through the service.
+ * The public detail page is open without a session, so the render-time filter is the last thing
+ * standing between a stored string and a visitor's browser — see `./sanitize.ts`'s doc comment for
+ * why both points exist.
+ */
+export function renderPublicPostBody(bodyHtml: string): string {
+	return sanitizePostHtml(bodyHtml);
 }
 
 /**

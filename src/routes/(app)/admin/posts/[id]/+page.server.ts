@@ -67,15 +67,15 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 				type: post.type,
 				title: post.title,
 				summary: post.summary,
-				bodyMarkdown: post.bodyMarkdown,
+				bodyHtml: post.bodyHtml,
 				category: post.category,
 				startsAt: toLocalInputValue(post.startsAt),
 				endsAt: toLocalInputValue(post.endsAt),
 				location: post.location ?? ''
 			},
-			// The saved body, rendered and sanitized, so the preview is already correct on arrival.
-			// An edit that has not been saved yet gets its own preview through the `preview` action.
-			previewHtml: await previewPostBody(database(), locals.user.id, post.bodyMarkdown),
+			// The saved body, sanitized again, so the preview is already correct on arrival. An edit
+			// that has not been saved yet gets its own preview through the `preview` action.
+			previewHtml: await previewPostBody(database(), locals.user.id, post.bodyHtml),
 			categories: POST_CATEGORIES,
 			types: POST_TYPES,
 			coverImageContentTypes: COVER_IMAGE_CONTENT_TYPES,
@@ -96,7 +96,7 @@ export const actions: Actions = {
 
 		const form = await request.formData();
 		const values = readPostFormValues(form);
-		if (values.title === '' || values.summary === '' || values.bodyMarkdown === '') {
+		if (values.title === '' || values.summary === '' || values.bodyHtml === '') {
 			return fail(400, { message: m.adminPosts_invalidForm(), values });
 		}
 
@@ -113,7 +113,7 @@ export const actions: Actions = {
 				type: parseType(values.type),
 				title: values.title,
 				summary: values.summary,
-				bodyMarkdown: values.bodyMarkdown,
+				bodyHtml: values.bodyHtml,
 				category: values.category,
 				startsAt,
 				endsAt,
@@ -143,7 +143,7 @@ export const actions: Actions = {
 		try {
 			// Nothing is written here at all, which is what the acceptance criterion asks for: a
 			// preview shows the final result without moving the Post's status.
-			const previewHtml = await previewPostBody(database(), locals.user.id, values.bodyMarkdown);
+			const previewHtml = await previewPostBody(database(), locals.user.id, values.bodyHtml);
 			return { previewHtml, values };
 		} catch (caught) {
 			throwAsRouteError(caught);
@@ -226,7 +226,7 @@ function readPostFormValues(form: FormData) {
 		type: String(form.get('type') ?? ''),
 		title: String(form.get('title') ?? '').trim(),
 		summary: String(form.get('summary') ?? '').trim(),
-		bodyMarkdown: String(form.get('bodyMarkdown') ?? '').trim(),
+		bodyHtml: String(form.get('bodyHtml') ?? '').trim(),
 		category: String(form.get('category') ?? ''),
 		startsAt: String(form.get('startsAt') ?? ''),
 		endsAt: String(form.get('endsAt') ?? ''),

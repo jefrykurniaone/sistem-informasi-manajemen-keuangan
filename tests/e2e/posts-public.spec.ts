@@ -154,7 +154,9 @@ test('an admin publishes a kegiatan, and a browser with no session opens it from
 	await open(page, '/admin/posts/new');
 	await page.getByLabel('Judul').fill(title);
 	await page.getByLabel('Ringkasan').fill('Kerja bakti bulanan di lapangan komplek.');
-	await page.getByLabel('Isi').fill('Bawa **sapu** dan cangkul.');
+	// The body field carries HTML since #135, not Markdown — the textarea sends it as typed and the
+	// service sanitizes it before storing it.
+	await page.getByLabel('Isi').fill('<p>Bawa <strong>sapu</strong> dan cangkul.</p>');
 	await page.getByLabel('Waktu mulai').fill(futureLocalDateTime(7));
 	await page.getByLabel('Waktu selesai').fill(futureLocalDateTime(7));
 	await page.getByLabel('Lokasi').fill('Lapangan komplek');
