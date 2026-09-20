@@ -18,6 +18,7 @@ import {
 	type CoverImageUpload,
 	type PostRule
 } from '$lib/server/services/post';
+import { combineCivilDateTime } from '$lib/server/services/post/time';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -68,10 +69,16 @@ export const actions: Actions = {
 			return fail(400, { message: m.adminPosts_invalidForm(), values });
 		}
 
-		const startsAt = parseLocalInstant(values.startsAt);
-		const endsAt = parseLocalInstant(values.endsAt);
-		if (startsAt === 'invalid' || endsAt === 'invalid') {
-			return fail(400, { message: m.adminPosts_invalidTime(), values });
+		let startsAt: Date | null;
+		let endsAt: Date | null;
+		try {
+			startsAt = combineCivilDateTime(values.startsAtDate, values.startsAtTime);
+			endsAt = combineCivilDateTime(values.endsAtDate, values.endsAtTime);
+		} catch (caught) {
+			if (caught instanceof RangeError) {
+				return fail(400, { message: m.adminPosts_timeFormat(), values });
+			}
+			throw caught;
 		}
 
 		// The Sampul is checked before the Post is written, so that a picture this application refuses
@@ -134,8 +141,10 @@ function readPostFormValues(form: FormData) {
 		summary: String(form.get('summary') ?? '').trim(),
 		bodyHtml: String(form.get('bodyHtml') ?? '').trim(),
 		category: String(form.get('category') ?? ''),
-		startsAt: String(form.get('startsAt') ?? ''),
-		endsAt: String(form.get('endsAt') ?? ''),
+		startsAtDate: String(form.get('startsAtDate') ?? ''),
+		startsAtTime: String(form.get('startsAtTime') ?? ''),
+		endsAtDate: String(form.get('endsAtDate') ?? ''),
+		endsAtTime: String(form.get('endsAtTime') ?? ''),
 		location: String(form.get('location') ?? '').trim()
 	};
 }
@@ -171,24 +180,6 @@ function coverImageRefusal(image: CoverImageUpload): string | undefined {
 /** The submitted type, defaulted to the first one the schema knows when nothing recognisable came. */
 function parseType(value: string): PostType {
 	return POST_TYPES.find((type) => type === value) ?? POST_TYPES[0];
-}
-
-/**
- * A `datetime-local` value as an instant, `null` when the field was left empty, or the string
- * `'invalid'` when it holds something that is not a moment at all.
- *
- * A `datetime-local` input carries no time zone, so this reads it in the server's own zone — which
- * is the complex's zone in any real deployment. `src/lib/server/ports/clock.ts` settles that a zone
- * is a property of the complex rather than of the clock, and building a zone-aware helper is not
- * this ticket's job; what matters here is that the same zone is used to parse a submitted value and
- * to render a stored one back into the field, so a round trip does not move an event by hours.
- */
-function parseLocalInstant(value: string): Date | null | 'invalid' {
-	if (value === '') {
-		return null;
-	}
-	const parsed = new Date(value);
-	return Number.isNaN(parsed.getTime()) ? 'invalid' : parsed;
 }
 
 /** The sentence a person reads for each named rule refusal. */

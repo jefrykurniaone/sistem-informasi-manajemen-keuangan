@@ -1,5 +1,5 @@
 import { database } from '$lib/server/db';
-import { getLocale } from '$lib/paraglide/runtime';
+import { formatDateTime } from '$lib/time';
 import { systemClock } from '$lib/server/ports/clock';
 import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
 import { isPostCategory, POST_CATEGORIES } from '$lib/server/services/post';
@@ -76,18 +76,13 @@ async function toCard(
 }
 
 /**
- * An instant as a sentence, in the interface locale, or `null` when there is no instant. Copied
- * from `(app)/admin/posts/+page.server.ts`'s helper of the same name for the same reason that
- * route's own comment gives: a route helper belongs next to the route that uses it.
+ * An instant as a sentence, labelled with the WIB zone, or `null` when there is no instant —
+ * `formatDateTime` from `$lib/time`. Copied from `(app)/admin/posts/+page.server.ts`'s helper of the
+ * same name for the same reason that route's own comment gives: a route helper belongs next to the
+ * route that uses it.
  */
 function formatInstant(instant: Date | null): string | null {
-	if (!instant) {
-		return null;
-	}
-	return new Intl.DateTimeFormat(getLocale(), {
-		dateStyle: 'full',
-		timeStyle: 'short'
-	}).format(instant);
+	return instant && formatDateTime(instant);
 }
 
 /** A 1-based page number from a query string value, or `undefined` when it does not name one. */

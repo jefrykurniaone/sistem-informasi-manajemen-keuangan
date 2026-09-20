@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import * as m from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime';
+import { formatDateTime } from '$lib/time';
 import { database } from '$lib/server/db';
 import { assertUuidParam } from '$lib/server/services/identifier';
 import { PostNotFoundError } from '$lib/server/services/post';
@@ -79,16 +79,11 @@ function toAbsoluteUrl(base: URL, link: string): string {
 }
 
 /**
- * An instant as a sentence, in the interface locale, or `null` when there is no instant. Copied
- * from `(app)/admin/posts/+page.server.ts`'s helper of the same name — a route helper belongs next
- * to the route that uses it, as that file's own comment explains.
+ * An instant as a sentence, labelled with the WIB zone, or `null` when there is no instant —
+ * `formatDateTime` from `$lib/time`. Copied from `(app)/admin/posts/+page.server.ts`'s helper of the
+ * same name — a route helper belongs next to the route that uses it, as that file's own comment
+ * explains.
  */
 function formatInstant(instant: Date | null): string | null {
-	if (!instant) {
-		return null;
-	}
-	return new Intl.DateTimeFormat(getLocale(), {
-		dateStyle: 'full',
-		timeStyle: 'short'
-	}).format(instant);
+	return instant && formatDateTime(instant);
 }
