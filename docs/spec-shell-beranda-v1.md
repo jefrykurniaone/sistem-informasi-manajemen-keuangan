@@ -147,8 +147,21 @@ menulis apa pun. Alasannya: aturan "bulan ini" dan "menunggak" sudah ada di serv
 Kas, dan Beranda harus memakai definisi yang sama, bukan menghitung ulang di rute. "Bulan ini"
 memakai modul waktu spec `waktu-rupiah`.
 
+> [!note] Dibalik oleh run `poles-v1`
+> "Bulan ini" sebagai definisi tetap dari `civilMonthOf` di `$lib/time` (#139). Tapi label bulan
+> yang ditampilkan ("September 2026") memakai `MONTH_LABEL_FORMAT`, sebuah `Intl.DateTimeFormat`
+> lokal di `(app)/+page.server.ts` (#142), karena `$lib/time` tidak menyediakan pemformat nama
+> bulan. Satu-satunya `Intl.DateTimeFormat` yang tersisa di rute setelah #143 membersihkan rute
+> Post memang milik berkas ini.
+
 **Kartu angka: nilai, label, tautan.** Setiap kartu memuat satu angka utama, label, dan tautan ke
 layar yang menangani angka itu (riset §3). Tidak ada delta terhadap bulan lalu pada versi ini.
+
+> [!note] Dibalik oleh run `poles-v1`
+> Kartu Saldo Titipan menautkan ke `/invoices`, bukan ke layar Saldo Titipan tersendiri, karena
+> layar itu belum ada (#142). Kartu "menunggak" memuat `AdminDashboard.invoices.overdueCount`
+> (#139) untuk bulan WIB ini saja, sedangkan `/admin/overdue` menghitung semua periode; keduanya
+> kebetulan sama hanya karena Data Contoh (#144) berisi satu bulan.
 
 ## Testing decisions
 

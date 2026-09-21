@@ -31,6 +31,15 @@ beberapa Post, dan Keluhan dalam berbagai status beserta Tanggapannya. Semua aku
 masuk dengan satu kata sandi yang tercetak di dokumentasi. Perintah itu menolak berjalan di luar
 basis data lokal.
 
+> [!note] Dibalik oleh run `poles-v1`
+> "Seluruh isi basis data dihapus" tidak berlaku bulat-bulat: dua baris `cash_categories` yang
+> membawa `system_key` (disemai migrasi `drizzle/0009_cash_report.sql`) tidak ikut di-`TRUNCATE`,
+> karena `createCashCategory` tidak pernah menulis `system_key` dan tanpa kedua baris itu
+> `recordOpeningBalance` serta setiap verifikasi Pembayaran melempar `SystemCategoryMissingError`.
+> Reset menjalankan `delete from cash_categories where system_key is null` di transaksi yang sama;
+> `PRESERVED_TABLES` di `scripts/seed-dev.ts` mendaftarkan `cash_categories` dan `scaffold_probe`
+> (#144, PR #165).
+
 ## Goals and non-goals
 
 **Goals**
@@ -112,9 +121,30 @@ gambar kecil yang disimpan lewat `FileStore`; 1 Saldo Awal, 6 Kategori Kas, seki
 Kas termasuk satu Koreksi; 6 Post (4 terbit, 1 draf, 1 arsip; separuh kegiatan) dengan 2 Sampul;
 10 Keluhan yang mencakup setiap status, dengan Tanggapan dan satu Lampiran.
 
+> [!note] Dibalik oleh run `poles-v1`
+> Pecahan Tagihan yang mendarat (#144, PR #165): 13 lunas (bukan 10 — sepuluh Unit A ditambah tiga
+> Unit B yang lunas setelah pembayaran pertamanya ditolak), 4 sebagian (`SEED_PAYMENTS` di
+> `scripts/seed-data.ts`, masing-masing berutang 60.000 menunggu verifikasi Pembayaran), 3 belum
+> bayar sama sekali. Karena setiap Tagihan jatuh tempo tanggal 5, `invoiceStatus` menandai ketujuh
+> Unit yang masih berutang sebagai `overdue` begitu tanggal itu lewat, bukan hanya tiga —
+> `/admin/overdue` memuat tujuh baris (`OVERDUE_UNIT_LABELS`), tidak pernah tiga. "Sekitar 30
+> Pembayaran" mendarat tepat 30 (22 terverifikasi, 5 menunggu, 3 ditolak). "Sekitar 40 Transaksi
+> Kas" mendarat 51: 26 pengeluaran (`SEED_CASH_EXPENSES` — satu di antaranya dikoreksi tapi tetap
+> tercatat, buku kas itu append-only) + 1 Koreksi + 1 Saldo Awal + 23 baris pemasukan iuran dari
+> verifikasi Pembayaran, dengan saldo kas penutup Rp 5.000.000.
+
 **Skrip berjalan di luar Vite,** jadi ia memakai penyelesaian alias yang sama dengan skrip
 superuser (gotcha wave 17 tentang `$app/server`); bila skrip superuser memakai shim, skrip ini
 memakainya juga, dan cara menjalankannya didokumentasikan sekali di README.
+
+> [!note] Dibalik oleh run `poles-v1`
+> `scripts/grant-superuser.ts` **tidak** butuh shim — doc comment-nya sengaja melarang skrip itu
+> mengimpor `auth.ts`. `scripts/seed-dev.ts` butuh shim untuk alasan sendiri: ia mengimpor
+> `src/lib/server/auth.ts` (untuk `signUpEmail`, supaya kata sandi ter-hash sama seperti
+> pendaftaran sungguhan) yang mengimpor modul maya `$app/server` di baris pertama. Perintahnya
+> `bun --tsconfig-override scripts/tsconfig.seed.json scripts/seed-dev.ts`, dengan
+> `scripts/app-server-shim.ts` dan `scripts/tsconfig.seed.json` disimpan di `scripts/`, bukan
+> `.claude/scratch/` (#144, PR #165).
 
 ## Testing decisions
 

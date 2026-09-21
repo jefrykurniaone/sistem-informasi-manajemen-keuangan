@@ -97,6 +97,13 @@ ini" untuk penanda Tarif dan ringkasan Keluhan bulanan berpindah ke zona komplek
 bahwa dua konvensi hari kalender "hidup berdampingan dengan sengaja" dicabut oleh spec ini; catatan
 keputusannya dimutakhirkan.
 
+> [!note] Dibalik oleh run `poles-v1`
+> Pencabutan ini dieksekusi oleh #137 (wave 2, merge `3e04ede`, PR #153): enam belas layar dan
+> modul melepas pemformat UTC lokalnya dan memanggil `formatDay`/`formatDateTime` dari `$lib/time`;
+> `currentDay(clock)` di `occupancy/visibility.ts` menjawab hari WIB lewat `civilDayOf`. Catatan
+> keputusan wave 14 run `komplek-v1` tentang "dua konvensi hari kalender hidup berdampingan dengan
+> sengaja" tidak berlaku lagi sejak #137.
+
 **Satu komponen input Rupiah.** Sebuah komponen bersama menggantikan setiap kotak nominal. Kontrak:
 menampilkan `Rp` sebagai adornment di kiri; memformat dengan pemisah ribuan titik saat mengetik;
 menerima tempelan yang memuat `Rp`, spasi, dan titik; menolak karakter selain digit; membuka papan
