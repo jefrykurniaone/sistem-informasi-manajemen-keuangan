@@ -85,6 +85,75 @@ satu-satunya jalan kembali kalau akun superuser terakhir hilang. Perlu dicatat b
 dinisbahkan pada baris `residents` milik pelakunya, jadi akun pengurus tetap perlu terdaftar sebagai
 warga sebuah Unit.
 
+### Data Contoh
+
+Alih-alih mengisi dua puluh Unit dan dua puluh tujuh akun satu per satu, satu perintah mengisi basis
+data lokal dengan Data Contoh satu komplek untuk bulan WIB yang sedang berjalan, sehingga setiap
+layar utama punya isi:
+
+```bash
+bun run db:seed-dev -- --yes
+```
+
+> **Perintah ini menghapus seluruh isi basis data yang ditunjuk `DATABASE_URL`, lalu mengosongkan
+> direktori `FILE_STORE_ROOT`.** Semua Unit, Warga, Tagihan, Pembayaran, Transaksi Kas, Post, Keluhan
+> dan akun yang ada akan hilang, dan tidak ada jalan kembali. Jalankan hanya pada basis data
+> pengembangan di mesin sendiri.
+
+Tiga pengaman berdiri sebelum satu baris pun disentuh, dan masing-masing berhenti dengan kode 1 serta
+pesannya sendiri: `NODE_ENV` bernilai `production`, host `DATABASE_URL` yang bukan `localhost`,
+`127.0.0.1` atau `db`, dan `--yes` yang tidak ditulis. Tanda `--yes` itulah yang membuat penghapusan
+menjadi tindakan yang disengaja, bukan salah ketik.
+
+Setelah selesai, akun-akun berikut bisa masuk:
+
+| Akun                                              | Peran                | Unit        |
+| ------------------------------------------------- | -------------------- | ----------- |
+| `superuser@komplek.local`                         | `superuser`, `admin` | A-01        |
+| `admin@komplek.local`                             | `admin`              | A-02        |
+| `warga01@komplek.local` … `warga25@komplek.local` | `resident`           | A-01 … B-10 |
+
+Kata sandi setiap akun adalah `kata-sandi-dummy-123`.
+
+Akun `superuser` sengaja memegang kedua peran: `/admin/overdue` dan `/admin/payments` dijaga oleh
+tindakan yang di `src/lib/server/authz.ts` hanya diberikan kepada `admin`, jadi tanpa peran itu
+superuser akan dijawab 403 di dua layar tersebut.
+
+Isinya: 20 Unit, 27 Warga dengan satu Penanggung Jawab per Unit, Tarif 150.000 yang berlaku sejak
+bulan lalu, Saldo Awal 12.500.000, 20 Tagihan bulan ini, 30 Pembayaran (lima di antaranya masih
+`pending` dengan bukti, tiga ditolak, dua kelebihan bayar yang menjadi Saldo Titipan), 26 Transaksi
+Kas keluar dengan satu Koreksi, 6 Post, 10 Keluhan yang mencakup seluruh status, dan Langganan
+tambahan untuk sebagian warga. Perintah ini mencetak ringkasan jumlah per entitas ketika selesai.
+
+Buku kasnya dibuat supaya masuk akal: pemasukan 15.170.000 (Saldo Awal, iuran terverifikasi, dan
+satu Koreksi) melawan pengeluaran 10.170.000, sehingga saldo berjalan tidak pernah turun di bawah
+nol dan bulan ditutup dengan Saldo kas 5.000.000.
+
+Empat dari lima Pembayaran yang masih `pending` adalah sisa tagihan rumah yang baru membayar
+sebagian, jadi layar verifikasi punya Tagihan sungguhan untuk dilunasi; yang kelima untuk rumah yang
+sudah lunas, contoh kasus "seluruh nominal menjadi saldo titipan". Akibatnya `/admin/overdue` memuat
+tujuh rumah: tiga yang belum membayar sama sekali, ditambah empat yang masih kurang 60.000 sampai
+Pembayarannya diverifikasi.
+
+Tagihan diterbitkan lewat pekerjaan terjadwal `issue-invoices`, bukan dengan memanggil layanan
+penerbitan langsung, sehingga `job_runs` memuat klaim bulan ini berstatus `succeeded`. Menekan
+"jalankan sekarang" pada `/admin/jobs` setelah itu menjawab `skipped` dan tidak menerbitkan Tagihan
+kedua.
+
+Satu hal yang wajar membingungkan: Tagihan jatuh tempo tanggal 5, dan daftar penunggak hanya memuat
+rumah yang jatuh temponya **sudah lewat**. Menjalankan perintah ini pada tanggal 1 sampai 5 karena
+itu meninggalkan `/admin/overdue` kosong — bukan karena tujuh rumah yang masih berutang hilang,
+melainkan karena belum ada yang terlambat. Ringkasan yang dicetak menyebutkan berapa rumah yang
+menunggak, jadi keadaannya terbaca tanpa perlu menebak.
+
+Perintah ini memakai `--tsconfig-override scripts/tsconfig.seed.json` karena skripnya mengimpor
+`src/lib/server/auth.ts` — akun dibuat lewat `signUpEmail` milik better-auth agar kata sandinya
+disemai persis seperti pendaftaran sungguhan — sedangkan modul itu mengimpor `$app/server`, modul
+maya SvelteKit yang tidak bisa diresolusi oleh `bun run` polos. `scripts/app-server-shim.ts`
+menjelaskan seluruh alasannya. Pada Bun 1.4 di Windows, tanda itu membuat Bun mencetak satu baris
+`Internal error: directory mismatch …` ke stderr setelah skrip selesai; baris itu tidak berbahaya dan
+kode keluarnya tetap 0.
+
 ## Gerbang mutu
 
 Empat perintah ini adalah gerbangnya. Semua harus lulus sebelum sebuah pull request digabungkan, dan
