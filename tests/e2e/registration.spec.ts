@@ -125,13 +125,18 @@ async function verifyAddress(page: Page, email: string): Promise<void> {
 	await expect(page.getByText('Alamat email Anda sudah terverifikasi')).toBeVisible();
 }
 
-/** Signs an already verified account in. */
+/**
+ * Signs an already verified account in.
+ *
+ * Asserts no destination itself: where sign-in lands now depends on the account, since `/` is
+ * Beranda in the `(app)` group since #142 and that group's own layout redirects an unadmitted
+ * account on to `/pending-approval`. Each caller below asserts its own account's landing place.
+ */
 async function signIn(page: Page, email: string): Promise<void> {
 	await open(page, '/login');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Kata sandi').fill(PASSWORD);
 	await page.getByRole('button', { name: 'Masuk' }).click();
-	await expect(page).toHaveURL(/\/$/);
 }
 
 /** Registers, verifies and signs a superuser in, granting the role by SQL — see the doc comment. */
@@ -153,6 +158,9 @@ async function signedInSuperuser(page: Page): Promise<void> {
 	);
 
 	await signIn(page, email);
+	// Holds `superuser`, granted above by SQL, so the `(app)` layout's admitted-account exemption
+	// applies and this account lands on Beranda rather than `/pending-approval`.
+	await expect(page).toHaveURL(/\/$/);
 }
 
 /** A unit row of this run's own, returning its block and number. */
@@ -180,6 +188,9 @@ async function registrantWaiting(
 	await fillRegistrationForm(page, { name: 'Warga Mendaftar', email, ...claim });
 	await verifyAddress(page, email);
 	await signIn(page, email);
+	// No `residents` row and no admin/superuser role, so sign-in itself already lands here: `/` is
+	// Beranda in the `(app)` group since #142, and that group's own layout redirects on.
+	await expect(page).toHaveURL(/\/pending-approval/);
 
 	// Every page of the application group sends them to the one page they may read.
 	await page.goto('/my-unit');
