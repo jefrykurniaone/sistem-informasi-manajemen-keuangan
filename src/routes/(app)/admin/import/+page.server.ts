@@ -10,6 +10,7 @@ import {
 	previewResidentImport,
 	ImportRejectedError
 } from '$lib/server/services/import/resident-import';
+import { IMPORT_TEMPLATE_CONTENT_TYPE } from '$lib/server/services/import/template';
 import {
 	EmptyImportFileError,
 	ImportHeaderError,
@@ -19,19 +20,20 @@ import {
 import type { Actions, PageServerLoad } from './$types';
 
 /**
- * The superuser screen for filling the register from a CSV file, in the two steps
- * `spec-warga-unit-v1.md` asks for: `upload` reads the file and answers with a preview that stored
- * nothing, and `confirm` writes the whole file or none of it.
+ * The superuser screen for filling the register from an Excel workbook (the Template Impor), in the
+ * two steps `spec-warga-unit-v1.md` asks for: `upload` reads the file and answers with a preview
+ * that stored nothing, and `confirm` writes the whole file or none of it.
  *
  * It follows the translation rule the rest of the admin screens follow: the service refuses, and
  * this file decides what the refusal is over HTTP. A caller who may not be here at all gets
- * `error(403, …)`; a file this import cannot use — a wrong header, no rows, too many rows, a row
- * that clashes with something already stored — is `fail(400, …)`, because the superuser did nothing
- * outside their rights and only this particular file is refused.
+ * `error(403, …)`; a file this import cannot use — a wrong extension or MIME type, a wrong header,
+ * no rows, too many rows, a row that clashes with something already stored — is `fail(400, …)`,
+ * because the superuser did nothing outside their rights and only this particular file is refused.
  *
- * **The file's text travels back to `confirm` in a hidden field**, and is parsed and checked again
- * there from scratch; see the doc comment of `$lib/server/services/import/resident-csv` for why that
- * is the transport and why nothing the preview computed is trusted on the way back.
+ * **The file's bytes travel back to `confirm` in a hidden field, base64-encoded**, and are decoded,
+ * parsed and checked again there from scratch; see the doc comment of
+ * `$lib/server/services/import/resident-import` for why that is the transport and why nothing the
+ * preview computed is trusted on the way back.
  */
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -68,6 +70,9 @@ export const actions: Actions = {
 		if (!(file instanceof File) || file.size === 0) {
 			return fail(400, { message: m.adminImport_noFile() });
 		}
+		if (!isXlsxUpload(file)) {
+			return fail(400, { message: m.adminImport_onlyXlsx() });
+		}
 
 		const importRequest = {
 			actorId: locals.user.id,
@@ -95,6 +100,9 @@ export const actions: Actions = {
 		if (importRequest.content.length === 0) {
 			return fail(400, { message: m.adminImport_missingContent() });
 		}
+		if (!hasXlsxExtension(importRequest.fileName)) {
+			return fail(400, { message: m.adminImport_onlyXlsx() });
+		}
 
 		try {
 			const result = await importResidents(database(), systemClock, importRequest);
@@ -116,6 +124,30 @@ const MAX_FILE_NAME_LENGTH = 255;
 /** A file name as it is recorded: trimmed, and cut to a length an audit row can carry. */
 function trimmedFileName(name: string): string {
 	return name.trim().slice(0, MAX_FILE_NAME_LENGTH);
+}
+
+/** The one extension an import file may carry. */
+const XLSX_EXTENSION = '.xlsx';
+
+/**
+ * Whether `fileName` ends in the one extension an import file may carry, checked
+ * case-insensitively because a spreadsheet app may write `.XLSX`.
+ */
+function hasXlsxExtension(fileName: string): boolean {
+	return fileName.toLowerCase().endsWith(XLSX_EXTENSION);
+}
+
+/**
+ * Whether an uploaded `File` is one `upload` should even try to read: its name carries the one
+ * extension an import file may carry, and, when the browser sent a MIME type at all, that type is
+ * the spreadsheet one. A blank type is not refused for that alone — some browsers send none for
+ * `.xlsx` — because the extension is what actually gates the file here; `readResidentRows` still
+ * refuses anything that is not really a workbook, whatever either name claims.
+ */
+function isXlsxUpload(file: File): boolean {
+	return (
+		hasXlsxExtension(file.name) && (file.type === '' || file.type === IMPORT_TEMPLATE_CONTENT_TYPE)
+	);
 }
 
 /** Turns a file this import cannot use into `fail(400, …)`, or hands anything else on. */
