@@ -156,7 +156,10 @@ test('a signed-in resident reads their own data from the guarded example route',
 	const email = anAddress('me');
 	await registerAndVerify(page, email);
 	await signIn(page, email);
-	await expect(page).toHaveURL('/');
+	// This account has no `residents` row and no admin/superuser role, so it is not admitted yet;
+	// `/` is Beranda in the `(app)` group since #142, and that group's own layout sends an
+	// unadmitted account to `/pending-approval` instead of rendering it.
+	await expect(page).toHaveURL('/pending-approval');
 
 	const response = await page.request.get('/api/me');
 

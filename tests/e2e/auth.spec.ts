@@ -185,7 +185,10 @@ test('a new resident registers, verifies, signs in, and signs out', async ({
 	await expect(page.getByText('Alamat email Anda sudah terverifikasi')).toBeVisible();
 
 	await signIn(page, email);
-	await expect(page).toHaveURL(`${baseURL}/`);
+	// This account has no `residents` row and no admin/superuser role, so it is not admitted yet;
+	// `/` is Beranda in the `(app)` group since #142, and that group's own layout sends an
+	// unadmitted account to `/pending-approval` instead of rendering it.
+	await expect(page).toHaveURL(`${baseURL}/pending-approval`);
 
 	// The session is there, it cannot be read by script, it is withheld from cross-site posts,
 	// and it has an expiry — which is what makes it survive closing the browser.
@@ -194,9 +197,10 @@ test('a new resident registers, verifies, signs in, and signs out', async ({
 	expect(cookie?.sameSite).toBe('Lax');
 	expect(cookie?.expires).toBeGreaterThan(Date.now() / 1000);
 
-	// Being signed in is visible from the sign-in page, which sends a signed-in visitor home.
+	// Being signed in is visible from the sign-in page, which sends a signed-in visitor home — and
+	// home redirects this still-unadmitted account on to `/pending-approval`, same as above.
 	await page.goto(LOGIN_PATH);
-	await expect(page).toHaveURL(`${baseURL}/`);
+	await expect(page).toHaveURL(`${baseURL}/pending-approval`);
 
 	await page.request.post('/logout', { form: {}, headers: { origin: String(baseURL) } });
 	expect(await sessionCookie(context)).toBeUndefined();
@@ -253,5 +257,7 @@ test('a forgotten password is recovered through the emailed link, which works on
 	await expect(page.getByRole('alert')).toContainText('Email atau kata sandi salah');
 
 	await signIn(page, email, newPassword);
-	await expect(page).toHaveURL(`${baseURL}/`);
+	// Same unadmitted-account redirect as the lifecycle test above: `/` is Beranda in the `(app)`
+	// group since #142, and this account has no `residents` row and no admin/superuser role.
+	await expect(page).toHaveURL(`${baseURL}/pending-approval`);
 });
