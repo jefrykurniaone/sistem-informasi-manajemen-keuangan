@@ -35,9 +35,11 @@
 	/**
 	 * What the write form holds, as the strings a form really carries.
 	 *
-	 * Every field is a string, including the two instants: a `datetime-local` input reads and writes
-	 * `YYYY-MM-DDTHH:mm`, and turning that into a `Date` is the server's job, next to the code that
-	 * knows which zone it means.
+	 * Every field is a string. The two instants are each two fields — `startsAtDate` /
+	 * `startsAtTime`, `endsAtDate` / `endsAtTime` — the shape `date-time-fields.svelte` posts and
+	 * reads back: a `YYYY-MM-DD` date and an `HH:mm` time that always means WIB. Turning the pair into
+	 * a `Date` is the server's job, next to the code that knows which zone it means — see
+	 * `combineCivilDateTime` in `$lib/server/services/post/time`.
 	 */
 	export interface PostFormValues {
 		readonly type: string;
@@ -45,8 +47,10 @@
 		readonly summary: string;
 		readonly bodyHtml: string;
 		readonly category: string;
-		readonly startsAt: string;
-		readonly endsAt: string;
+		readonly startsAtDate: string;
+		readonly startsAtTime: string;
+		readonly endsAtDate: string;
+		readonly endsAtTime: string;
 		readonly location: string;
 	}
 
@@ -66,14 +70,17 @@
 		summary: '',
 		bodyHtml: '',
 		category: 'umum',
-		startsAt: '',
-		endsAt: '',
+		startsAtDate: '',
+		startsAtTime: '',
+		endsAtDate: '',
+		endsAtTime: '',
 		location: ''
 	};
 </script>
 
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button/index.js';
+	import DateTimeFields from '$lib/components/date-time-fields.svelte';
 	import RichTextEditor from '$lib/components/post/rich-text-editor.svelte';
 
 	/**
@@ -166,8 +173,9 @@
 			left that list in #140: it is the editor component below, which reads its `value` prop once
 			when it mounts and never again.
 
-			`values.title` (and `values.category`, `values.startsAt`, `values.endsAt`,
-			`values.location`) still get written back on every render, unconditionally — that part is
+			`values.title` (and `values.category`, `values.startsAtDate`, `values.startsAtTime`,
+			`values.endsAtDate`, `values.endsAtTime`, `values.location`) still get written back on every
+			render, unconditionally — that part is
 			untouched by this `{#key}`, and it has to stay: see the comment on `chosenType` above.
 			Neither `(app)/admin/posts/new/+page.svelte` nor `(app)/admin/posts/[id]/+page.svelte` uses
 			`use:enhance`, so this form posts natively and a rejected submission is a full document
@@ -306,30 +314,24 @@
 			<p class="text-xs text-muted-foreground">{m.adminPosts_form_eventHint()}</p>
 
 			<div class="flex flex-col gap-4 sm:flex-row">
-				<div class="flex flex-1 flex-col gap-1.5">
-					<label class="text-sm font-medium" for="post-form-starts-at-{uid}">
-						{m.adminPosts_form_startsAtLabel()}
-					</label>
-					<input
-						id="post-form-starts-at-{uid}"
-						name="startsAt"
-						type="datetime-local"
-						value={values.startsAt}
-						class="h-11 rounded-md border border-border bg-background px-3 text-sm"
-					/>
-				</div>
-				<div class="flex flex-1 flex-col gap-1.5">
-					<label class="text-sm font-medium" for="post-form-ends-at-{uid}">
-						{m.adminPosts_form_endsAtLabel()}
-					</label>
-					<input
-						id="post-form-ends-at-{uid}"
-						name="endsAt"
-						type="datetime-local"
-						value={values.endsAt}
-						class="h-11 rounded-md border border-border bg-background px-3 text-sm"
-					/>
-				</div>
+				<DateTimeFields
+					name="startsAt"
+					id="post-form-starts-at-{uid}"
+					dateLabel={m.adminPosts_form_startsAtLabel()}
+					timeLabel={m.adminPosts_form_startsAtTimeLabel()}
+					hint={m.adminPosts_form_eventTimeHint()}
+					dateValue={values.startsAtDate}
+					timeValue={values.startsAtTime}
+				/>
+				<DateTimeFields
+					name="endsAt"
+					id="post-form-ends-at-{uid}"
+					dateLabel={m.adminPosts_form_endsAtLabel()}
+					timeLabel={m.adminPosts_form_endsAtTimeLabel()}
+					hint={m.adminPosts_form_eventTimeHint()}
+					dateValue={values.endsAtDate}
+					timeValue={values.endsAtTime}
+				/>
 			</div>
 
 			<div class="flex flex-col gap-1.5">

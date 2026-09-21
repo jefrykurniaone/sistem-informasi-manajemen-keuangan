@@ -1,6 +1,6 @@
 import { error, redirect } from '@sveltejs/kit';
 import * as m from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime';
+import { formatDateTime } from '$lib/time';
 import { PermissionDeniedError } from '$lib/errors';
 import { AUTH_PATHS } from '$lib/server/auth';
 import { database } from '$lib/server/db';
@@ -76,22 +76,14 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 };
 
 /**
- * An instant as a sentence, in the interface locale, or `null` when there is no instant.
- *
- * The zone is the server's own, which is the complex's zone in any real deployment — `Clock` in
- * `src/lib/server/ports/clock.ts` deliberately does not know about zones, and inventing a
- * zone-aware helper is not this ticket's to do. `(app)/admin/posts/[id]/+page.server.ts` carries the
- * same helper for the same reason the three admin screens each carry their own
+ * An instant as a sentence, labelled with the WIB zone, or `null` when there is no instant —
+ * `formatDateTime` from `$lib/time`, which is what carries `WIB` onto the label rather than the
+ * `GMT+7` an `en-US` browser locale would otherwise print. `(app)/admin/posts/[id]/+page.server.ts`
+ * carries the same helper for the same reason the three admin screens each carry their own
  * `throwAsRouteError`: a route helper belongs next to the route that uses it.
  */
 function formatInstant(instant: Date | null): string | null {
-	if (!instant) {
-		return null;
-	}
-	return new Intl.DateTimeFormat(getLocale(), {
-		dateStyle: 'full',
-		timeStyle: 'short'
-	}).format(instant);
+	return instant && formatDateTime(instant);
 }
 
 /** A 1-based page number from a query string value, or `undefined` when it does not name one. */

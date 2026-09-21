@@ -1,6 +1,6 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import * as m from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime';
+import { civilDayOf, formatDateTime, formatTime } from '$lib/time';
 import { PermissionDeniedError } from '$lib/errors';
 import { AUTH_PATHS } from '$lib/server/auth';
 import { database } from '$lib/server/db';
@@ -26,6 +26,7 @@ import {
 	type CoverImageUpload,
 	type PostRule
 } from '$lib/server/services/post';
+import { combineCivilDateTime } from '$lib/server/services/post/time';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -55,6 +56,8 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 
 	try {
 		const post = await getPost(database(), locals.user.id, params.id);
+		const startsAtFields = civilDateAndTimeOf(post.startsAt);
+		const endsAtFields = civilDateAndTimeOf(post.endsAt);
 		return {
 			post: {
 				id: post.id,
@@ -76,8 +79,10 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 				summary: post.summary,
 				bodyHtml: post.bodyHtml,
 				category: post.category,
-				startsAt: toLocalInputValue(post.startsAt),
-				endsAt: toLocalInputValue(post.endsAt),
+				startsAtDate: startsAtFields.date,
+				startsAtTime: startsAtFields.time,
+				endsAtDate: endsAtFields.date,
+				endsAtTime: endsAtFields.time,
 				location: post.location ?? ''
 			},
 			categories: POST_CATEGORIES,
@@ -104,10 +109,16 @@ export const actions: Actions = {
 			return fail(400, { message: m.adminPosts_invalidForm(), values });
 		}
 
-		const startsAt = parseLocalInstant(values.startsAt);
-		const endsAt = parseLocalInstant(values.endsAt);
-		if (startsAt === 'invalid' || endsAt === 'invalid') {
-			return fail(400, { message: m.adminPosts_invalidTime(), values });
+		let startsAt: Date | null;
+		let endsAt: Date | null;
+		try {
+			startsAt = combineCivilDateTime(values.startsAtDate, values.startsAtTime);
+			endsAt = combineCivilDateTime(values.endsAtDate, values.endsAtTime);
+		} catch (caught) {
+			if (caught instanceof RangeError) {
+				return fail(400, { message: m.adminPosts_timeFormat(), values });
+			}
+			throw caught;
 		}
 
 		// Checked before anything is written, for the same reason the write screen checks it there —
@@ -255,8 +266,10 @@ function readPostFormValues(form: FormData) {
 		summary: String(form.get('summary') ?? '').trim(),
 		bodyHtml: String(form.get('bodyHtml') ?? '').trim(),
 		category: String(form.get('category') ?? ''),
-		startsAt: String(form.get('startsAt') ?? ''),
-		endsAt: String(form.get('endsAt') ?? ''),
+		startsAtDate: String(form.get('startsAtDate') ?? ''),
+		startsAtTime: String(form.get('startsAtTime') ?? ''),
+		endsAtDate: String(form.get('endsAtDate') ?? ''),
+		endsAtTime: String(form.get('endsAtTime') ?? ''),
 		location: String(form.get('location') ?? '').trim()
 	};
 }
@@ -267,46 +280,31 @@ function parseType(value: string): PostType {
 }
 
 /**
- * A `datetime-local` value as an instant, `null` for an empty field, or `'invalid'` for something
- * that is not a moment. Read in the server's own zone — see the longer note on the copy of this
- * helper in `(app)/admin/posts/new/+page.server.ts`, and `toLocalInputValue` below, which is its
- * other half.
+ * `date-time-fields.svelte`'s two boxes' initial values for a stored instant, in `COMPLEX_TIME_ZONE`
+ * (WIB) — `civilDayOf` for the date box and a colon-separated `formatTime` for the time box, both
+ * empty strings for `null`. So that opening a saved kegiatan and saving it again without touching a
+ * field leaves its time exactly where it was, this is the other half of `combineCivilDateTime`,
+ * which reads the same two boxes back in the same zone.
+ *
+ * `formatTime` is built for a label a person reads — `id-ID`'s own `10.30 WIB` — so its result is cut
+ * down to what the time box's `pattern` requires: the zone name and the space before it dropped, and
+ * the full stop `id-ID` separates hours and minutes with turned into the colon the box needs.
  */
-function parseLocalInstant(value: string): Date | null | 'invalid' {
-	if (value === '') {
-		return null;
-	}
-	const parsed = new Date(value);
-	return Number.isNaN(parsed.getTime()) ? 'invalid' : parsed;
-}
-
-/**
- * An instant as the `YYYY-MM-DDTHH:mm` a `datetime-local` input reads, in the server's own zone —
- * the same zone `parseLocalInstant` reads a submitted value in, so that opening a saved kegiatan and
- * saving it again without touching the field leaves its time exactly where it was.
- */
-function toLocalInputValue(instant: Date | null): string {
+function civilDateAndTimeOf(instant: Date | null): { date: string; time: string } {
 	if (!instant) {
-		return '';
+		return { date: '', time: '' };
 	}
-	const pad = (value: number): string => String(value).padStart(2, '0');
-	const date = `${instant.getFullYear()}-${pad(instant.getMonth() + 1)}-${pad(instant.getDate())}`;
-	return `${date}T${pad(instant.getHours())}:${pad(instant.getMinutes())}`;
+	const [clock] = formatTime(instant).split(' ');
+	return { date: civilDayOf(instant), time: clock.replace('.', ':') };
 }
 
 /**
- * An instant as a sentence, in the interface locale, or `null` when there is no instant. The copy
- * on `(app)/admin/posts/+page.server.ts` carries the note about why the formatting happens here
- * rather than in the page.
+ * An instant as a sentence, labelled with the WIB zone, or `null` when there is no instant —
+ * `formatDateTime` from `$lib/time`. The copy on `(app)/admin/posts/+page.server.ts` carries the
+ * note about why the formatting happens here rather than in the page.
  */
 function formatInstant(instant: Date | null): string | null {
-	if (!instant) {
-		return null;
-	}
-	return new Intl.DateTimeFormat(getLocale(), {
-		dateStyle: 'full',
-		timeStyle: 'short'
-	}).format(instant);
+	return instant && formatDateTime(instant);
 }
 
 /** The sentence a person reads for each named rule refusal. */

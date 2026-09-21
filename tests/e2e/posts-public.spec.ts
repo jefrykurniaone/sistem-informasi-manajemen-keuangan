@@ -181,12 +181,22 @@ async function pressToolbar(page: Page, editor: Locator, name: string): Promise<
 	await expect(editor).toBeFocused();
 }
 
-/** A `datetime-local` value for `daysAhead` days from now, in the server's own zone. */
-function futureLocalDateTime(daysAhead: number): string {
+/**
+ * A `YYYY-MM-DD` date `daysAhead` days from now, for `date-time-fields.svelte`'s date box. The
+ * server's own zone, not WIB — a few hours either side of midnight makes no difference to a date
+ * chosen a week out, and `combineCivilDateTime` is what reads the pair as WIB regardless.
+ */
+function futureDate(daysAhead: number): string {
 	const date = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000);
 	const pad = (value: number): string => String(value).padStart(2, '0');
-	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
+
+/** A fixed `HH:mm` WIB time for `date-time-fields.svelte`'s time box — always seven in the evening. */
+const EVENT_START_TIME = '19:00';
+
+/** The end time, an hour after `EVENT_START_TIME`. */
+const EVENT_END_TIME = '20:00';
 
 test('an admin publishes a kegiatan, and a browser with no session opens it from the board and reads it', async ({
 	page,
@@ -216,8 +226,11 @@ test('an admin publishes a kegiatan, and a browser with no session opens it from
 	await page
 		.getByLabel('Berkas gambar')
 		.setInputFiles({ name: 'sampul.png', mimeType: 'image/png', buffer: PNG });
-	await page.getByLabel('Waktu mulai').fill(futureLocalDateTime(7));
-	await page.getByLabel('Waktu selesai').fill(futureLocalDateTime(7));
+	const eventDate = futureDate(7);
+	await page.getByLabel('Waktu mulai').fill(eventDate);
+	await page.getByLabel('Jam mulai').fill(EVENT_START_TIME);
+	await page.getByLabel('Waktu selesai').fill(eventDate);
+	await page.getByLabel('Jam selesai').fill(EVENT_END_TIME);
 	await page.getByLabel('Lokasi').fill('Lapangan komplek');
 	await page.getByRole('button', { name: 'Simpan draf' }).click();
 
@@ -246,6 +259,13 @@ test('an admin publishes a kegiatan, and a browser with no session opens it from
 	await expect(anonymousPage.locator('.prose')).toContainText('dan cangkul.');
 	await expect(anonymousPage.locator('.prose strong')).toHaveText('sapu');
 	await expect(anonymousPage.locator('.prose ul li')).toContainText('Bawa ember');
+
+	// The start time typed through the two boxes — `19:00` WIB — reaches the public page labelled
+	// with the same hour and the zone, `19.00 WIB`: `id-ID`'s own separator, never a colon and never
+	// `GMT+7`. This is what `formatDateTime` from `$lib/time` replacing the four route
+	// `formatInstant` helpers is for.
+	await expect(anonymousPage.getByText('Waktu mulai')).toBeVisible();
+	await expect(anonymousPage.locator('dl')).toContainText('19.00 WIB');
 
 	// The Sampul chosen on the write form, on the Post the same submission created.
 	await expect(anonymousPage.locator('meta[property="og:image"]')).toHaveAttribute(
