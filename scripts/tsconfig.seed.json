@@ -1,0 +1,10 @@
+{
+	"//": "Module resolution for `bun run --tsconfig-override scripts/tsconfig.seed.json`. It exists because `$app/server` is a SvelteKit virtual module that plain `bun run` cannot resolve, and `scripts/seed-dev.ts` imports `src/lib/server/auth.ts`, which imports it. See scripts/app-server-shim.ts for the whole argument. The paths are written out rather than inherited from ../tsconfig.json: that file extends the generated .svelte-kit/tsconfig.json, whose `$lib` entries are relative to .svelte-kit/, and a second level of `extends` would re-base them against this directory instead. Every path below is relative to scripts/. This file configures nothing else and is not part of `bun run check`, which type-checks src/ and tests/ through ../tsconfig.json as before.",
+	"compilerOptions": {
+		"paths": {
+			"$lib": ["../src/lib"],
+			"$lib/*": ["../src/lib/*"],
+			"$app/server": ["./app-server-shim.ts"]
+		}
+	}
+}

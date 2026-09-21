@@ -19,7 +19,8 @@
 		"db:generate": "drizzle-kit generate && prettier --write drizzle",
 		"db:migrate": "drizzle-kit migrate",
 		"db:push-local-experiment": "drizzle-kit push",
-		"superuser:grant": "bun run scripts/grant-superuser.ts"
+		"superuser:grant": "bun run scripts/grant-superuser.ts",
+		"db:seed-dev": "bun --tsconfig-override scripts/tsconfig.seed.json scripts/seed-dev.ts"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
