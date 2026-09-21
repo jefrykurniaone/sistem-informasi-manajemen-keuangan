@@ -18,6 +18,8 @@ import { residents } from '$lib/server/db/schema/resident';
 import { JOB_RUN_STATUS, jobRuns } from '$lib/server/db/schema/scheduler';
 import { units } from '$lib/server/db/schema/unit';
 import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
+import { cashBook } from '$lib/server/services/cash/balance';
+import { openInvoicesOfUnit } from '$lib/server/services/dues/allocation';
 import { creditBalanceOfUnit } from '$lib/server/services/dues/credit-balance';
 import { INVOICE_ISSUANCE_JOB_NAME } from '$lib/server/services/dues/jobs';
 import {
@@ -29,11 +31,18 @@ import {
 } from '../../scripts/seed-dev';
 import {
 	ADMIN_EMAIL,
+	CORRECTED_EXPENSE_INDEX,
+	OPENING_BALANCE_AMOUNT,
+	OVERDUE_UNIT_LABELS,
 	RESIDENT_COUNT,
+	SEED_CASH_EXPENSES,
 	SEED_PASSWORD,
 	SEED_PAYMENTS,
 	SEED_UNITS,
-	SUPERUSER_EMAIL
+	SUPERUSER_EMAIL,
+	TOTAL_CASH_EXPENSES,
+	TOTAL_VERIFIED_PAYMENTS,
+	UNPAID_UNIT_LABELS
 } from '../../scripts/seed-data';
 
 /**
@@ -311,8 +320,39 @@ describe('seeding the Data Contoh', () => {
 		expect(secondCounts.complaints).toBe(10);
 	});
 
-	it('leaves three units owing money on the daftar penunggak', () => {
-		expect(secondSummary.overdueUnits).toBe(3);
+	/**
+	 * Seven, not three. Three houses paid nothing at all (`UNPAID_UNIT_LABELS`); four more paid
+	 * 90.000 of their 150.000 and are waiting for an admin to verify the remainder. A Tagihan falls
+	 * due on the fifth, so both kinds are past due and still owing, and `listOverdueUnits` cannot
+	 * tell them apart — see the doc comment on `SEED_PAYMENTS` for why the part-paid houses are left
+	 * short on purpose.
+	 */
+	it('lists seven units on the daftar penunggak, three of which never paid at all', () => {
+		expect(secondSummary.overdueUnits).toBe(OVERDUE_UNIT_LABELS.length);
+		expect(secondSummary.overdueUnits).toBe(7);
+		expect(UNPAID_UNIT_LABELS.length).toBe(3);
+	});
+
+	/**
+	 * The reason the pending rows were reworked. A pending Pembayaran on a house that owes nothing
+	 * can only ever become saldo titipan, so a queue made entirely of those never shows the verify
+	 * screen doing its ordinary job.
+	 */
+	it('gives at least four of the five pending payments a Tagihan to settle', async () => {
+		const pendingUnits = await testDb.db
+			.selectDistinct({ unitId: payments.unitId })
+			.from(payments)
+			.where(eq(payments.status, PAYMENT_STATUS.pending));
+		expect(pendingUnits.length).toBe(5);
+
+		let withOpenInvoice = 0;
+		for (const { unitId } of pendingUnits) {
+			const open = await openInvoicesOfUnit(testDb.db, unitId);
+			if (open.some((invoice) => invoice.remainingAmount > 0)) {
+				withOpenInvoice += 1;
+			}
+		}
+		expect(withOpenInvoice).toBeGreaterThanOrEqual(4);
 	});
 
 	it('leaves no registration waiting to be decided', () => {
@@ -392,6 +432,66 @@ describe('the seeded accounts', () => {
 			.where(eq(user.email, ADMIN_EMAIL));
 
 		expect(new Set(held.map((row) => row.role))).toEqual(new Set([ROLE.resident, ROLE.admin]));
+	});
+});
+
+describe('the buku kas', () => {
+	/** The admin account's id — `cashBook` is guarded by `ACTION.recordCashTransactions`. */
+	async function adminUserId(): Promise<string> {
+		const [row] = await testDb.db
+			.select({ id: user.id })
+			.from(user)
+			.where(eq(user.email, ADMIN_EMAIL));
+		return row.id;
+	}
+
+	/**
+	 * The assertion this hand-back was about.
+	 *
+	 * It goes through `cashBook`, the same function `/admin/cash` calls, rather than re-deriving a
+	 * running total here: the order the balance is folded in (`occurred_on`, then `created_at`, then
+	 * `id`) is that module's decision, and a test that re-implemented it could agree with itself
+	 * while disagreeing with the screen.
+	 *
+	 * A komplek cannot pay out cash it does not hold, so a Data Contoh whose running balance dips
+	 * below zero is not one anybody can learn the screens from.
+	 */
+	it('never lets the running balance fall below zero', async () => {
+		const book = await cashBook(testDb.db, await adminUserId());
+
+		expect(book.entries.length).toBeGreaterThan(0);
+		const lowest = Math.min(...book.entries.map((entry) => entry.balance));
+		expect(lowest).toBeGreaterThanOrEqual(0);
+	});
+
+	it('closes the month clearly in the black', async () => {
+		const book = await cashBook(testDb.db, await adminUserId());
+
+		// The Koreksi reverses one expense row, so it adds that row's amount back as income.
+		const reversed = SEED_CASH_EXPENSES[CORRECTED_EXPENSE_INDEX].amount;
+		expect(book.closingBalance).toBe(
+			OPENING_BALANCE_AMOUNT + TOTAL_VERIFIED_PAYMENTS - TOTAL_CASH_EXPENSES + reversed
+		);
+		expect(book.closingBalance).toBe(5_000_000);
+	});
+
+	it('spends what the expense table says it spends', async () => {
+		const [row] = await testDb.db
+			.select({ total: sql<string>`coalesce(sum(${cashTransactions.amount}), 0)::text` })
+			.from(cashTransactions)
+			.where(eq(cashTransactions.type, CASH_CATEGORY_TYPE.expense));
+
+		expect(Number(row.total)).toBe(TOTAL_CASH_EXPENSES);
+		expect(SEED_CASH_EXPENSES.reduce((sum, row) => sum + row.amount, 0)).toBe(TOTAL_CASH_EXPENSES);
+	});
+
+	it('takes in what the verified payments say it takes in', async () => {
+		const [row] = await testDb.db
+			.select({ total: sql<string>`coalesce(sum(${payments.amount}), 0)::text` })
+			.from(payments)
+			.where(eq(payments.status, PAYMENT_STATUS.verified));
+
+		expect(Number(row.total)).toBe(TOTAL_VERIFIED_PAYMENTS);
 	});
 });
 

@@ -120,10 +120,20 @@ tindakan yang di `src/lib/server/authz.ts` hanya diberikan kepada `admin`, jadi 
 superuser akan dijawab 403 di dua layar tersebut.
 
 Isinya: 20 Unit, 27 Warga dengan satu Penanggung Jawab per Unit, Tarif 150.000 yang berlaku sejak
-bulan lalu, Saldo Awal 12.500.000, 20 Tagihan bulan ini, 31 Pembayaran (lima di antaranya masih
+bulan lalu, Saldo Awal 12.500.000, 20 Tagihan bulan ini, 30 Pembayaran (lima di antaranya masih
 `pending` dengan bukti, tiga ditolak, dua kelebihan bayar yang menjadi Saldo Titipan), 26 Transaksi
 Kas keluar dengan satu Koreksi, 6 Post, 10 Keluhan yang mencakup seluruh status, dan Langganan
 tambahan untuk sebagian warga. Perintah ini mencetak ringkasan jumlah per entitas ketika selesai.
+
+Buku kasnya dibuat supaya masuk akal: pemasukan 15.170.000 (Saldo Awal, iuran terverifikasi, dan
+satu Koreksi) melawan pengeluaran 10.170.000, sehingga saldo berjalan tidak pernah turun di bawah
+nol dan bulan ditutup dengan Saldo kas 5.000.000.
+
+Empat dari lima Pembayaran yang masih `pending` adalah sisa tagihan rumah yang baru membayar
+sebagian, jadi layar verifikasi punya Tagihan sungguhan untuk dilunasi; yang kelima untuk rumah yang
+sudah lunas, contoh kasus "seluruh nominal menjadi saldo titipan". Akibatnya `/admin/overdue` memuat
+tujuh rumah: tiga yang belum membayar sama sekali, ditambah empat yang masih kurang 60.000 sampai
+Pembayarannya diverifikasi.
 
 Tagihan diterbitkan lewat pekerjaan terjadwal `issue-invoices`, bukan dengan memanggil layanan
 penerbitan langsung, sehingga `job_runs` memuat klaim bulan ini berstatus `succeeded`. Menekan
@@ -132,7 +142,7 @@ kedua.
 
 Satu hal yang wajar membingungkan: Tagihan jatuh tempo tanggal 5, dan daftar penunggak hanya memuat
 rumah yang jatuh temponya **sudah lewat**. Menjalankan perintah ini pada tanggal 1 sampai 5 karena
-itu meninggalkan `/admin/overdue` kosong — bukan karena tiga rumah yang belum membayar hilang,
+itu meninggalkan `/admin/overdue` kosong — bukan karena tujuh rumah yang masih berutang hilang,
 melainkan karena belum ada yang terlambat. Ringkasan yang dicetak menyebutkan berapa rumah yang
 menunggak, jadi keadaannya terbaca tanpa perlu menebak.
 

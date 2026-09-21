@@ -213,37 +213,44 @@ const REJECTION_REASON =
  *
  * ## The shape this table is built to produce
  *
- * Read against `src/lib/server/services/dues/queries.ts`, whose `listOverdueUnits` is what
- * `/admin/overdue` shows: a house is menunggak when a Tagihan of its own is past its due date and
- * still owes money. The due date is the fifth of the month
- * (`INVOICE_DUE_DAY_OF_MONTH`), so **every** house that has not covered its Tagihan in full appears
- * there, not only the ones with no payment at all. That is why the four partial payments below are
- * each followed by a second payment that completes the house: "sebagian" describes the *payment*,
- * which is what a resident paying in two instalments really does, and leaving the house short would
- * put seven houses on the overdue screen instead of the three the spec asks for.
- *
- * A `pending` and a `rejected` payment allocate nothing (`./credit-balance.ts`: only `verified`
- * money counts), so the houses carrying them are covered by a separate verified payment as well.
- *
- * What the table therefore comes to:
- *
  * | Group | Rows | Effect |
  * |---|---|---|
- * | `A-01`…`A-10` paid in full | 10 | ten houses lunas |
- * | `B-01`…`B-04` in two instalments | 8 | four "sebagian" payments, four houses lunas |
+ * | `A-01`…`A-10`, three of them in two instalments | 13 | ten houses lunas |
+ * | `B-01`…`B-04` paying 90.000 of 150.000 | 4 | four houses part-paid, 60.000 outstanding each |
  * | `B-05`…`B-07` paid in full | 3 | three houses lunas |
  * | `A-01`, `A-02` overpaying | 2 | Saldo Titipan of 50.000 each |
  * | `B-05`…`B-07` refused | 3 | a rejection a Warga can read |
  * | five left waiting | 5 | what `/admin/payments` shows |
  *
- * `B-08`, `B-09` and `B-10` appear nowhere: they are the three houses that never paid, which is the
+ * Thirty Pembayaran: twenty-two `verified`, five `pending`, three `rejected`.
+ *
+ * `B-08`, `B-09` and `B-10` appear nowhere — the three houses that never paid at all, which is the
  * "3 Unit menunggak tanpa Pembayaran" the spec names.
+ *
+ * ## The four part-paid houses are the point of the pending rows
+ *
+ * A `pending` Pembayaran allocates nothing — `./credit-balance.ts` counts only `verified` money — so
+ * a house whose Tagihan is already covered gains nothing by having one waiting, and
+ * `/admin/payments` can only say that the whole amount would become saldo titipan. That is the
+ * unusual case, not the ordinary one, and an earlier version of this table produced it five times
+ * over because every part-paid house was topped up by a second *verified* payment.
+ *
+ * So `B-01`…`B-04` are left genuinely short, and the remainder of each is one of the five rows still
+ * waiting. Four of the five therefore settle a real Tagihan when an admin verifies them, which is
+ * what the verify/reject screen exists for; the fifth (`B-05`) keeps one example of the saldo
+ * titipan case on the screen.
+ *
+ * **The consequence is that `/admin/overdue` lists seven houses, not three** — see
+ * `OVERDUE_UNIT_LABELS`. A Tagihan falls due on the fifth, and a house that has paid 90.000 of
+ * 150.000 is past due and still owing exactly like one that has paid nothing. The two cannot be
+ * separated: any house with a pending remainder is a house that owes money today.
  */
 export const SEED_PAYMENTS: readonly SeedPayment[] = [
-	// Ten houses that paid their month in one go.
-	{ unit: 'A-01', payer: 0, amount: DUES_AMOUNT, day: 2, outcome: PAYMENT_OUTCOME.verified },
-	{ unit: 'A-02', payer: 1, amount: DUES_AMOUNT, day: 2, outcome: PAYMENT_OUTCOME.verified },
-	{ unit: 'A-03', payer: 2, amount: DUES_AMOUNT, day: 3, outcome: PAYMENT_OUTCOME.verified },
+	// Ten houses that end the month lunas. Three of them paid in two instalments, which is what a
+	// household that pays the bulk on payday and the rest later really does.
+	{ unit: 'A-01', payer: 0, amount: 100_000, day: 2, outcome: PAYMENT_OUTCOME.verified },
+	{ unit: 'A-02', payer: 1, amount: 100_000, day: 2, outcome: PAYMENT_OUTCOME.verified },
+	{ unit: 'A-03', payer: 2, amount: 100_000, day: 3, outcome: PAYMENT_OUTCOME.verified },
 	{ unit: 'A-04', payer: 3, amount: DUES_AMOUNT, day: 3, outcome: PAYMENT_OUTCOME.verified },
 	{ unit: 'A-05', payer: 4, amount: DUES_AMOUNT, day: 4, outcome: PAYMENT_OUTCOME.verified },
 	{ unit: 'A-06', payer: 5, amount: DUES_AMOUNT, day: 4, outcome: PAYMENT_OUTCOME.verified },
@@ -251,16 +258,16 @@ export const SEED_PAYMENTS: readonly SeedPayment[] = [
 	{ unit: 'A-08', payer: 7, amount: DUES_AMOUNT, day: 5, outcome: PAYMENT_OUTCOME.verified },
 	{ unit: 'A-09', payer: 8, amount: DUES_AMOUNT, day: 6, outcome: PAYMENT_OUTCOME.verified },
 	{ unit: 'A-10', payer: 9, amount: DUES_AMOUNT, day: 6, outcome: PAYMENT_OUTCOME.verified },
+	{ unit: 'A-01', payer: 0, amount: 50_000, day: 7, outcome: PAYMENT_OUTCOME.verified },
+	{ unit: 'A-02', payer: 1, amount: 50_000, day: 7, outcome: PAYMENT_OUTCOME.verified },
+	{ unit: 'A-03', payer: 2, amount: 50_000, day: 8, outcome: PAYMENT_OUTCOME.verified },
 
-	// Four houses paying in two instalments. The first of each pair is the "sebagian" payment.
+	// Four houses that have paid part of their month. The remainder of each is one of the five
+	// Pembayaran still waiting below, so those four give `/admin/payments` a Tagihan to settle.
 	{ unit: 'B-01', payer: 10, amount: 90_000, day: 3, outcome: PAYMENT_OUTCOME.verified },
 	{ unit: 'B-02', payer: 11, amount: 90_000, day: 3, outcome: PAYMENT_OUTCOME.verified },
 	{ unit: 'B-03', payer: 12, amount: 90_000, day: 4, outcome: PAYMENT_OUTCOME.verified },
 	{ unit: 'B-04', payer: 13, amount: 90_000, day: 4, outcome: PAYMENT_OUTCOME.verified },
-	{ unit: 'B-01', payer: 10, amount: 60_000, day: 8, outcome: PAYMENT_OUTCOME.verified },
-	{ unit: 'B-02', payer: 11, amount: 60_000, day: 8, outcome: PAYMENT_OUTCOME.verified },
-	{ unit: 'B-03', payer: 12, amount: 60_000, day: 9, outcome: PAYMENT_OUTCOME.verified },
-	{ unit: 'B-04', payer: 13, amount: 60_000, day: 9, outcome: PAYMENT_OUTCOME.verified },
 
 	// Three houses that paid in full after a first attempt was refused, below.
 	{ unit: 'B-05', payer: 14, amount: DUES_AMOUNT, day: 10, outcome: PAYMENT_OUTCOME.verified },
@@ -297,16 +304,48 @@ export const SEED_PAYMENTS: readonly SeedPayment[] = [
 		reason: REJECTION_REASON
 	},
 
-	// Five still waiting — what an admin opens `/admin/payments` to decide.
-	{ unit: 'B-01', payer: 10, amount: DUES_AMOUNT, day: 13, outcome: PAYMENT_OUTCOME.pending },
-	{ unit: 'B-02', payer: 11, amount: DUES_AMOUNT, day: 13, outcome: PAYMENT_OUTCOME.pending },
-	{ unit: 'B-03', payer: 12, amount: DUES_AMOUNT, day: 14, outcome: PAYMENT_OUTCOME.pending },
-	{ unit: 'B-05', payer: 14, amount: DUES_AMOUNT, day: 14, outcome: PAYMENT_OUTCOME.pending },
-	{ unit: 'B-06', payer: 15, amount: DUES_AMOUNT, day: 15, outcome: PAYMENT_OUTCOME.pending }
+	// Five still waiting — what an admin opens `/admin/payments` to decide. Four of them are the
+	// remainder of a house that has paid part of its month, so the deciding screen shows a real
+	// Tagihan to settle; the fifth is for a house that is already lunas, which is the other case that
+	// screen has to explain ("seluruh nominal menjadi saldo titipan").
+	{ unit: 'B-01', payer: 10, amount: 60_000, day: 13, outcome: PAYMENT_OUTCOME.pending },
+	{ unit: 'B-02', payer: 11, amount: 60_000, day: 13, outcome: PAYMENT_OUTCOME.pending },
+	{ unit: 'B-03', payer: 12, amount: 60_000, day: 14, outcome: PAYMENT_OUTCOME.pending },
+	{ unit: 'B-04', payer: 13, amount: 60_000, day: 14, outcome: PAYMENT_OUTCOME.pending },
+	{ unit: 'B-05', payer: 14, amount: DUES_AMOUNT, day: 15, outcome: PAYMENT_OUTCOME.pending }
 ];
 
-/** The houses the table above leaves without a single Pembayaran — the daftar penunggak. */
-export const OVERDUE_UNIT_LABELS = ['B-08', 'B-09', 'B-10'] as const;
+/** The houses the table above leaves without a single Pembayaran. */
+export const UNPAID_UNIT_LABELS = ['B-08', 'B-09', 'B-10'] as const;
+
+/**
+ * Every house `/admin/overdue` lists, which is **not** the same set as `UNPAID_UNIT_LABELS`.
+ *
+ * `listOverdueUnits` in `src/lib/server/services/dues/queries.ts` calls a house menunggak when a
+ * Tagihan of its own is past its due date and still owes money — whether or not anybody has paid
+ * anything towards it. So the four houses that have paid 90.000 of 150.000 are on that list beside
+ * the three that have paid nothing: they owe 60.000 each until the Pembayaran waiting on
+ * `/admin/payments` is verified, which is exactly the state that makes those pending rows worth
+ * deciding.
+ *
+ * Seven rather than three is a deliberate change from the first version of this table, where the
+ * four part-paid houses were topped up by a second *verified* payment. That left every pending
+ * Pembayaran belonging to a house with nothing outstanding, so `/admin/payments` explained five
+ * times over that the whole amount would become saldo titipan and never once showed the ordinary
+ * case the verify screen exists for.
+ */
+export const OVERDUE_UNIT_LABELS = [
+	'B-01',
+	'B-02',
+	'B-03',
+	'B-04',
+	'B-08',
+	'B-09',
+	'B-10'
+] as const;
+
+/** What the verified Pembayaran above add up to, and therefore what reaches the buku kas as iuran. */
+export const TOTAL_VERIFIED_PAYMENTS = 2_410_000;
 
 /** One Transaksi Kas keluar the Data Contoh records. */
 export interface SeedCashExpense {
@@ -335,63 +374,69 @@ const REPAIRS = 'Perbaikan';
  * — and its Koreksi is an `income` row, so the expense count is unaffected either way.
  */
 export const SEED_CASH_EXPENSES: readonly SeedCashExpense[] = [
-	{
-		category: CLEANING,
-		amount: 1_200_000,
-		description: 'Honor petugas kebersihan pekan 1',
-		day: 2
-	},
-	{ category: SECURITY, amount: 1_800_000, description: 'Honor satpam pekan 1', day: 2 },
-	{ category: ELECTRICITY, amount: 640_000, description: 'Listrik lampu jalan blok A', day: 3 },
-	{ category: REPAIRS, amount: 350_000, description: 'Perbaikan engsel gerbang depan', day: 3 },
-	{ category: CLEANING, amount: 275_000, description: 'Pembelian kantong sampah besar', day: 4 },
-	{ category: SECURITY, amount: 150_000, description: 'Penggantian senter pos jaga', day: 4 },
-	{ category: ELECTRICITY, amount: 420_000, description: 'Listrik pompa air taman', day: 5 },
-	{ category: REPAIRS, amount: 890_000, description: 'Pengecatan pos satpam', day: 5 },
-	{
-		category: CLEANING,
-		amount: 1_200_000,
-		description: 'Honor petugas kebersihan pekan 2',
-		day: 6
-	},
-	{ category: SECURITY, amount: 1_800_000, description: 'Honor satpam pekan 2', day: 6 },
-	{ category: REPAIRS, amount: 240_000, description: 'Perbaikan keran taman bermain', day: 7 },
-	{ category: CLEANING, amount: 180_000, description: 'Sewa gerobak sampah tambahan', day: 7 },
-	{ category: ELECTRICITY, amount: 310_000, description: 'Listrik balai warga', day: 8 },
-	{ category: SECURITY, amount: 95_000, description: 'Buku tamu dan alat tulis pos jaga', day: 8 },
-	{
-		category: CLEANING,
-		amount: 1_200_000,
-		description: 'Honor petugas kebersihan pekan 3',
-		day: 9
-	},
-	{ category: REPAIRS, amount: 1_450_000, description: 'Perbaikan saluran air blok B', day: 10 },
-	{ category: SECURITY, amount: 1_800_000, description: 'Honor satpam pekan 3', day: 10 },
+	{ category: CLEANING, amount: 600_000, description: 'Honor petugas kebersihan pekan 1', day: 2 },
+	{ category: SECURITY, amount: 750_000, description: 'Honor satpam pekan 1', day: 2 },
+	{ category: ELECTRICITY, amount: 420_000, description: 'Listrik lampu jalan blok A', day: 3 },
+	{ category: REPAIRS, amount: 260_000, description: 'Perbaikan engsel gerbang depan', day: 3 },
+	{ category: CLEANING, amount: 185_000, description: 'Pembelian kantong sampah besar', day: 4 },
+	{ category: SECURITY, amount: 120_000, description: 'Penggantian senter pos jaga', day: 4 },
+	{ category: ELECTRICITY, amount: 280_000, description: 'Listrik pompa air taman', day: 5 },
+	{ category: REPAIRS, amount: 500_000, description: 'Pengecatan pos satpam', day: 5 },
+	{ category: CLEANING, amount: 600_000, description: 'Honor petugas kebersihan pekan 2', day: 6 },
+	{ category: SECURITY, amount: 750_000, description: 'Honor satpam pekan 2', day: 6 },
+	{ category: REPAIRS, amount: 190_000, description: 'Perbaikan keran taman bermain', day: 7 },
+	{ category: CLEANING, amount: 145_000, description: 'Sewa gerobak sampah tambahan', day: 7 },
+	{ category: ELECTRICITY, amount: 210_000, description: 'Listrik balai warga', day: 8 },
+	{ category: SECURITY, amount: 75_000, description: 'Buku tamu dan alat tulis pos jaga', day: 8 },
+	{ category: CLEANING, amount: 600_000, description: 'Honor petugas kebersihan pekan 3', day: 9 },
+	{ category: REPAIRS, amount: 850_000, description: 'Perbaikan saluran air blok B', day: 10 },
+	{ category: SECURITY, amount: 750_000, description: 'Honor satpam pekan 3', day: 10 },
 	{
 		category: ELECTRICITY,
-		amount: 275_000,
+		amount: 185_000,
 		description: 'Penggantian lampu jalan blok B',
 		day: 11
 	},
-	{ category: CLEANING, amount: 320_000, description: 'Pembelian sapu dan pengki', day: 12 },
-	{ category: REPAIRS, amount: 560_000, description: 'Perbaikan atap pos ronda', day: 12 },
-	{ category: SECURITY, amount: 220_000, description: 'Servis palang pintu masuk', day: 13 },
+	{ category: CLEANING, amount: 210_000, description: 'Pembelian sapu dan pengki', day: 12 },
+	{ category: REPAIRS, amount: 380_000, description: 'Perbaikan atap pos ronda', day: 12 },
+	{ category: SECURITY, amount: 170_000, description: 'Servis palang pintu masuk', day: 13 },
+	{ category: CLEANING, amount: 600_000, description: 'Honor petugas kebersihan pekan 4', day: 14 },
+	{ category: ELECTRICITY, amount: 320_000, description: 'Listrik lampu taman bermain', day: 15 },
+	{ category: SECURITY, amount: 750_000, description: 'Honor satpam pekan 4', day: 16 },
+	{ category: REPAIRS, amount: 95_000, description: 'Pembelian gembok pagar samping', day: 17 },
 	{
 		category: CLEANING,
-		amount: 1_200_000,
-		description: 'Honor petugas kebersihan pekan 4',
-		day: 14
-	},
-	{ category: ELECTRICITY, amount: 480_000, description: 'Listrik lampu taman bermain', day: 15 },
-	{ category: SECURITY, amount: 1_800_000, description: 'Honor satpam pekan 4', day: 16 },
-	{ category: REPAIRS, amount: 130_000, description: 'Pembelian gembok pagar samping', day: 17 },
-	{
-		category: CLEANING,
-		amount: 265_000,
+		amount: 175_000,
 		description: 'Pembelian cairan pembersih saluran',
 		day: 18
 	}
 ];
+
+/**
+ * What the twenty-six rows above add up to: 10.170.000.
+ *
+ * Written down rather than left implicit because it is half of the arithmetic that keeps the buku
+ * kas solvent, and `tests/unit/seed-dev.test.ts` checks the table still sums to it. The other half
+ * is the money coming in: 12.500.000 Saldo Awal, 2.410.000 of verified iuran (see `SEED_PAYMENTS`)
+ * and the 260.000 the Koreksi puts back — 15.170.000 in all, leaving a closing Saldo kas of
+ * 5.000.000 and a running balance that never drops below about 7.000.000 mid-month.
+ *
+ * ## Why these amounts, and why the fix is here rather than on the Saldo Awal
+ *
+ * The first version of this table paid a twenty-house komplek 1.800.000 a week for satpam and
+ * 1.200.000 a week for kebersihan, which came to 19.250.000 of expenses against 15.150.000 of
+ * income: the running balance went negative around the fifteenth and the month closed at
+ * -3.750.000. A komplek cannot pay out cash it does not hold, so `/admin/cash` showed a negative
+ * "Saldo akhir" and the Beranda card a negative Saldo kas — which is not a cash book anybody can
+ * learn the screens from, and not the "saldo berjalan masuk akal" `docs/spec-data-contoh-v1.md`
+ * story 7 asks for.
+ *
+ * Raising `OPENING_BALANCE_AMOUNT` would have hidden the real problem rather than fixed it: the
+ * outgoings were about six times a twenty-house complex's monthly iuran income, and the Saldo Awal
+ * is a figure the spec fixes at 12.500.000. So the weekly honor and the two largest repairs carry
+ * most of the reduction instead. Every row keeps its category, its keterangan and its day.
+ */
+export const TOTAL_CASH_EXPENSES = 10_170_000;
 
 /**
  * Which row of `SEED_CASH_EXPENSES` the Data Contoh corrects, and the alasan the Koreksi carries.
