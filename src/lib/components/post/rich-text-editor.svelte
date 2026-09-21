@@ -312,7 +312,7 @@
 				disabled={!editor}
 				aria-pressed={activeActionIds.includes(action.id)}
 				onclick={() => runAction(action)}
-				class="h-9 rounded-md border border-border bg-background px-2.5 text-xs font-medium hover:bg-muted disabled:opacity-50 aria-pressed:bg-muted aria-pressed:text-foreground"
+				class="h-11 rounded-md border border-border bg-background px-2.5 text-xs font-medium hover:bg-muted disabled:opacity-50 aria-pressed:bg-muted aria-pressed:text-foreground md:h-9"
 			>
 				{action.label()}
 			</button>
@@ -322,7 +322,7 @@
 			disabled={!editor}
 			aria-pressed={linkActive}
 			onclick={openLinkDialog}
-			class="h-9 rounded-md border border-border bg-background px-2.5 text-xs font-medium hover:bg-muted disabled:opacity-50 aria-pressed:bg-muted aria-pressed:text-foreground"
+			class="h-11 rounded-md border border-border bg-background px-2.5 text-xs font-medium hover:bg-muted disabled:opacity-50 aria-pressed:bg-muted aria-pressed:text-foreground md:h-9"
 		>
 			{m.adminPosts_editorLink()}
 		</button>
