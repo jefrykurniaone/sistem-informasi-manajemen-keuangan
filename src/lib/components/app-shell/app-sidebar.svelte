@@ -139,7 +139,12 @@
 			<Sidebar.MenuItem>
 				<Sidebar.MenuButton size="lg" tooltipContent={complexName}>
 					{#snippet child({ props })}
-						<a {...props} href={resolve('/')}>
+						<!-- `aria-label` names this link on its own, independent of the span: the icon is
+						     `aria-hidden` (`@lucide/svelte`'s default) and the span itself gets
+						     `display: none` in icon mode (`sidebar-menu-button.svelte`'s `lg` variant), so
+						     without it the link would have no accessible name at all when collapsed. The
+						     text is identical to what the wide sidebar shows, so WCAG 2.5.3 still holds. -->
+						<a {...props} href={resolve('/')} aria-label={complexName}>
 							<BuildingIcon />
 							<span class="truncate font-semibold tracking-tight">{complexName}</span>
 						</a>
