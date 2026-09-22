@@ -62,6 +62,10 @@ async function signInAsSuperuser(page: Page): Promise<void> {
  * `Cari` navigates to `?q=A`, which detaches the pre-search list and its "Detail" links, so the
  * navigation is awaited (by URL, then by network idling) before the first "Detail" link is
  * touched, rather than clicking a link that is about to be torn down.
+ *
+ * `.first()` on "Detail" is intentional, not a shortcut around ambiguity: the block-A results page
+ * has one "Detail" link per unit, by design, and the ordering comment above is what makes "first"
+ * mean A-01 rather than an arbitrary row.
  */
 async function openUnitA01Finance(page: Page): Promise<void> {
 	await open(page, '/admin/units');
@@ -105,6 +109,9 @@ for (const viewport of VIEWPORTS) {
 		await signInAsSuperuser(page);
 		await openUnitA01Finance(page);
 
+		// `.first()` is intentional here too: A-01 can carry more than one un-voided Tagihan (a
+		// current one plus carried-over history), each with its own "Batalkan tagihan" button, and
+		// this spec only needs one of them open to measure the dialog.
 		await page.getByRole('button', { name: 'Batalkan tagihan' }).first().click();
 		const dialog = page.locator('dialog[open]');
 		await expect(dialog).toBeVisible();
@@ -114,7 +121,11 @@ for (const viewport of VIEWPORTS) {
 		expect(offset.y).toBeLessThanOrEqual(CENTER_TOLERANCE_PIXELS);
 
 		// Never confirm: Data Contoh is shared across this run's specs.
-		await page.getByRole('button', { name: 'Batal' }).click();
+		//
+		// Scoped to `dialog`, and matched exactly, because Playwright's `name` is a case-insensitive
+		// substring match: an unscoped, inexact "Batal" also resolves every "Batalkan tagihan" button
+		// on the page behind the dialog, which is what made this a strict-mode violation before.
+		await dialog.getByRole('button', { name: 'Batal', exact: true }).click();
 		await expect(dialog).toBeHidden();
 	});
 }
