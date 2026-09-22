@@ -19,7 +19,7 @@ import type { Role } from '$lib/server/db/schema/authz';
  *
  * It imports `$lib/server/authz`, so SvelteKit treats it as a server-only module and refuses to
  * pull it into the browser bundle. That is the right side of the fence for the permission filter —
- * and it means the values in here have to survive `devalue`, because `src/routes/+layout.server.ts`
+ * and it means the values in here have to survive `devalue`, because `src/routes/(app)/+layout.server.ts`
  * sends `visibleMenu`'s result to the browser as ordinary load data. A paraglide message function
  * and a Svelte icon component do not survive that trip, so a label is stored as its message *key*
  * and resolved with `m[labelKey]()` where it is rendered, and the group icons live beside the
