@@ -211,7 +211,11 @@ test('a resident reports a complaint with one photo, an admin moves it to selesa
 	const adminPage = await adminContext.newPage();
 	await signUpAdmin(adminPage, adminEmail, 'Pengurus E2E Keluhan');
 
-	await adminPage.goto(`/admin/complaints/${complaintId}`);
+	// `open()`, not a bare `goto`: `changeStatus` below clicks "Ubah status", which only opens the
+	// dialog through an `onclick` handler (`showModal()`), so a click before hydration does nothing,
+	// and `getByLabel('Status baru')` would then wait the full 30 seconds for a dialog that never
+	// shows.
+	await open(adminPage, `/admin/complaints/${complaintId}`);
 	await expect(adminPage.getByRole('heading', { level: 1 })).toHaveText(title);
 
 	await changeStatus(adminPage, 'Ditinjau');
