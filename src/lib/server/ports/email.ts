@@ -1,4 +1,4 @@
-import { createTransport, type Transporter } from 'nodemailer';
+import { createTransport, type SMTPTransportOptions, type Transporter } from 'nodemailer';
 
 /**
  * `EmailSender` — the port that hands one finished email to a mail server, and the vocabulary
@@ -100,6 +100,15 @@ export interface SmtpSettings {
 	readonly port: number;
 	/** The address every email is sent from. */
 	readonly from: string;
+	/**
+	 * Credentials for a mail server that requires authentication. `undefined` for one that does
+	 * not, which is Mailpit in the local environment. Set together, never alone: `readSmtpSettings`
+	 * enforces that below.
+	 */
+	readonly auth?: {
+		readonly user: string;
+		readonly pass: string;
+	};
 }
 
 /** The lowest SMTP response code that means "this message will never be accepted". */
@@ -112,12 +121,42 @@ const PAST_LAST_SMTP_CODE = 600;
 const HIGHEST_PORT = 65_535;
 
 /**
+ * Turns `SmtpSettings` into the options `nodemailer`'s SMTP transport takes: `host`, `port` and
+ * `secure: false` always, plus `auth` and `requireTLS: true` together when `settings.auth` is
+ * set. Exported so a test can assert on this exact shape, the same object a running
+ * `SmtpEmailSender` hands to `createTransport`, without constructing a transport or opening a
+ * socket to do it.
+ */
+export function smtpTransportOptions(settings: SmtpSettings): SMTPTransportOptions {
+	const base: SMTPTransportOptions = {
+		host: settings.host,
+		port: settings.port,
+		// `secure: false` means "do not start the connection inside TLS". It does not forbid
+		// STARTTLS: when a server offers it, the client still upgrades. Mailpit offers neither.
+		secure: false
+	};
+	if (settings.auth === undefined) {
+		return base;
+	}
+	return {
+		...base,
+		auth: settings.auth,
+		// Offered STARTTLS is not enough once a password is going over the wire: `requireTLS`
+		// fails the connection instead of falling back to sending credentials in the clear to a
+		// server that did not upgrade.
+		requireTLS: true
+	};
+}
+
+/**
  * Sends email over SMTP. In the local environment that is Mailpit, which accepts everything and
  * shows it in a web interface at http://localhost:8025 instead of delivering it to anyone.
  *
- * No authentication and no forced TLS: those are settings of a real provider, and this
- * application has not got one yet. Both are one option away when it does — which is the reason
- * for using a maintained SMTP client rather than writing the protocol by hand here.
+ * Authentication is optional, decided by whether `settings.auth` is set. Unauthenticated is
+ * Mailpit's case: no credentials, no forced TLS, the same transport this class has always built.
+ * The moment credentials are given, STARTTLS becomes mandatory (`requireTLS: true`) rather than
+ * merely offered, so a login and password never cross the wire to a server that only pretended to
+ * upgrade. See `smtpTransportOptions` for the exact shape handed to the underlying SMTP client.
  */
 export class SmtpEmailSender implements EmailSender {
 	readonly #from: string;
@@ -125,14 +164,7 @@ export class SmtpEmailSender implements EmailSender {
 
 	constructor(settings: SmtpSettings) {
 		this.#from = settings.from;
-		this.#transport = createTransport({
-			host: settings.host,
-			port: settings.port,
-			// `secure: false` means "do not start the connection inside TLS". It does not forbid
-			// STARTTLS: when a server offers it, the client still upgrades. Mailpit offers neither,
-			// and a provider that requires TLS will be served by this same setting.
-			secure: false
-		});
+		this.#transport = createTransport(smtpTransportOptions(settings));
 	}
 
 	async send(message: EmailMessage): Promise<void> {
@@ -195,13 +227,36 @@ export function smtpEmailSenderFromEnvironment(
  *
  * @throws {Error} with a message naming the variable, when one is missing or unusable. The
  *   driver's own failure for an empty host is a `TypeError` several frames deep in a socket call,
- *   which says nothing about which line of `.env` is wrong.
+ *   which says nothing about which line of `.env` is wrong. The same is true of `SMTP_USER` and
+ *   `SMTP_PASS`: set alone, either is reported by name rather than left to fail inside the SMTP
+ *   client with no clue which variable was forgotten.
  */
 export function readSmtpSettings(environment: NodeJS.ProcessEnv = process.env): SmtpSettings {
 	return {
 		host: requiredSetting(environment, 'SMTP_HOST'),
 		port: readPort(requiredSetting(environment, 'SMTP_PORT')),
-		from: requiredSetting(environment, 'EMAIL_FROM')
+		from: requiredSetting(environment, 'EMAIL_FROM'),
+		auth: readSmtpAuth(environment)
+	};
+}
+
+/**
+ * Reads `SMTP_USER` and `SMTP_PASS` as an optional pair. `undefined` when neither is set, which
+ * is Mailpit's case. When exactly one is set, that is a configuration mistake rather than a
+ * partial setup nobody intended, so it is reported the same way a missing required setting is:
+ * by the name of the variable that is missing, through `requiredSetting`.
+ */
+function readSmtpAuth(
+	environment: NodeJS.ProcessEnv
+): { readonly user: string; readonly pass: string } | undefined {
+	const user = optionalSetting(environment, 'SMTP_USER');
+	const pass = optionalSetting(environment, 'SMTP_PASS');
+	if (user === undefined && pass === undefined) {
+		return undefined;
+	}
+	return {
+		user: user ?? requiredSetting(environment, 'SMTP_USER'),
+		pass: pass ?? requiredSetting(environment, 'SMTP_PASS')
 	};
 }
 
@@ -214,6 +269,15 @@ function requiredSetting(environment: NodeJS.ProcessEnv, name: string): string {
 		);
 	}
 	return value;
+}
+
+/**
+ * Reads one variable that is allowed to be absent, treating a blank value the same as an absent
+ * one: `SMTP_USER=` with nothing after it is not a username.
+ */
+function optionalSetting(environment: NodeJS.ProcessEnv, name: string): string | undefined {
+	const value = environment[name]?.trim();
+	return value ? value : undefined;
 }
 
 /** Parses a port number, rejecting anything that is not one. */
