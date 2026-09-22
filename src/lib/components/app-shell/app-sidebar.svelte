@@ -12,16 +12,22 @@
 	import { page } from '$app/state';
 	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
 	import { useSidebar } from '$lib/components/ui/sidebar/index.js';
+	import { complexName } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import LanguageSwitcher from './language-switcher.svelte';
 	import NavGroup, { staticRoute } from './nav-group.svelte';
 	import type { GroupKey, MenuGroup, MenuItem } from './menu.js';
 
 	/**
-	 * The sidebar every route sits beside: the brand, the role-aware menu, and a foot holding the
-	 * language choice and the way out.
+	 * The sidebar every page of the `(app)` group sits beside: the brand, the role-aware menu, and a
+	 * foot holding the language choice and the way out. The sign-in pages and the public board carry
+	 * no sidebar at all (#170); the signed-out branch below is only ever seen on an `(app)` error page
+	 * reached without a session, since every page of the group sends such a visitor to `/login`.
 	 *
-	 * It renders only what `+layout.server.ts` already decided a visitor may see — `menu` is the
+	 * The brand is `complexName` from `$lib/complex-name`, the installation's `PUBLIC_COMPLEX_NAME`,
+	 * rather than a message: a complex's name does not change with the interface language.
+	 *
+	 * It renders only what `(app)/+layout.server.ts` already decided a visitor may see: `menu` is the
 	 * result of `visibleMenu()`, which answers from the same `PERMISSIONS` table `requirePermission`
 	 * uses, so a link never claims a right the guard would refuse. Showing a link is not
 	 * authorization: each page behind it still checks for itself.
@@ -40,8 +46,8 @@
 
 	/**
 	 * The icon of each group, keyed by `MenuGroup.key`. It lives here rather than in `menu.ts`
-	 * because a Svelte component cannot survive the trip through `+layout.server.ts`'s load data —
-	 * see the note at the top of `menu.ts`.
+	 * because a Svelte component cannot survive the trip through `(app)/+layout.server.ts`'s load
+	 * data (see the note at the top of `menu.ts`).
 	 */
 	const GROUP_ICON: Readonly<Record<GroupKey, typeof LayoutDashboardIcon>> = {
 		home: LayoutDashboardIcon,
@@ -131,11 +137,11 @@
 	<Sidebar.Header>
 		<Sidebar.Menu>
 			<Sidebar.MenuItem>
-				<Sidebar.MenuButton size="lg" tooltipContent={m.appShell_brand()}>
+				<Sidebar.MenuButton size="lg" tooltipContent={complexName}>
 					{#snippet child({ props })}
 						<a {...props} href={resolve('/')}>
 							<BuildingIcon />
-							<span class="font-semibold tracking-tight">{m.appShell_brand()}</span>
+							<span class="truncate font-semibold tracking-tight">{complexName}</span>
 						</a>
 					{/snippet}
 				</Sidebar.MenuButton>

@@ -17,6 +17,14 @@ jobs:
     name: check, lint, test, build
     runs-on: ubuntu-latest
 
+    # `src/lib/complex-name.ts` reads `PUBLIC_COMPLEX_NAME` through `$env/static/public`, whose
+    # exports SvelteKit generates from the environment it sees. The runner has no `.env`, so without
+    # this line `check` fails with "has no exported member 'PUBLIC_COMPLEX_NAME'", `build` with "not
+    # exported", and `test` on the unit test that imports the module. Job level, because all three
+    # steps need it. Empty on purpose: the module shows "Komplek" for an empty value.
+    env:
+      PUBLIC_COMPLEX_NAME: ''
+
     # The PostgreSQL service for the `test` step. The credentials below are single-use values for
     # this container only: created and destroyed inside the same job, unreachable from outside the
     # runner, and not a reference to a repository secret. This is not a hardcoded-credential

@@ -286,11 +286,13 @@ test('an admin publishes a kegiatan, and a browser with no session opens it from
 		new RegExp(`/posts/${postId}$`)
 	);
 
-	// The public navigation carries no link a signed-out visitor could not use — see
-	// `tests/e2e/layout.spec.ts` for the same check on the home page; this proves it holds here too.
-	const nav = anonymousPage.getByRole('navigation', { name: 'Navigasi utama' });
-	await expect(nav.getByRole('link', { name: 'Kelola Peran' })).toHaveCount(0);
-	await expect(nav.getByRole('button', { name: 'Keluar' })).toHaveCount(0);
+	// A shared Post opens outside the app shell (#170): no sidebar part at all, and the public
+	// header offers the signed-out visitor the way in. `tests/e2e/layout.spec.ts` makes the same
+	// claim for `/posts`, `/login` and `/register`; this proves it holds on a single Post too.
+	await expect(anonymousPage.locator('[data-sidebar]')).toHaveCount(0);
+	await expect(
+		anonymousPage.getByRole('banner').getByRole('link', { name: 'Masuk' })
+	).toBeVisible();
 
 	await anonymousContext.close();
 });
