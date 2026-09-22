@@ -50,26 +50,51 @@ async function signInAsSuperuser(page: Page): Promise<void> {
 	await expect(page).toHaveURL(/\/$/);
 }
 
-/** Navigates to unit `A-01`'s Keuangan screen through the admin Unit list, as a person would. */
+/**
+ * Navigates to unit `A-01`'s Keuangan screen through the admin Unit list, as a person would.
+ *
+ * Searches block `A` rather than "A-01": `src/lib/server/services/unit/queries.ts` ORs an `ilike`
+ * against `units.block` and `units.number` separately (line 124), so a combined "A-01" matches
+ * neither column and the list comes back empty. The same query orders its rows
+ * `asc(units.block), asc(units.number)` (line 42), so of the ten Data Contoh units in block `A`,
+ * `A-01` sorts first: the first "Detail" link on the results page is always its own.
+ *
+ * `Cari` navigates to `?q=A`, which detaches the pre-search list and its "Detail" links, so the
+ * navigation is awaited (by URL, then by network idling) before the first "Detail" link is
+ * touched, rather than clicking a link that is about to be torn down.
+ */
 async function openUnitA01Finance(page: Page): Promise<void> {
 	await open(page, '/admin/units');
-	await page.getByLabel('Cari blok atau nomor').fill('A-01');
+	await page.getByLabel('Cari blok atau nomor').fill('A');
 	await page.getByRole('button', { name: 'Cari' }).click();
+	await expect(page).toHaveURL(/[?&]q=A(&|$)/);
+	await page.waitForLoadState('networkidle');
 	await page.getByRole('link', { name: 'Detail' }).first().click();
 	await page.getByRole('link', { name: 'Keuangan dan saldo titipan' }).click();
+
+	// Confirms the click above really landed on A-01, not some other block-A unit that a future
+	// reseed or reorder of Data Contoh could put first.
+	await expect(page).toHaveURL(/\/admin\/units\/[^/]+\/finance$/);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Keuangan Blok A No 01');
 }
 
 /**
  * The distance, on each axis, between `locator`'s `getBoundingClientRect()` center and the
  * viewport's center, per the ticket's acceptance criterion. Read inside one `evaluate` call so the
- * rect and `window.innerWidth`/`innerHeight` come from the same page, in the same layout pass.
+ * rect and the viewport size come from the same page, in the same layout pass.
+ *
+ * Measured against `document.documentElement.clientWidth`/`clientHeight`, not
+ * `window.innerWidth`/`innerHeight`: `clientWidth`/`clientHeight` is the layout viewport a
+ * `dialog:modal`'s `margin: auto` actually centers into, while `innerWidth`/`innerHeight` also
+ * counts a classic scrollbar's width, which would read a centered dialog as off by half that width.
  */
 async function centerOffsetFromViewport(locator: Locator): Promise<{ x: number; y: number }> {
 	return locator.evaluate((el) => {
 		const rect = el.getBoundingClientRect();
+		const { clientWidth, clientHeight } = document.documentElement;
 		return {
-			x: Math.abs(rect.x + rect.width / 2 - window.innerWidth / 2),
-			y: Math.abs(rect.y + rect.height / 2 - window.innerHeight / 2)
+			x: Math.abs(rect.x + rect.width / 2 - clientWidth / 2),
+			y: Math.abs(rect.y + rect.height / 2 - clientHeight / 2)
 		};
 	});
 }
