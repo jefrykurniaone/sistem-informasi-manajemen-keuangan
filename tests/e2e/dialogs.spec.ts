@@ -3,14 +3,14 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 /**
  * Proves `dialog:modal { margin: auto; }` in `src/app.css` really centers an open `<dialog>` on the
  * viewport, at a desktop and a phone size. Tailwind v4's Preflight strips the browser's default
- * centering, and this rule is what puts it back — see the comment beside it in `src/app.css`.
+ * centering, and this rule is what puts it back (see the comment beside it in `src/app.css`).
  *
  * The dialog under test is the "batalkan Tagihan" confirmation on the Data Contoh unit `A-01`,
  * `src/lib/components/dues/void-invoice-dialog.svelte`, opened from
  * `src/routes/(app)/admin/units/[id]/finance/+page.svelte`. It is only ever cancelled here: Data
  * Contoh is shared across specs in this run, and confirming would void a seeded Tagihan for good.
  *
- * The sign-in helper is copied from `tests/e2e/payments.spec.ts` rather than imported — importing a
+ * The sign-in helper is copied from `tests/e2e/payments.spec.ts` rather than imported: importing a
  * spec file would register its tests a second time, and this repository keeps no shared e2e helper
  * module yet.
  */
@@ -33,7 +33,7 @@ const VIEWPORTS = [
 
 /**
  * Opens `path` and waits until the page can be typed into. Copied from `tests/e2e/payments.spec.ts`
- * and `tests/e2e/auth.spec.ts` — hydration overwrites anything typed before it runs, and
+ * and `tests/e2e/auth.spec.ts`: hydration overwrites anything typed before it runs, and
  * `networkidle` is the signal that it has already happened.
  */
 async function open(page: Page, path: string): Promise<void> {
@@ -59,23 +59,19 @@ async function openUnitA01Finance(page: Page): Promise<void> {
 	await page.getByRole('link', { name: 'Keuangan dan saldo titipan' }).click();
 }
 
-/** The distance, on each axis, between `locator`'s bounding-box center and the viewport's center. */
-async function centerOffsetFromViewport(
-	page: Page,
-	locator: Locator
-): Promise<{ x: number; y: number }> {
-	const box = await locator.boundingBox();
-	if (!box) {
-		throw new Error('The dialog has no bounding box - is it open?');
-	}
-	const viewport = await page.evaluate(() => ({
-		width: window.innerWidth,
-		height: window.innerHeight
-	}));
-	return {
-		x: Math.abs(box.x + box.width / 2 - viewport.width / 2),
-		y: Math.abs(box.y + box.height / 2 - viewport.height / 2)
-	};
+/**
+ * The distance, on each axis, between `locator`'s `getBoundingClientRect()` center and the
+ * viewport's center, per the ticket's acceptance criterion. Read inside one `evaluate` call so the
+ * rect and `window.innerWidth`/`innerHeight` come from the same page, in the same layout pass.
+ */
+async function centerOffsetFromViewport(locator: Locator): Promise<{ x: number; y: number }> {
+	return locator.evaluate((el) => {
+		const rect = el.getBoundingClientRect();
+		return {
+			x: Math.abs(rect.x + rect.width / 2 - window.innerWidth / 2),
+			y: Math.abs(rect.y + rect.height / 2 - window.innerHeight / 2)
+		};
+	});
 }
 
 for (const viewport of VIEWPORTS) {
@@ -88,7 +84,7 @@ for (const viewport of VIEWPORTS) {
 		const dialog = page.locator('dialog[open]');
 		await expect(dialog).toBeVisible();
 
-		const offset = await centerOffsetFromViewport(page, dialog);
+		const offset = await centerOffsetFromViewport(dialog);
 		expect(offset.x).toBeLessThanOrEqual(CENTER_TOLERANCE_PIXELS);
 		expect(offset.y).toBeLessThanOrEqual(CENTER_TOLERANCE_PIXELS);
 
