@@ -133,4 +133,8 @@
 	html {
 		@apply font-sans;
 	}
+	/* Tailwind v4's Preflight removes the browser's default centering for an open dialog. */
+	dialog:modal {
+		margin: auto;
+	}
 }
