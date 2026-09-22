@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
 	PermanentEmailError,
 	readSmtpSettings,
+	smtpTransportOptions,
 	SmtpEmailSender,
 	type EmailMessage
 } from '$lib/server/ports/email';
@@ -224,6 +225,66 @@ describe('readSmtpSettings', () => {
 		{ name: 'past the highest port', input: '70000' }
 	])('rejects a port that is $name', ({ input }) => {
 		expect(() => readSmtpSettings({ ...complete, SMTP_PORT: input })).toThrow(TypeError);
+	});
+
+	it('has no auth when neither SMTP_USER nor SMTP_PASS is set, the Mailpit case', () => {
+		expect(readSmtpSettings(complete).auth).toBeUndefined();
+	});
+
+	it('reads SMTP_USER and SMTP_PASS into auth when both are set', () => {
+		expect(
+			readSmtpSettings({
+				...complete,
+				SMTP_USER: 'no-reply@gmail.com',
+				SMTP_PASS: 'an-app-password'
+			}).auth
+		).toEqual({ user: 'no-reply@gmail.com', pass: 'an-app-password' });
+	});
+
+	it('treats a blank SMTP_USER and a blank SMTP_PASS as both absent, same as Mailpit', () => {
+		expect(readSmtpSettings({ ...complete, SMTP_USER: '   ', SMTP_PASS: '' }).auth).toBeUndefined();
+	});
+
+	it.each([
+		{ set: 'SMTP_USER', missing: 'SMTP_PASS' },
+		{ set: 'SMTP_PASS', missing: 'SMTP_USER' }
+	])('rejects $set set alone, naming $missing as the one that is missing', ({ set, missing }) => {
+		expect(() => readSmtpSettings({ ...complete, [set]: 'a-value' })).toThrow(
+			new RegExp(`${missing} is not set`)
+		);
+	});
+
+	it('treats a blank partner the same as an absent one: SMTP_USER set with a blank SMTP_PASS is reported as SMTP_PASS missing', () => {
+		expect(() =>
+			readSmtpSettings({ ...complete, SMTP_USER: 'no-reply@gmail.com', SMTP_PASS: '  ' })
+		).toThrow(/SMTP_PASS is not set/);
+	});
+});
+
+describe('smtpTransportOptions', () => {
+	const settings = { host: 'localhost', port: 1025, from: 'no-reply@komplek.local' };
+
+	it('has no auth and no requireTLS when the settings carry no auth, the Mailpit case', () => {
+		expect(smtpTransportOptions(settings)).toEqual({
+			host: 'localhost',
+			port: 1025,
+			secure: false
+		});
+	});
+
+	it('adds auth and requireTLS when the settings carry auth', () => {
+		const withAuth = {
+			...settings,
+			auth: { user: 'no-reply@gmail.com', pass: 'an-app-password' }
+		};
+
+		expect(smtpTransportOptions(withAuth)).toEqual({
+			host: 'localhost',
+			port: 1025,
+			secure: false,
+			auth: { user: 'no-reply@gmail.com', pass: 'an-app-password' },
+			requireTLS: true
+		});
 	});
 });
 
