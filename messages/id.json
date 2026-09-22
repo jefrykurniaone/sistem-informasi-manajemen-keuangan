@@ -1075,5 +1075,6 @@
 	"dashboard_residentPaymentButton": "Laporkan Pembayaran",
 	"dashboard_residentComplaintButton": "Lapor Keluhan",
 	"dashboard_residentNoUnitTitle": "Rumah Anda belum ditautkan",
-	"dashboard_residentNoUnitBody": "Begitu pengurus menautkan Anda ke sebuah rumah, Tagihan dan Saldo Titipan Anda akan tampil di sini."
+	"dashboard_residentNoUnitBody": "Begitu pengurus menautkan Anda ke sebuah rumah, Tagihan dan Saldo Titipan Anda akan tampil di sini.",
+	"auth_tagline": "Iuran, kas, dan kabar komplek dalam satu tempat"
 }
