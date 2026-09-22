@@ -1,0 +1,68 @@
+# Production topology: `docker compose -f docker-compose.prod.yml up -d` on the server, next to a
+# `.env` written from .env.production.example. The image is built elsewhere and pulled by tag, so
+# nothing here builds. There is no database service (PostgreSQL is Supabase, reached through
+# DATABASE_URL) and no Mailpit (mail goes to the provider in SMTP_HOST).
+name: komplek-prod
+
+services:
+  # Applies pending migrations and exits. `app` is only started once this exits with status 0, so
+  # new code never starts against a schema it does not match. Running it on every `up` is safe:
+  # drizzle-kit skips migrations already recorded.
+  migrate:
+    image: ghcr.io/jefrykurniaone/sistem-informasi-manajemen-keuangan:${APP_TAG:-latest}
+    command: bun run db:migrate
+    restart: 'no'
+    # Only DATABASE_URL, not the whole of .env: drizzle.config.ts reads nothing else, and a one-shot
+    # job has no reason to hold the signing secrets. The image carries no .env (.dockerignore), so
+    # the value has to arrive from here.
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in .env}
+    volumes:
+      # The CA certificate DATABASE_URL points at with sslrootcert. See .env.production.example.
+      - ./certs:/app/certs:ro
+
+  app:
+    image: ghcr.io/jefrykurniaone/sistem-informasi-manajemen-keuangan:${APP_TAG:-latest}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file: .env
+    environment:
+      # Part of this topology rather than of one deployment, so written here instead of in .env:
+      # every request reaches the app through Caddy, so the socket address is always Caddy's.
+      # adapter-node reads the client address from the last X-Forwarded-For entry instead, which
+      # Caddy writes itself (it does not trust an incoming one), and the rate limiter in
+      # src/lib/server/rate-limit.ts keys on that address. Without these two, every visitor shares
+      # one rate-limit bucket.
+      ADDRESS_HEADER: X-Forwarded-For
+      XFF_DEPTH: '1'
+    volumes:
+      # Uploaded files outlive the container. FILE_STORE_ROOT=storage resolves to /app/storage.
+      - ./storage:/app/storage
+      - ./certs:/app/certs:ro
+    restart: unless-stopped
+    # No published port: only Caddy reaches it, on app:3000 inside this network.
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - app
+    ports:
+      - '80:80'
+      - '443:443'
+      # HTTP/3 runs over UDP on the same port.
+      - '443:443/udp'
+    # Only the one variable the Caddyfile reads, not env_file: Caddy has no use for the secrets.
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?SITE_ADDRESS must be set in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The issued certificates and the ACME account live in /data. Losing them means asking the
+      # certificate authority again, which is rate-limited, so they are a named volume.
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

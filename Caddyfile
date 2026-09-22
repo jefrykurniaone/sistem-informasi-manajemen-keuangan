@@ -1,0 +1,6 @@
+# SITE_ADDRESS is the public host name, for example komplek.example.com. A bare host name makes
+# Caddy obtain and renew a TLS certificate for it and redirect HTTP to HTTPS on its own; ORIGIN in
+# .env must be the same address with https:// in front.
+{$SITE_ADDRESS} {
+	reverse_proxy app:3000
+}
