@@ -269,7 +269,12 @@ test('choosing a link in the drawer closes it and moves to that page', async ({ 
 	const nav = page.getByRole('navigation', { name: MAIN_NAV_ID });
 	await openDrawer(page, MENU_BUTTON_ID, nav);
 
-	await nav.getByRole('link', { name: 'Papan Pengumuman' }).click();
+	// The announcement board's group holds one item, and the `group.items.length === 1` branch of
+	// `app-sidebar.svelte` renders a group of one as a plain link named after the group
+	// (`appShell_groupPosts`), not after the item (`appShell_navPosts`, "Papan Pengumuman"); only a
+	// group of two or more becomes the expandable button in `nav-group.svelte`. So there is no group
+	// title to open first.
+	await nav.getByRole('link', { name: 'Pengumuman & Kegiatan', exact: true }).click();
 
 	await expect(page).toHaveURL(/\/posts$/);
 	await expect(nav).toBeHidden();
