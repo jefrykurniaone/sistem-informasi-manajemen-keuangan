@@ -1,6 +1,5 @@
 {
 	"$schema": "https://inlang.com/schema/inlang-message-format",
-	"appShell_brand": "Komplek",
 	"appShell_navLabel": "Main navigation",
 	"appShell_navHome": "Home",
 	"appShell_navLogin": "Log in",
@@ -242,7 +241,7 @@
 	"adminPosts_rule_authorNotRegistered": "Your account is not linked to a resident record yet, so a post cannot be attributed to you. Contact a Superuser.",
 	"adminPosts_rule_coverImageNotAnImage": "That file is not a JPEG, PNG or WebP image.",
 	"adminPosts_rule_coverImageTooLarge": "The cover image is larger than 256 KB.",
-	"postPublic_pageTitle": "Announcement board — Komplek",
+	"postPublic_pageTitle": "Announcement board",
 	"postPublic_pageDescription": "The complex's published activities and announcements, open to anyone without an account.",
 	"postPublic_heading": "Announcement board",
 	"postPublic_description": "Upcoming activities appear first, followed by the latest announcements. Use the filters to see past ones or narrow by category.",

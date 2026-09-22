@@ -48,7 +48,12 @@
 	</div>
 </header>
 
-<!-- A `<div>`, not a `<main>`: `unsubscribe/[token]/+page.svelte` already renders its own. -->
+<!--
+	A `<div>`, not a `<main>`. Each page of this group renders its own `<main>` around its content,
+	the same per-page convention the `(auth)` pages follow: `posts/+page.svelte`,
+	`posts/[id]/+page.svelte` and `unsubscribe/[token]/+page.svelte` each carry one, so a `<main>`
+	here would nest a second landmark inside the first.
+-->
 <div class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10">
 	{@render children()}
 </div>
