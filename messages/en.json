@@ -1075,5 +1075,6 @@
 	"dashboard_residentPaymentButton": "Report Payment",
 	"dashboard_residentComplaintButton": "Report Complaint",
 	"dashboard_residentNoUnitTitle": "Your house is not linked yet",
-	"dashboard_residentNoUnitBody": "Once a pengurus links you to a house, your invoices and credit balance will show here."
+	"dashboard_residentNoUnitBody": "Once a pengurus links you to a house, your invoices and credit balance will show here.",
+	"auth_tagline": "Dues, cash and complex news in one place"
 }

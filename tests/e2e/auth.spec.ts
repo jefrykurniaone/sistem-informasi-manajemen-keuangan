@@ -47,6 +47,18 @@ const EMAIL_FIELD = 'Alamat email';
 const LOGIN_PATH = '/login';
 
 /**
+ * The complex name the server under test was built with, worked out the way `src/lib/complex-name.ts`
+ * does: trimmed, and "Komplek" when nothing is left. Restated rather than imported for the reason
+ * `tests/e2e/layout.spec.ts` gives: `$env/static/public` only resolves inside a SvelteKit build.
+ */
+function expectedComplexName(): string {
+	const trimmed = process.env.PUBLIC_COMPLEX_NAME?.trim() ?? '';
+	return trimmed === '' ? 'Komplek' : trimmed;
+}
+
+const COMPLEX_NAME = expectedComplexName();
+
+/**
  * This file's own connection, opened when a test first needs one and opened again after it has
  * been closed.
  *
@@ -168,6 +180,15 @@ async function sessionCookie(context: BrowserContext) {
 	const cookies = await context.cookies();
 	return cookies.find((cookie) => cookie.name.endsWith('better-auth.session_token'));
 }
+
+test('the sign-in page carries a brand panel with the complex name', async ({ page }) => {
+	await open(page, LOGIN_PATH);
+	// `exact: true` so the lowercase "komplek" in the tagline cannot stand in for the name when the
+	// build falls back to "Komplek".
+	await expect(
+		page.getByRole('complementary').getByText(COMPLEX_NAME, { exact: true })
+	).toBeVisible();
+});
 
 test('a new resident registers, verifies, signs in, and signs out', async ({
 	page,
