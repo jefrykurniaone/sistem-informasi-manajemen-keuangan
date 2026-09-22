@@ -4,7 +4,7 @@
 |---|---|
 | Item spesifikasi | [#166](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/166) |
 | Run | `uji-v1` |
-| Peta eksekusi | belum dibuat; diisi Stage 5 |
+| Peta eksekusi | [#181](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/181) |
 | Disalin pada | 2026-09-22 |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
