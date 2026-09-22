@@ -3,6 +3,11 @@ node_modules
 .env.*
 !.env.example
 !.env.production.example
+!.env.deploy.example
+# The local deploy settings and the VM's SSH key, read by scripts/setup-env.sh and scripts/deploy.sh.
+# `.env.*` above already covers .env.deploy; it is named here so the intent survives an edit there.
+.env.deploy
+*.pem
 
 .svelte-kit
 /build
