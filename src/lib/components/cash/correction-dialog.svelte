@@ -93,6 +93,7 @@
 					name="reason"
 					rows="3"
 					required
+					placeholder={m.adminCash_correctionReasonPlaceholder()}
 					aria-describedby="cash-correction-reason-hint-{uid}"
 					class="rounded-md border border-border bg-background px-3 py-2 text-sm"></textarea>
 				<p id="cash-correction-reason-hint-{uid}" class="text-sm text-muted-foreground">

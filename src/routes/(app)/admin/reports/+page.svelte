@@ -159,6 +159,7 @@
 							name="revisionReason"
 							required
 							rows="3"
+							placeholder={m.adminReports_reasonPlaceholder()}
 							class="rounded-md border border-border px-3 py-2"></textarea>
 						<span class="text-xs text-muted-foreground">{m.adminReports_reasonHint()}</span>
 					</label>

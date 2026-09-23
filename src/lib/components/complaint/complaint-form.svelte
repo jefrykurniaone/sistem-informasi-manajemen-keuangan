@@ -57,6 +57,7 @@
 			type="text"
 			required
 			value={values.title}
+			placeholder={m.complaintsNew_titlePlaceholder()}
 			class="min-h-11 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
 		/>
 	</div>
@@ -71,6 +72,7 @@
 			type="text"
 			required
 			value={values.category}
+			placeholder={m.complaintsNew_categoryPlaceholder()}
 			aria-describedby="complaint-category-hint-{uid}"
 			class="min-h-11 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
 		/>
@@ -88,6 +90,7 @@
 			name="description"
 			required
 			value={values.description}
+			placeholder={m.complaintsNew_descriptionPlaceholder()}
 			class="min-h-32 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
 		></textarea>
 	</div>

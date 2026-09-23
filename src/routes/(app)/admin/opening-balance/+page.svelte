@@ -56,6 +56,7 @@
 					id="opening-balance-amount-{uid}"
 					name="amount"
 					required
+					placeholder={m.adminOpeningBalance_amountPlaceholder()}
 					aria-describedby="opening-balance-amount-hint-{uid}"
 				/>
 				<p id="opening-balance-amount-hint-{uid}" class="text-sm text-muted-foreground">

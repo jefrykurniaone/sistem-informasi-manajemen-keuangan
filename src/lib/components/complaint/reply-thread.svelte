@@ -61,6 +61,7 @@
 				id="complaint-reply-content-{uid}"
 				name="content"
 				required
+				placeholder={m.complaintDetail_replyPlaceholder()}
 				class="min-h-24 rounded-md border border-border bg-background px-3 py-2 text-sm"></textarea>
 			<Button type="submit" class="h-11 min-w-24 self-start">
 				{m.complaintDetail_replySubmit()}

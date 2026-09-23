@@ -68,6 +68,7 @@
 					name="email"
 					type="email"
 					autocomplete="email"
+					placeholder={m.verify_emailPlaceholder()}
 					required
 				/>
 			</div>

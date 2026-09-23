@@ -68,6 +68,7 @@
 					name="email"
 					type="email"
 					required
+					placeholder={m.adminInvitations_emailPlaceholder()}
 					class="h-9 rounded-md border border-border bg-background px-3 text-sm"
 				/>
 			</div>

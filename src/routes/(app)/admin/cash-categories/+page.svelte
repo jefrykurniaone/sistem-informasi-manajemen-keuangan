@@ -52,6 +52,7 @@
 					type="text"
 					required
 					maxlength="80"
+					placeholder={m.adminCashCategories_namePlaceholder()}
 					class="h-11 rounded-md border border-border bg-background px-3 text-sm"
 				/>
 			</div>
@@ -112,6 +113,7 @@
 								required
 								maxlength="80"
 								value={category.name}
+								placeholder={m.adminCashCategories_namePlaceholder()}
 								class="h-11 rounded-md border border-border bg-background px-3 text-sm"
 							/>
 						</div>

@@ -84,6 +84,7 @@
 						id="complaint-rejection-reason-{uid}"
 						name="rejectionReason"
 						required
+						placeholder={m.adminComplaintDetail_rejectionReasonPlaceholder()}
 						class="min-h-24 rounded-md border border-border bg-background px-3 py-2 text-sm"
 					></textarea>
 				</div>
@@ -96,6 +97,7 @@
 				<textarea
 					id="complaint-status-note-{uid}"
 					name="note"
+					placeholder={m.adminComplaintDetail_notePlaceholder()}
 					class="min-h-16 rounded-md border border-border bg-background px-3 py-2 text-sm"
 				></textarea>
 			</div>

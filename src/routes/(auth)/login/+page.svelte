@@ -42,6 +42,7 @@
 				type="email"
 				autocomplete="email"
 				value={form?.email ?? ''}
+				placeholder={m.login_emailPlaceholder()}
 				required
 			/>
 		</div>

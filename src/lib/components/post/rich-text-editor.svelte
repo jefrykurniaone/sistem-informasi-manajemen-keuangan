@@ -360,6 +360,7 @@
 			type="text"
 			inputmode="url"
 			bind:value={linkUrl}
+			placeholder={m.adminPosts_editorLinkUrlPlaceholder()}
 			onkeydown={onLinkUrlKeydown}
 			class="h-11 rounded-md border border-border bg-background px-3 text-sm"
 		/>

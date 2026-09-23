@@ -52,6 +52,7 @@
 					type="text"
 					autocomplete="name"
 					value={name}
+					placeholder={m.profile_namePlaceholder()}
 					required
 				/>
 			</div>
@@ -65,6 +66,7 @@
 					type="tel"
 					autocomplete="tel"
 					value={phone}
+					placeholder={m.profile_phonePlaceholder()}
 					aria-describedby="phone-hint"
 				/>
 				<p class="text-xs text-muted-foreground" id="phone-hint">{m.profile_phoneHint()}</p>

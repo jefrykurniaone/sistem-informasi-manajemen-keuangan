@@ -95,6 +95,7 @@
 						name="reason"
 						type="text"
 						required
+						placeholder={m.adminRegistrations_reasonPlaceholder()}
 						class="min-h-11 rounded-md border border-border bg-background px-3 text-sm"
 					/>
 				</div>
