@@ -66,8 +66,9 @@ harus ada sebagai berkas `certs/supabase-ca.crt` di server, di sebelah `docker-c
    sertifikat CA ke sana lewat `scp`. Tidak ada nilai yang ditampilkan kembali di layar. Jalankan
    `DRY_RUN=1 bash scripts/setup-env.sh` untuk melihat pertanyaan dan perintah yang akan dijalankan
    tanpa mengirim apa pun ke VM.
-6. Setelah push image pertama (langkah 3), jadikan paket GHCR
-   `sistem-informasi-manajemen-keuangan` publik: di GitHub, Packages, Package settings, Change
+6. Ini baru bisa dilakukan setelah push image pertama, yaitu setelah menjalankan
+   `scripts/deploy.sh` di bagian 3 untuk pertama kali: jadikan paket GHCR
+   `sistem-informasi-manajemen-keuangan` publik lewat GitHub, Packages, Package settings, Change
    visibility. Tanpa ini VM tidak bisa menarik image tanpa masuk.
 
 ## 3. Deploy dan deploy ulang
@@ -86,10 +87,11 @@ bash scripts/deploy.sh
 Urutan yang dicetak: periksa VM, `docker build --network host --platform linux/amd64 --target
 production` dengan build arg `PUBLIC_COMPLEX_NAME`, login GHCR lewat `gh auth token`, dorong tag
 `<sha-pendek-12-karakter>` dan `latest`, salin `docker-compose.prod.yml` dan `Caddyfile` ke VM bila
-isinya berbeda, tarik image di VM, tulis `APP_TAG=<sha-pendek>` ke `/opt/komplek/.env` di VM, jalan
-kan `docker compose up -d --remove-orphans`, tunggu `migrate` keluar dengan kode 0, mulai ulang
-`caddy` bila `Caddyfile` berubah, lalu periksa `https://<ip-statis>.sslip.io/api/health` berulang
-tiap 5 detik sampai 90 detik. Setiap langkah bernomor dan menyebut namanya sendiri bila gagal.
+isinya berbeda, tarik image di VM, tulis `APP_TAG=<sha-pendek>` ke `/opt/komplek/.env` di VM,
+jalankan `docker compose up -d --remove-orphans`, tunggu `migrate` keluar dengan kode 0, mulai
+ulang `caddy` bila `Caddyfile` berubah, lalu periksa `https://<ip-statis>.sslip.io/api/health`
+berulang tiap 5 detik sampai 90 detik. Setiap langkah bernomor dan menyebut namanya sendiri bila
+gagal.
 
 Untuk membaca log di VM:
 
