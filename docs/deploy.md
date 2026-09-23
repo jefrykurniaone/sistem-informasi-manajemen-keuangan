@@ -1,8 +1,9 @@
 # Runbook deploy fase uji
 
 Panduan ini cukup untuk mengulang seluruh pemasangan fase uji tanpa membaca tiket. Diasumsikan
-daemon Docker berjalan di WSL Ubuntu di mesin pengembang, bukan Docker Desktop, dan `gh` sudah
-masuk (`gh auth login`) dengan cakupan `write:packages`.
+daemon Docker berjalan di WSL Ubuntu di mesin pengembang, bukan Docker Desktop. `gh` harus terpasang
+dan masuk **di dalam WSL** dengan cakupan `write:packages` (langkah 0 di bagian 2): `gh` di Windows
+tidak dipakai oleh `scripts/deploy.sh`, dan token `gh` di Windows biasanya tidak punya cakupan itu.
 
 ## 1. Topologi
 
@@ -30,12 +31,32 @@ harus ada sebagai berkas `certs/supabase-ca.crt` di server, di sebelah `docker-c
 
 ## 2. Pemasangan awal
 
+0. Pasang `gh` di WSL dari repositori apt GitHub CLI (`cli.github.com/packages`), lalu masuk dari
+   WSL juga:
+
+   ```bash
+   sudo mkdir -p -m 755 /etc/apt/keyrings
+   wget -nv -O- https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
+   sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+   sudo apt update && sudo apt install gh -y
+   gh auth login --hostname github.com --git-protocol https --web --scopes write:packages
+   ```
+
+   `gh auth status` harus menyebut `write:packages` di antara `Token scopes`. Tanpa cakupan itu
+   langkah push di `scripts/deploy.sh` ditolak; tambahkan dengan
+   `gh auth refresh --scopes write:packages`.
+
 1. Di konsol Lightsail: buat instance Ubuntu 24.04, pasang IP statis, dan buka port TCP 80 serta
    TCP dan UDP 443 di firewall instance (selain TCP 22 yang sudah terbuka bawaan). Unduh kunci
    `.pem` instance.
 2. Buat proyek Supabase, lalu salin URL **session pooler** dari dasbor (Database settings,
    Connection string, mode Session) dan unduh sertifikat CA-nya (Database settings, SSL
-   Configuration).
+   Configuration). **Kata sandi di dalam URL itu harus di-percent-encode**: setiap karakter di luar
+   `A-Z a-z 0-9 - . _ ~` ditulis sebagai kodenya, misalnya `#` menjadi `%23`, `/` menjadi `%2F`, `?`
+   menjadi `%3F`, dan `@` menjadi `%40`. Cara yang lebih sederhana: pilih kata sandi basis data
+   Supabase yang hanya berisi huruf dan angka. Tanpa itu `DATABASE_URL` tidak terbaca sebagai URL,
+   dan `migrate` keluar dengan kode 1 tanpa pesan galat apa pun (lihat bagian 3).
 3. Jalankan `scripts/bootstrap-vm.sh` di VM lewat SSH, dari WSL di akar repositori:
 
    ```bash
@@ -65,11 +86,26 @@ harus ada sebagai berkas `certs/supabase-ca.crt` di server, di sebelah `docker-c
    `/opt/komplek/.env` di VM (mode 600) dan menyalin `docker-compose.prod.yml`, `Caddyfile`, dan
    sertifikat CA ke sana lewat `scp`. Tidak ada nilai yang ditampilkan kembali di layar. Jalankan
    `DRY_RUN=1 bash scripts/setup-env.sh` untuk melihat pertanyaan dan perintah yang akan dijalankan
-   tanpa mengirim apa pun ke VM.
+   tanpa mengirim apa pun ke VM. Wizard menulis `DATABASE_URL` persis seperti yang ditempelkan dan
+   tidak memeriksa apakah ia terbaca sebagai URL, jadi tempelkan URL yang kata sandinya sudah
+   di-percent-encode seperti pada langkah 2.
 6. Ini baru bisa dilakukan setelah push image pertama, yaitu setelah menjalankan
    `scripts/deploy.sh` di bagian 3 untuk pertama kali: jadikan paket GHCR
    `sistem-informasi-manajemen-keuangan` publik lewat GitHub, Packages, Package settings, Change
-   visibility. Tanpa ini VM tidak bisa menarik image tanpa masuk.
+   visibility. Paket GHCR yang baru didorong selalu mulai sebagai privat, dan tidak ada API untuk
+   mengubah visibilitasnya, jadi langkah ini dikerjakan tangan di situs GitHub. Deploy pertama
+   karena itu **selalu berhenti di langkah 7**, "pull image <sha-pendek> di VM", dengan galat
+   berikut:
+
+   ```text
+   Error response from daemon: error from registry: unauthorized
+   GAGAL: deploy berhenti di langkah 7, "pull image <sha-pendek> di VM" (kode 1).
+   ```
+
+   Setelah paket publik, jalankan `bash scripts/deploy.sh` sekali lagi. Build diambil dari cache
+   dan push hanya mendapati layer yang sudah ada di GHCR, jadi jalan kedua sampai ke langkah 7
+   dalam sekitar dua puluh detik lalu selesai. Jangan menjalankan `docker login` atau menaruh token di VM
+   sebagai jalan pintas.
 
 ## 3. Deploy dan deploy ulang
 
@@ -93,6 +129,22 @@ ulang `caddy` bila `Caddyfile` berubah, lalu periksa `https://<ip-statis>.sslip.
 berulang tiap 5 detik sampai 90 detik. Setiap langkah bernomor dan menyebut namanya sendiri bila
 gagal.
 
+Yang teramati pada deploy pertama (23 September 2026, commit `c5d84c37a8b5`):
+
+- **Durasi.** Dengan cache build terisi, build selesai dalam 4 sampai 14 detik. Push pertama tag
+  SHA ke GHCR paket yang masih kosong makan waktu sekitar 3 menit; push berikutnya 3 sampai 6 detik.
+  Pull pertama di VM sekitar 45 detik, `up` sampai `migrate` keluar 0 sekitar 9 detik, dan seluruh
+  deploy ulang dari awal sampai health check sekitar 40 detik.
+- **Digest berubah setiap kali deploy diulang**, walaupun commit dan isi image sama. `docker build`
+  menyertakan manifest atestasi yang dibuat baru pada setiap build, sehingga digest daftar manifest
+  yang didorong ke tag `<sha-pendek>` dan `latest` ikut berubah. Digest yang benar-benar berjalan
+  adalah yang dicetak push pada deploy terakhir yang berhasil; periksa di VM dengan
+  `docker image inspect --format '{{json .RepoDigests}}' <image>:<sha-pendek>`.
+- **Percobaan health check pertama bisa gagal dengan galat TLS**, misalnya
+  `curl: (35) TLS connect error: ... tlsv1 alert internal error`, selama Caddy baru meminta
+  sertifikat Let's Encrypt untuk `<ip-statis>.sslip.io`. Itu wajar: percobaan berikutnya, 5 detik
+  kemudian, berhasil dengan sertifikat yang sah.
+
 Untuk membaca log di VM:
 
 ```bash
@@ -100,7 +152,20 @@ ssh -i ~/.ssh/<nama-kunci>.pem <user>@<ip-statis> 'cd /opt/komplek && docker com
 ```
 
 Bila `migrate` gagal, deploy berhenti sebelum `app` pernah dijalankan dengan skema yang tidak
-cocok; log `migrate` di atas menunjukkan galat migrasinya.
+cocok; log `migrate` di atas menunjukkan galat migrasinya. Satu pengecualian: bila `DATABASE_URL`
+tidak terbaca sebagai URL, biasanya karena kata sandi Supabase memuat karakter yang belum
+di-percent-encode (bagian 2 langkah 2), `drizzle-kit` menelan galat `ERR_INVALID_URL` dan log
+`migrate` berakhir tanpa penjelasan:
+
+```text
+Using 'pg' driver for database querying
+error: script "db:migrate" exited with code 1
+```
+
+Deploy lalu berhenti di langkah `up -d --remove-orphans` dengan `migrate keluar dengan kode 1.`
+Perbaiki kata sandi di baris `DATABASE_URL` pada `/opt/komplek/.env` (atau jalankan ulang
+`scripts/setup-env.sh` dengan URL yang sudah di-encode), lalu jalankan `bash scripts/deploy.sh`
+lagi.
 
 ## 4. Akun pertama
 
@@ -109,8 +174,11 @@ cocok; log `migrate` di atas menunjukkan galat migrasinya.
 3. Jadikan akun itu superuser dari dalam container `app` di VM:
 
    ```bash
-   ssh -i ~/.ssh/<nama-kunci>.pem <user>@<ip-statis> 'cd /opt/komplek && docker compose exec app bun run superuser:grant <email>'
+   ssh -i ~/.ssh/<nama-kunci>.pem <user>@<ip-statis> 'cd /opt/komplek && docker compose -f docker-compose.prod.yml exec -T app bun run superuser:grant <email>'
    ```
+
+   `-f docker-compose.prod.yml` wajib: `/opt/komplek` hanya memuat berkas itu, dan
+   `docker compose` tanpa `-f` berhenti dengan `no configuration file provided: not found`.
 
    Perintah ini hanya memberi peran kepada akun yang sudah terdaftar, dan menjalankannya dua kali
    tidak mengubah apa pun pada jalan kedua.
