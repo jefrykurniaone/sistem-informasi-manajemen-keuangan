@@ -1,5 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
+import { verifyJWT } from 'better-auth/crypto';
 import { auth } from '$lib/server/auth';
 import { limitFormAction, RATE_LIMIT_POLICY } from '$lib/server/rate-limit';
 import type { Actions, PageServerLoad } from './$types';
@@ -7,11 +8,12 @@ import type { Actions, PageServerLoad } from './$types';
 /**
  * Proving that an address belongs to the person who typed it, and asking for another try.
  *
- * This one page answers four situations, because they are four sentences about the same thing and
+ * This one page answers five situations, because they are five sentences about the same thing and
  * splitting them across routes would only mean more addresses to get wrong:
  *
  * - arriving from the registration form, with nothing to verify yet (`?sent=1`);
- * - arriving from the email, with a token that works;
+ * - arriving from the email, with a token that works, for the first time;
+ * - arriving with a token whose address was already verified before this visit;
  * - arriving from the email too late, or with a token that has been tampered with;
  * - arriving from the sign-in form after being told the address is not verified yet.
  *
@@ -29,16 +31,65 @@ import type { Actions, PageServerLoad } from './$types';
  * Verifying does not sign anyone in — see the reasoning in `$lib/server/auth`. The page sends the
  * person to the sign-in form afterwards.
  *
- * **The `load` below changes something, on a GET.** That is what an emailed link is: the token in
- * the address is the whole of the authority, and the only thing the request can do with it is mark
- * one address proven. It is idempotent — a second visit finds the address already verified and
- * says the same thing — so a link scanner, a prefetch or the browser's back button replaying it
- * costs nothing. A verification token is a signed JWT rather than a stored row, so it stays usable
- * until it expires; nothing here can revoke one early, and the page must not claim otherwise.
+ * **The `load` below still changes something, on a GET, and still cannot revoke a token early.**
+ * A verification token is a signed JWT rather than a stored row, so it stays usable until it
+ * expires; nothing here can revoke one early. What changed with #206 is only what the *second*
+ * visit is told. better-auth's own `verifyEmail` (1.7.5, `node_modules/better-auth/dist/api/routes/email-verification.mjs`
+ * lines 287-321) resolves to the exact same value, `{ status: true, user: null }`, whether the
+ * address was already verified or is being verified for the first time, so that shape does not
+ * tell the two visits apart, and this page must not pretend it does by reading `user` off it. So `load`
+ * asks a question of its own first, but only after the token's own signature checks out:
+ * `verifyJWT` from `better-auth/crypto` is the same `jwtVerify`, over the same `context.secret`,
+ * that `verifyEmail` itself uses (`email-verification.mjs` line 178), so a forged token is refused
+ * here exactly as it would be there. **The lookup never runs on an unverified claim.** Trusting an
+ * `email` field lifted from a token before checking who signed it would let anyone name a
+ * registered address and time how long the answer takes, which is exactly the oracle `/login`,
+ * `/register` and `/forgot-password` are built not to be; a holder of a token whose signature does
+ * check out has already proved the address is theirs, so looking it up discloses nothing new. Once
+ * the signature checks out, `load` looks that address up through better-auth's
+ * `internalAdapter.findUserByEmail`, *before* calling `verifyEmail`, which is the only moment the
+ * database still remembers whether this visit is the first one. `verifyEmail` is still called for
+ * every token, genuine or not, and it alone still decides `expired` versus `invalid`, exactly as
+ * before; a token this page's own check could not verify does not short-circuit to `invalid`,
+ * because only `verifyEmail`'s own, more detailed check tells an expired token from a merely
+ * invalid one.
+ *
+ * A link scanner that opens the emailed link before the person does is exactly what turns their own
+ * click into `used`, and the sentence stays true when that happens, because the address really is
+ * already verified by the time they read it. Two truly simultaneous requests for the same token can
+ * both read "not yet verified" before either one writes, and both then see `verified`; that race is
+ * accepted rather than closed, because closing it needs a lock this ticket has no reason to add for
+ * a page that changes nothing either visitor can act on differently.
  */
 
 /** What this page is saying. The wording lives in the component; this is the situation. */
-export type VerificationState = 'idle' | 'sent' | 'verified' | 'expired' | 'invalid';
+export type VerificationState = 'idle' | 'sent' | 'verified' | 'used' | 'expired' | 'invalid';
+
+/** What this page reads out of a verification token, once its signature has checked out. */
+interface VerifiedTokenPayload {
+	readonly email?: unknown;
+}
+
+function hasEmailClaim(
+	payload: VerifiedTokenPayload | null
+): payload is { readonly email: string } {
+	return typeof payload?.email === 'string' && payload.email !== '';
+}
+
+/**
+ * Whether the address a verification token names was already verified, read the instant before
+ * `verifyEmail` runs and possibly changes it. Never called on a token this page has not verified
+ * itself first; see the module header for why an unverified claim must never reach this lookup.
+ *
+ * Goes through better-auth's own `internalAdapter.findUserByEmail` rather than a Drizzle query of
+ * this application's own, so this stays in step with whatever the installed version actually
+ * stores instead of a copy kept in sync by hand.
+ */
+async function wasAlreadyVerified(email: string): Promise<boolean> {
+	const context = await auth().$context;
+	const found = await context.internalAdapter.findUserByEmail(email);
+	return found?.user.emailVerified ?? false;
+}
 
 /** Shown when the limiter refuses, whoever the address belongs to. */
 const TOO_MANY_REQUESTS =
@@ -50,6 +101,17 @@ export const load: PageServerLoad = async ({ url }) => {
 		return { state: (url.searchParams.has('sent') ? 'sent' : 'idle') satisfies VerificationState };
 	}
 
+	// The lookup below may only ever run on a token this page has verified itself: an unchecked
+	// `email` claim would make this page answer whether an arbitrary address is registered. A
+	// token that does not verify is not turned into `invalid` here; `verifyEmail` below still
+	// makes that call, so `expired` versus `invalid` keeps coming from its own, more detailed check.
+	const context = await auth().$context;
+	const payload = await verifyJWT<VerifiedTokenPayload>(token, context.secret);
+
+	// Read before `verifyEmail` runs: that call may itself flip this address to verified, which
+	// would make the same question asked afterwards always answer "yes".
+	const alreadyVerified = hasEmailClaim(payload) ? await wasAlreadyVerified(payload.email) : false;
+
 	try {
 		await auth().api.verifyEmail({ query: { token } });
 	} catch (error) {
@@ -60,7 +122,7 @@ export const load: PageServerLoad = async ({ url }) => {
 		return { state: (expired ? 'expired' : 'invalid') satisfies VerificationState };
 	}
 
-	return { state: 'verified' satisfies VerificationState };
+	return { state: (alreadyVerified ? 'used' : 'verified') satisfies VerificationState };
 };
 
 export const actions: Actions = {

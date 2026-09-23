@@ -7,8 +7,9 @@
 
 	let { data, form }: PageProps = $props();
 
-	// Asking for another email only makes sense while the address is still unverified.
-	let canResend = $derived(data.state !== 'verified');
+	// Asking for another email only makes sense while the address is still unverified. `used` means
+	// the address is verified too, just not by this visit, so it is excluded the same way.
+	let canResend = $derived(data.state !== 'verified' && data.state !== 'used');
 </script>
 
 <svelte:head>
@@ -22,6 +23,12 @@
 		<p class="rounded-md border border-border px-3 py-2 text-sm">
 			Alamat email Anda sudah terverifikasi. Sekarang Anda bisa masuk dengan email dan kata sandi
 			Anda.
+		</p>
+		<Button href={resolve('/login')}>Masuk</Button>
+	{:else if data.state === 'used'}
+		<p class="rounded-md border border-border px-3 py-2 text-sm">
+			Tautan ini sudah pernah dipakai. Alamat emailnya memang sudah terverifikasi, jadi Anda bisa
+			langsung masuk dengan email dan kata sandi Anda.
 		</p>
 		<Button href={resolve('/login')}>Masuk</Button>
 	{:else if data.state === 'sent'}
