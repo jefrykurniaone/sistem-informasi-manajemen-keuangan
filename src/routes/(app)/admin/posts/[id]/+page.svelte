@@ -5,6 +5,7 @@
 		POST_STATUS_LABEL,
 		type PostFormValues
 	} from '$lib/components/post/post-form.svelte';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -15,7 +16,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminPosts_edit_pageTitle()}</title>
+	<title>{pageTitle(m.adminPosts_edit_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-10">

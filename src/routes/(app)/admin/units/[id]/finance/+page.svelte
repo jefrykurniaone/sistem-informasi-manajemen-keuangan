@@ -9,6 +9,7 @@
 	} from '$lib/components/dues/void-invoice-dialog.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { formatRupiah } from '$lib/money';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import { formatDateTime } from '$lib/time';
 	import type { PageProps } from './$types';
@@ -47,7 +48,9 @@
 </script>
 
 <svelte:head>
-	<title>{m.unitFinance_heading({ block: data.finance.block, number: data.finance.number })}</title>
+	<title>
+		{pageTitle(m.unitFinance_heading({ block: data.finance.block, number: data.finance.number }))}
+	</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">

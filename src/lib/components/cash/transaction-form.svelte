@@ -110,7 +110,7 @@
 			</option>
 			{#each categories as category (category.id)}
 				<option value={category.id} selected={values.categoryId === category.id}>
-					{category.name} — {typeLabel(category.type)}
+					{category.name} ({typeLabel(category.type)})
 				</option>
 			{/each}
 		</select>

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import InvoiceCard from '$lib/components/dues/invoice-card.svelte';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -8,7 +9,9 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminOverdueUnit_pageTitle({ block: data.block, number: data.number })}</title>
+	<title>
+		{pageTitle(m.adminOverdueUnit_pageTitle({ block: data.block, number: data.number }))}
+	</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-xl flex-col gap-6 px-4 py-10">

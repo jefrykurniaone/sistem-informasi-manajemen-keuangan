@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import { formatDay } from '$lib/time';
 	import type { PageProps } from './$types';
@@ -15,7 +16,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminRegistrations_pageTitle()}</title>
+	<title>{pageTitle(m.adminRegistrations_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">
@@ -75,7 +76,7 @@
 					>
 						{#each data.units as unit (unit.id)}
 							<option value={unit.id} selected={unit.id === registration.matchedUnit?.unitId}>
-								{unit.block} — {unit.number}
+								{m.unit_label({ block: unit.block, number: unit.number })}
 							</option>
 						{/each}
 					</select>

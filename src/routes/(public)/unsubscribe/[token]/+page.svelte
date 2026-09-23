@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -14,7 +15,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.unsubscribe_pageTitle()}</title>
+	<title>{pageTitle(m.unsubscribe_pageTitle())}</title>
 </svelte:head>
 
 <main class="flex flex-col gap-6">

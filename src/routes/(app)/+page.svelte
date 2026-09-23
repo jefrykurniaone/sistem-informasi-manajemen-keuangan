@@ -3,6 +3,7 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import StatusBadge from '$lib/components/complaint/status-badge.svelte';
 	import StatCard from '$lib/components/dashboard/stat-card.svelte';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -10,7 +11,7 @@
 </script>
 
 <svelte:head>
-	<title>{data.pageTitle} — Komplek</title>
+	<title>{pageTitle(data.pageTitle)}</title>
 </svelte:head>
 
 {#if data.role === 'admin'}

@@ -3,6 +3,7 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import ReplyThread from '$lib/components/complaint/reply-thread.svelte';
 	import StatusBadge from '$lib/components/complaint/status-badge.svelte';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { ComplaintStatus } from '$lib/server/db/schema/complaint';
 	import type { PageProps } from './$types';
@@ -25,7 +26,7 @@
 </script>
 
 <svelte:head>
-	<title>{data.complaint.title}</title>
+	<title>{pageTitle(data.complaint.title)}</title>
 </svelte:head>
 
 <main class="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-10">

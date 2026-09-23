@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ExemptionForm from '$lib/components/dues/exemption-form.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -18,7 +19,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminExemptions_pageTitle()}</title>
+	<title>{pageTitle(m.adminExemptions_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">
@@ -39,7 +40,9 @@
 		{#each data.exemptions as exemption (exemption.exemptionId)}
 			<article class="flex flex-col gap-2 rounded-lg border border-border p-4">
 				<div class="flex flex-wrap items-center justify-between gap-2">
-					<span class="font-medium">{exemption.block} — {exemption.number}</span>
+					<span class="font-medium">
+						{m.unit_label({ block: exemption.block, number: exemption.number })}
+					</span>
 				</div>
 
 				<p class="text-sm text-muted-foreground">

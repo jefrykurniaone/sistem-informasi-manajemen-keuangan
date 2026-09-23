@@ -3,6 +3,7 @@
 	import CategoryTable from '$lib/components/report/category-table.svelte';
 	import ReportSummary from '$lib/components/report/report-summary.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import { formatDateTime } from '$lib/time';
 	import type { PageProps } from './$types';
@@ -38,7 +39,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminReports_pageTitle()}</title>
+	<title>{pageTitle(m.adminReports_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">

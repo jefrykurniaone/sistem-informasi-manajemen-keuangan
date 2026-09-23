@@ -4,6 +4,7 @@
 		type UnlockablePeriod
 	} from '$lib/components/cash/unlock-period-dialog.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import { formatDateTime } from '$lib/time';
 	import type { PageProps } from './$types';
@@ -35,7 +36,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminPeriods_pageTitle()}</title>
+	<title>{pageTitle(m.adminPeriods_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">

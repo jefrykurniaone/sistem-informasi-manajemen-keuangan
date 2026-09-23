@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import PreviewTable from '$lib/components/import/preview-table.svelte';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -26,7 +27,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminImport_pageTitle()}</title>
+	<title>{pageTitle(m.adminImport_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">

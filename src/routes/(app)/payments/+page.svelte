@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { formatRupiah } from '$lib/money';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PaymentStatus } from '$lib/server/db/schema/payment';
 	import type { PageProps } from './$types';
@@ -26,7 +27,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.payments_pageTitle()}</title>
+	<title>{pageTitle(m.payments_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-10">

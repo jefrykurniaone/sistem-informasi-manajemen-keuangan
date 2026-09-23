@@ -1,13 +1,15 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { pageTitle } from '$lib/complex-name';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { form }: PageProps = $props();
 </script>
 
 <svelte:head>
-	<title>Lupa kata sandi — Komplek</title>
+	<title>{pageTitle(m.forgotPassword_pageTitle())}</title>
 </svelte:head>
 
 <main class="flex flex-col gap-6">

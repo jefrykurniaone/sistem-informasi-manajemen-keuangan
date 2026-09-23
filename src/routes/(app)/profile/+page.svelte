@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import type { PageProps } from './$types';
@@ -11,7 +12,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.profile_pageTitle()} — Komplek</title>
+	<title>{pageTitle(m.profile_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-xl flex-col gap-6 px-4 py-10">
