@@ -181,7 +181,14 @@ lagi.
    `docker compose` tanpa `-f` berhenti dengan `no configuration file provided: not found`.
 
    Perintah ini hanya memberi peran kepada akun yang sudah terdaftar, dan menjalankannya dua kali
-   tidak mengubah apa pun pada jalan kedua.
+   tidak mengubah apa pun pada jalan kedua. Alamat yang belum terdaftar ditolak dengan
+   `No account is registered with the address "<email>"` dan kode keluar 1, tanpa menulis apa pun.
+
+   Image tidak membawa `src/`, jadi di dalam container perintah yang sama menjalankan
+   `scripts/grant-superuser.js`, bundel yang dibuat tahap `build` di `Dockerfile`, bukan berkas
+   `.ts` di pohon kerja. Image yang dibangun sebelum #204 tidak memuat bundel itu dan menjawab
+   `Module not found "scripts/grant-superuser.ts"`. Deploy ulang dengan image yang lebih baru, lalu
+   jalankan perintah di atas lagi.
 4. Masuk sebagai superuser, lalu beri diri sendiri (atau akun pengurus lain) peran `admin` lewat
    `/admin/roles`, karena sebagian layar (`/admin/overdue`, `/admin/payments`) menuntut peran itu
    secara khusus.
