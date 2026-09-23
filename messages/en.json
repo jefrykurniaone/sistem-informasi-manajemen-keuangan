@@ -822,7 +822,7 @@
 	"adminReports_description": "Preview any month's figures at any time, then publish once they are right. Publishing freezes the figures, numbers the revision and locks the month, in one step.",
 	"adminReports_periodLabel": "Month",
 	"adminReports_periodSubmit": "Show the preview",
-	"adminReports_previewHeading": "Preview of {period}",
+	"adminReports_previewHeading": "Preview of {month}",
 	"adminReports_previewNote": "This is a preview, not a published report. Its figures are worked out again every time this page is opened, and are only frozen when you publish.",
 	"adminReports_publishHeading": "Publish revision {revision}",
 	"adminReports_publishExplain": "Publishing freezes the figures above, numbers them revision {revision}, and locks {period}. Once the month is locked, a cash transaction dated inside it is refused until a superuser reopens the month with a reason.",

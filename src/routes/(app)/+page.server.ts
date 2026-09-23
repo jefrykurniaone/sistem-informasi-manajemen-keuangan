@@ -3,6 +3,7 @@ import type { Pathname } from '$app/types';
 import { MENU } from '$lib/components/app-shell/menu';
 import { formatRupiah } from '$lib/money';
 import * as m from '$lib/paraglide/messages';
+import { getLocale } from '$lib/paraglide/runtime.js';
 import { AUTH_PATHS } from '$lib/server/auth';
 import { isAllowed, rolesOf } from '$lib/server/authz';
 import { database } from '$lib/server/db';
@@ -23,7 +24,7 @@ import {
 	type ResidentUnitSummary
 } from '$lib/server/services/dashboard';
 import { residentProfileForUser } from '$lib/server/services/resident/profile';
-import { COMPLEX_TIME_ZONE, formatDateTime } from '$lib/time';
+import { formatDateTime, formatMonthLabel } from '$lib/time';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -75,7 +76,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 	if (holdsAnyGatedMenuAction(roles)) {
 		const dashboard = await adminDashboard(db, systemClock, locals.user.id);
-		const month = monthLabel(dashboard.month);
+		const month = formatMonthLabel(dashboard.month, getLocale());
 		return {
 			role: 'admin' as const,
 			pageTitle: m.dashboard_adminPageTitle({ month }),
@@ -117,20 +118,6 @@ function holdsAnyGatedMenuAction(roles: ReadonlySet<Role>): boolean {
 	return MENU.some((group) =>
 		group.items.some((item) => item.action !== null && isAllowed(roles, item.action))
 	);
-}
-
-const MONTH_LABEL_FORMAT = new Intl.DateTimeFormat('id-ID', {
-	month: 'long',
-	year: 'numeric',
-	timeZone: COMPLEX_TIME_ZONE
-});
-
-/** `"2026-09"` read as `"September 2026"` — the WIB month `adminDashboard` already picked. */
-function monthLabel(month: string): string {
-	const [year, monthNumber] = month.split('-').map(Number);
-	// Day 15: never near a month boundary, whatever the zone's own offset, so the formatted month
-	// can never slip to the one before or after.
-	return MONTH_LABEL_FORMAT.format(new Date(Date.UTC(year, monthNumber - 1, 15)));
 }
 
 /** The pengurus Beranda's cards, in the order `spec-shell-beranda-v1.md`'s Rancangan lists them. */
