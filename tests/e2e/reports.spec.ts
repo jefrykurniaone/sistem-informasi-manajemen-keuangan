@@ -77,6 +77,33 @@ const MONTHS_IN_A_YEAR = 12;
 /** The day of the month this spec dates its Transaksi Kas on. Any day inside the month will do. */
 const A_DAY_IN_THE_MONTH = '15';
 
+/** The Indonesian month names `monthLabel` reads a `YYYY-MM` period into, index 0 is January. */
+const MONTH_NAMES_ID = [
+	'Januari',
+	'Februari',
+	'Maret',
+	'April',
+	'Mei',
+	'Juni',
+	'Juli',
+	'Agustus',
+	'September',
+	'Oktober',
+	'November',
+	'Desember'
+];
+
+/**
+ * `"2026-09"` read as `"September 2026"` — the same text `$lib/time`'s `formatMonthLabel` writes
+ * for the `id` locale, reimplemented here rather than imported: this file runs outside Vite, with
+ * no `$lib` alias, the same reason `todayInComplexZone` below does its own zone arithmetic instead
+ * of importing `$lib/time`.
+ */
+function monthLabel(period: string): string {
+	const [year, month] = period.split('-').map(Number);
+	return `${MONTH_NAMES_ID[month - 1]} ${year}`;
+}
+
 /**
  * This file's own connection, opened on first use by each job and closed by the job that opened
  * it. Not a module-scope pool closed once — see `tests/e2e/auth.spec.ts` for why `fullyParallel`
@@ -269,11 +296,26 @@ test('an admin publishes a report, and a warga opens it and drills into a catego
 	await signIn(page, adminEmail);
 
 	// The publication itself: the preview shows that month's figures, and the button freezes them.
-	await page.goto(`/admin/reports?period=${period}`);
-	await expect(page.getByRole('heading', { name: `Pratinjau periode ${period}` })).toBeVisible();
+	// `open`, not a bare `goto`: switching the period below relies on the `<select>`'s own `change`
+	// handler, which is only attached once hydration has run.
+	await open(page, `/admin/reports?period=${period}`);
+	await expect(page.getByRole('heading', { name: monthLabel(period) })).toBeVisible();
 	// A category's name is the row's own header — `<th scope="row">` in
 	// `src/lib/components/report/category-table.svelte` — so its role is `rowheader`, not `cell`.
 	// `getByRole('cell', …)` matched nothing and never would have.
+	await expect(page.getByRole('rowheader', { name: categoryName })).toBeVisible();
+
+	// No button to press: changing the period `<select>` submits the same GET form on its own, and
+	// the preview heading follows it without a further click.
+	const periodForm = page.locator('form', { has: page.getByLabel('Periode') });
+	await expect(periodForm.getByRole('button')).toHaveCount(0);
+	const currentPeriod = todayInComplexZone().slice(0, 'YYYY-MM'.length);
+	await periodForm.getByLabel('Periode').selectOption(currentPeriod);
+	await expect(page).toHaveURL(new RegExp(`[?&]period=${currentPeriod}(&|$)`));
+	await expect(page.getByRole('heading', { name: monthLabel(currentPeriod) })).toBeVisible();
+
+	// Back to the month this run publishes, to resume the flow above.
+	await open(page, `/admin/reports?period=${period}`);
 	await expect(page.getByRole('rowheader', { name: categoryName })).toBeVisible();
 	await page.getByRole('button', { name: 'Terbitkan laporan' }).click();
 	await expect(page.getByRole('status')).toContainText('sekarang terkunci');

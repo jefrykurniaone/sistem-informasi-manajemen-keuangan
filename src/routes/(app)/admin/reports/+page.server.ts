@@ -1,5 +1,6 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import * as m from '$lib/paraglide/messages';
+import { getLocale } from '$lib/paraglide/runtime.js';
 import { PermissionDeniedError } from '$lib/errors';
 import { AUTH_PATHS } from '$lib/server/auth';
 import { database } from '$lib/server/db';
@@ -14,6 +15,7 @@ import {
 	type ReportRule
 } from '$lib/server/services/report/publication';
 import { presentBreakdown } from '$lib/server/services/report/resident-payload';
+import { formatMonthLabel } from '$lib/time';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -57,7 +59,10 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		// a different grouping of the same numbers than the page a warga opens afterwards — including
 		// which line is the iuran category and is therefore never broken down.
 		const breakdown = await presentBreakdown(db, workbench.figures.categoryBreakdown);
-		return { ...workbench, ...breakdown };
+		// The preview heading names the month, not the raw `YYYY-MM`, in whichever language is
+		// active — `formatMonthLabel` is the same formatter the Beranda uses (`$lib/time`).
+		const month = formatMonthLabel(workbench.period, getLocale());
+		return { ...workbench, ...breakdown, month };
 	} catch (caught) {
 		throwAsRouteError(caught);
 	}

@@ -5,6 +5,7 @@ import {
 	COMPLEX_TIME_ZONE,
 	formatDateTime,
 	formatDay,
+	formatMonthLabel,
 	formatTime
 } from '$lib/time';
 
@@ -108,6 +109,19 @@ describe('formatDateTime', () => {
 		const output = formatDateTime(new Date(MID_MORNING));
 		expect(output).toContain('WIB');
 		expect(output).not.toContain('GMT');
+	});
+});
+
+describe('formatMonthLabel', () => {
+	it.each([
+		{ period: '2026-09', locale: 'id' as const, output: 'September 2026' },
+		{ period: '2026-09', locale: 'en' as const, output: 'September 2026' },
+		{ period: '2026-05', locale: 'id' as const, output: 'Mei 2026' },
+		{ period: '2026-05', locale: 'en' as const, output: 'May 2026' },
+		{ period: '2026-01', locale: 'id' as const, output: 'Januari 2026' },
+		{ period: '2026-01', locale: 'en' as const, output: 'January 2026' }
+	])('reads $period in locale $locale as $output', ({ period, locale, output }) => {
+		expect(formatMonthLabel(period, locale)).toBe(output);
 	});
 });
 

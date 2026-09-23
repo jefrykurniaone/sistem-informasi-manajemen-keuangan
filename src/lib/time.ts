@@ -134,6 +134,40 @@ export function formatTime(instant: Date): string {
 }
 
 /**
+ * The interface languages `formatMonthLabel` spells a month name in — the same two `locales` the
+ * Paraglide runtime carries. Declared locally, not imported from `$lib/paraglide/runtime`, so this
+ * module keeps taking no imports (see the module doc, point 5); the two literal types are
+ * structurally identical, so a `Locale` from that runtime is accepted here without a cast.
+ */
+export type InterfaceLocale = 'id' | 'en';
+
+/** The month-and-year components: `September 2026`. One formatter per interface language. */
+const MONTH_LABEL_OPTIONS = {
+	timeZone: COMPLEX_TIME_ZONE,
+	month: 'long',
+	year: 'numeric'
+} as const satisfies Intl.DateTimeFormatOptions;
+
+const MONTH_LABEL_FORMAT: Readonly<Record<InterfaceLocale, Intl.DateTimeFormat>> = {
+	id: new Intl.DateTimeFormat('id-ID', MONTH_LABEL_OPTIONS),
+	en: new Intl.DateTimeFormat('en-US', MONTH_LABEL_OPTIONS)
+};
+
+/**
+ * `"2026-09"` read as `"September 2026"` in `locale` — the WIB month a Periode or a Laporan
+ * Bulanan is named by, spelled out for a heading. Added by ticket #177, moved here from the
+ * Beranda's own loader so the Beranda and Laporan Bulanan share one formatter instead of each
+ * keeping a copy.
+ *
+ * Day 15: never near a month boundary, whatever the zone's own offset, so the formatted month can
+ * never slip to the one before or after.
+ */
+export function formatMonthLabel(period: string, locale: InterfaceLocale): string {
+	const [year, month] = period.split('-').map(Number);
+	return MONTH_LABEL_FORMAT[locale].format(new Date(Date.UTC(year, month - 1, 15)));
+}
+
+/**
  * The calendar day `instant` falls on in the complex's zone, as `YYYY-MM-DD` — the shape the
  * `date` columns store and the occupancy, dues and report services compare against.
  *
