@@ -6,12 +6,14 @@
 | Run | `uji-v1` |
 | Peta eksekusi | [#181](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/181) |
 | Disalin pada | 2026-09-22 |
+| Lintasan penutup | 2026-09-23: klaim yang dibalik run ini ditandai di badan, tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
 item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
 
----## Problem statement
+---
+## Problem statement
 
 Aplikasi hanya pernah berjalan di mesin pengembang. Tidak ada cara memberi alamat kepada beberapa warga untuk mencoba: tidak ada image produksi yang diterbitkan, tidak ada konfigurasi HTTPS, tidak ada pengirim email sungguhan (hanya Mailpit), dan tidak ada catatan langkah pemasangan. Pemilik sudah menyiapkan satu instance AWS Lightsail paket $7 dan satu proyek Supabase gratis, dan ingin aplikasi hidup di sana untuk diuji lima sampai sepuluh warga sebelum rilis dan pembelian domain.
 
@@ -61,9 +63,15 @@ Satu perintah dari mesin pengembang membangun image produksi, mendorongnya ke Gi
 
 **Satu `DATABASE_URL` ke session pooler Supabase.** Koneksi langsung Supabase gratis hanya IPv6 dan Lightsail IPv4, sehingga aplikasi dan migrasi memakai host pooler port 5432 mode sesi, yang mendukung prepared statement `pg`. `?sslmode=require` disertakan; tiket memverifikasi bahwa `pg` 8.23 menerima sertifikat pooler dengan pengaturan itu dan mencatat hasilnya.
 
+> [!note] Dibalik oleh run `uji-v1`
+> `pg` 8.23.0 menolak `?sslmode=require` sendirian dengan galat `SELF_SIGNED_CERT_IN_CHAIN`, bukan menerimanya (#172): sertifikat pooler diterbitkan CA milik Supabase sendiri yang tidak ada di penyimpanan akar publik. Bentuk yang terbukti jalan dan dipakai di `.env.production.example` adalah `sslmode=verify-full&sslrootcert=/app/certs/supabase-ca.crt`, dengan berkas CA dari dasbor Supabase disimpan di server sebagai `certs/supabase-ca.crt`.
+
 **Deploy adalah skrip, bukan CI.** `scripts/deploy.sh`: build, push, lalu SSH ke VM untuk `docker compose -f docker-compose.prod.yml pull` dan `up -d`, menunggu `migrate` selesai, dan memeriksa `GET /api/health` lewat HTTPS. Alamat VM dan jalur kunci `.pem` dibaca dari `.env.deploy` lokal yang di-ignore git.
 
 **Bootstrap VM dan rahasia lewat wizard.** `scripts/bootstrap-vm.sh` dijalankan sekali di VM: pasang Docker, buat swap 2 GB, buat direktori aplikasi, salin compose dan Caddyfile. `scripts/setup-env.sh` adalah wizard interaktif di mesin pengembang yang menanyakan `ORIGIN`, `DATABASE_URL`, `BETTER_AUTH_SECRET` dan `FILE_STORE_SECRET` (dibuat otomatis dengan `openssl rand`), `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`, `PUBLIC_COMPLEX_NAME`, lalu menulis `.env` ke VM lewat `scp`. Nilainya tidak lewat repositori, tracker, atau transkrip agen. `.env.production.example` mendokumentasikan setiap variabel dengan nilai contoh kosong.
+
+> [!note] Dibalik oleh run `uji-v1`
+> `.env` tidak dikirim lewat `scp` (#176): `scp` menolak sumber non-reguler, yang akan memaksa salinan `.env` singgah sebagai berkas di mesin pengembang lebih dulu, melanggar syarat tiket sendiri. `setup-env.sh` mengirim isinya lewat stdin `ssh` dengan `printf` builtin (jadi nilainya tidak pernah masuk `/proc/<pid>/cmdline`); perintah remote menulis ke `.env.next`, memeriksa penanda akhir, baru `mv` ke `.env` dengan mode 600.
 
 **`PUBLIC_COMPLEX_NAME` masuk di build atau di runtime?** Variabel `$env/static/public` dibekukan saat build. Karena image dibangun di mesin pengembang, nilainya diberikan sebagai build arg di `deploy.sh` dari `.env.deploy`, dan runbook mencatat bahwa mengubah nama komplek berarti deploy ulang. Spec `shell-masuk` yang memperkenalkan variabel itu.
 

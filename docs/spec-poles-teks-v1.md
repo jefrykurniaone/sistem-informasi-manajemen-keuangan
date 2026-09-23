@@ -6,12 +6,14 @@
 | Run | `uji-v1` |
 | Peta eksekusi | [#181](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/181) |
 | Disalin pada | 2026-09-22 |
+| Lintasan penutup | 2026-09-23: klaim yang dibalik run ini ditandai di badan, tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
 item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
 
----## Problem statement
+---
+## Problem statement
 
 Dialog konfirmasi (batalkan Tagihan, Pengembalian, lepas Alokasi, Koreksi kas, buka kunci Periode, ubah status Keluhan) muncul di pojok kiri atas layar, bukan di tengah. Elemen `<dialog>` native mengandalkan `margin: auto` dari peramban untuk memusatkan diri, dan Preflight Tailwind v4 me-reset margin semua elemen menjadi nol. Hanya dialog editor Post yang kebetulan menambah margin sendiri.
 
@@ -58,7 +60,13 @@ Teks antarmuka di kedua katalog bahasa dan teks terlihat di template ditulis ula
 
 **Laporan Bulanan memuat ulang saat periode berubah.** Kotak pilihan periode mengirim form GET yang sama saat nilainya berubah; tombol submit dihapus dari markup dan kuncinya dari katalog. Tanpa JavaScript, form masih bisa dikirim dengan Enter, jadi tidak ada jalan yang hilang. Judul bagian memakai pemformat nama bulan yang sudah dipakai Beranda, bukan pemformat baru.
 
+> [!note] Dibalik oleh run `uji-v1`
+> Premis "tanpa JavaScript, Enter tetap mengirim form" salah; diukur di Chromium pada build produksi: Enter pada `<select>` yang fokus tidak memicu peristiwa `submit` (#177). Kunci katalog `adminReports_periodSubmit` tidak jadi dihapus; ia dipakai tombol submit sungguhan di dalam `<noscript>` sebagai jalur tanpa JavaScript. Pemformat judul, `formatMonthLabel(period, locale)` di `src/lib/time.ts`, adalah helper baru yang dipakai bersama oleh Laporan Bulanan dan Beranda, menggantikan `MONTH_LABEL_FORMAT` lokal yang sebelumnya hanya ada di pemuat Beranda, bukan pemformat lama Beranda yang dipakai ulang.
+
 **Teks ditulis ulang, bukan disubstitusi.** Em dash diganti dengan koma, titik, atau kalimat baru sesuai makna, bukan dengan tanda hubung lain. Kalimat yang kaku ditulis ulang. Kunci katalog tidak diganti nama supaya tidak ada perubahan kode di luar teks. Judul tab yang memuat " — Komplek" mengikuti helper judul dari spec `shell-masuk` dan karena itu tiket teks tidak menyentuh bagian itu; ia hanya mengurus teks lain di template. Tabel sebelum dan sesudah dilampirkan pada pull request untuk ditinjau pemilik.
+
+> [!note] Dibalik oleh run `uji-v1`
+> Tiket teks (#179) justru menyentuh judul tab secara luas, bukan melewatkannya: 22 kunci `*_pageTitle` kehilangan akhiran nama komplek yang sebelumnya dipisahkan tanda em dash dan ditulis tetap di katalog, karena kini ditambahkan oleh `pageTitle()`. Tujuh kunci `*_pageTitle` baru ditambah untuk judul yang dulu ditulis langsung di template (`login`, `register`, `verify`, `setPassword`, `forgotPassword`, `adminJobs`, `adminRoles`), plus kunci `unit_label` baru. Seluruh 48 `<title>` di `src/routes` kini lewat `pageTitle(...)` dari `$lib/complex-name`.
 
 ## Testing decisions
 
