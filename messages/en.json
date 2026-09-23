@@ -1122,5 +1122,6 @@
 	"register_numberPlaceholder": "e.g. 94",
 	"verify_emailPlaceholder": "e.g. budi@example.com",
 	"adminOpeningBalance_amountPlaceholder": "e.g. 150.000",
-	"adminPayments_cash_amountPlaceholder": "e.g. 150.000"
+	"adminPayments_cash_amountPlaceholder": "e.g. 150.000",
+	"adminComplaintDetail_replyPlaceholder": "e.g. We have coordinated with the cleaning staff; it will be fixed this week."
 }
