@@ -22,6 +22,7 @@ import {
 	UNIT_DEACTIVATED_ACTION,
 	UNIT_REACTIVATED_ACTION
 } from '$lib/server/services/unit';
+import { splitAtLetterToDigitBoundary } from '$lib/server/services/unit/queries';
 
 /**
  * The Unit service: the admin list with search and pagination, creating a house, and switching one
@@ -178,6 +179,114 @@ describe('listUnits', () => {
 		expect(byBlock.units.map((row) => row.block)).toContain(block);
 		expect(byNumber.units.some((row) => row.block === block && row.number === '77')).toBe(true);
 	});
+
+	/**
+	 * `unique()` always appends a hyphen and a digit, so a block used in these fixtures is stripped of
+	 * it first: the combined search box has to see a block with no separator character of its own, or
+	 * `${block} 01` would split into three pieces (`ZQA`, `7`, `01`) instead of two and never reach the
+	 * block-and-number path being tested here. See the ticket note (#199) this guards.
+	 */
+	function uniqueBlockWithoutSeparators(prefix: string): string {
+		return unique(prefix).replaceAll('-', '');
+	}
+
+	it.each([
+		['a space', (block: string) => `${block} 01`],
+		['a hyphen', (block: string) => `${block}-01`],
+		['a slash', (block: string) => `${block}/01`],
+		['lowercase letters', (block: string) => `${block.toLowerCase()} 01`],
+		['the Indonesian label words', (block: string) => `Blok ${block} No 01`],
+		['the English label words', (block: string) => `Block ${block} No 01`]
+	])('finds a unit by block and number combined with %s', async (_form, buildSearch) => {
+		const superuserId = await insertSuperuser('Pengurus Pencari Gabungan');
+		const block = uniqueBlockWithoutSeparators('ZQA');
+		await insertUnitRow({ block, number: '01' });
+
+		const page = await listUnits(testDb.db, READ_CLOCK, {
+			actorId: superuserId,
+			search: buildSearch(block)
+		});
+
+		expect(page.units.some((row) => row.block === block && row.number === '01')).toBe(true);
+	});
+
+	it('finds a block-and-number keyword only in the unit it names, not a sibling block or number', async () => {
+		const superuserId = await insertSuperuser('Pengurus Pencari Tepat');
+		const blockA = uniqueBlockWithoutSeparators('ZQA');
+		const blockB = uniqueBlockWithoutSeparators('ZQB');
+		const wantedUnitId = await insertUnitRow({ block: blockA, number: '01' });
+		await insertUnitRow({ block: blockB, number: '01' });
+		await insertUnitRow({ block: blockA, number: '02' });
+
+		const page = await listUnits(testDb.db, READ_CLOCK, {
+			actorId: superuserId,
+			search: `${blockA} 01`
+		});
+
+		expect(page.units.map((row) => row.id)).toEqual([wantedUnitId]);
+	});
+
+	it('matches a single leftover piece against block or number, the way a lone keyword already did', async () => {
+		const superuserId = await insertSuperuser('Pengurus Pencarian Satu Bagian');
+		const block = uniqueBlockWithoutSeparators('ZQC');
+		await insertUnitRow({ block, number: '55' });
+
+		const byBlockAlone = await listUnits(testDb.db, READ_CLOCK, {
+			actorId: superuserId,
+			search: block
+		});
+		const byNumberAlone = await listUnits(testDb.db, READ_CLOCK, {
+			actorId: superuserId,
+			search: '55'
+		});
+		const byLabelledBlock = await listUnits(testDb.db, READ_CLOCK, {
+			actorId: superuserId,
+			search: `Blok ${block}`
+		});
+		const byLabelledNumber = await listUnits(testDb.db, READ_CLOCK, {
+			actorId: superuserId,
+			search: 'No 55'
+		});
+
+		for (const page of [byBlockAlone, byLabelledBlock]) {
+			expect(page.units.some((row) => row.block === block && row.number === '55')).toBe(true);
+		}
+		for (const page of [byNumberAlone, byLabelledNumber]) {
+			expect(page.units.some((row) => row.block === block && row.number === '55')).toBe(true);
+		}
+	});
+
+	it('does not treat % or _ in the keyword as a wildcard', async () => {
+		const superuserId = await insertSuperuser('Pengurus Wildcard');
+		const block = uniqueBlockWithoutSeparators('ZQW');
+		await insertUnitRow({ block, number: '01' });
+
+		const percentSearch = await listUnits(testDb.db, READ_CLOCK, {
+			actorId: superuserId,
+			search: '%'
+		});
+		const underscoreSearch = await listUnits(testDb.db, READ_CLOCK, {
+			actorId: superuserId,
+			search: '_'
+		});
+
+		expect(percentSearch.units.map((row) => row.block)).not.toContain(block);
+		expect(underscoreSearch.units.map((row) => row.block)).not.toContain(block);
+	});
+
+	it.each<[string, readonly [string, string] | null]>([
+		['A01', ['A', '01']],
+		['ZQ7', ['ZQ', '7']],
+		['AB', null],
+		['12', null],
+		['A', null]
+	])(
+		'splits %s at its first letter-to-digit boundary for the no-separator form, since a real block' +
+			' from unique() always already contains a digit and cannot prove this case through listUnits',
+		(piece, expected) => {
+			expect(splitAtLetterToDigitBoundary(piece)).toEqual(expected);
+		}
+	);
 
 	it('paginates, reporting the total count across every page', async () => {
 		const superuserId = await insertSuperuser('Pengurus Halaman');
