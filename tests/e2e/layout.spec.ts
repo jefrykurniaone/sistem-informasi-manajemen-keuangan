@@ -241,6 +241,52 @@ test('with a session at 1920px, the sidebar is on screen beside the page and the
 	expect(await overflowsHorizontally(page)).toBe(false);
 });
 
+/**
+ * #205: the `lg` size variant used by the brand button (`sidebar-menu-button.svelte`) zeroed the
+ * button's padding in icon mode, which pulled the brand icon flush to the button's left edge while
+ * every other collapsed menu icon sits centered on the same axis by the base variant's own padding.
+ * This proves the two axes match once collapsed, and that neither icon moved off its own button.
+ */
+test('with a session at 1920px, collapsing the sidebar puts the brand icon on the same horizontal axis as a menu icon', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 1920, height: 1080 });
+	await signedInSuperuser(page);
+
+	// `signedInSuperuser` ends right after the client-side navigation off `/login`, a page the
+	// sidebar's code never loads on. Without this, the trigger's click handler is not attached yet
+	// and the click below is simply lost. `open` re-navigates to `/` and waits for `networkidle`, the
+	// same hydration wait every other test in this file relies on.
+	await open(page, '/');
+
+	await page.getByRole('button', { name: MENU_BUTTON_ID }).click();
+
+	// The collapse is a 200ms CSS width transition (`sidebar.svelte`'s `sidebar-container`), so the
+	// icons are not on their final axis the instant the click resolves; wait for the container to
+	// finish settling at the icon-mode width before measuring anything inside it.
+	const container = page.locator('[data-slot="sidebar-container"]');
+	await expect.poll(async () => Math.round((await container.boundingBox())?.width ?? 0)).toBe(48);
+
+	const brandIcon = page
+		.locator('[data-sidebar="header"]')
+		.getByRole('link', { name: COMPLEX_NAME, exact: true })
+		.locator('svg');
+	const homeIcon = page
+		.getByRole('navigation', { name: MAIN_NAV_ID })
+		.getByRole('link', { name: 'Beranda', exact: true })
+		.locator('svg');
+
+	const brandBox = await brandIcon.boundingBox();
+	const homeBox = await homeIcon.boundingBox();
+	if (brandBox === null || homeBox === null) {
+		throw new Error('Expected both the brand icon and the Beranda icon to have a bounding box.');
+	}
+
+	const brandCenterX = brandBox.x + brandBox.width / 2;
+	const homeCenterX = homeBox.x + homeBox.width / 2;
+	expect(Math.abs(brandCenterX - homeCenterX)).toBeLessThanOrEqual(0.5);
+});
+
 test('the drawer at 390px shows the menu and the way out, with every link at least 44 pixels tall and no horizontal overflow', async ({
 	page
 }) => {
