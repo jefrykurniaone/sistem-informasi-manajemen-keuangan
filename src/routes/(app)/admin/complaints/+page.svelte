@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button/index.js';
 	import WorklistTable from '$lib/components/complaint/worklist-table.svelte';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { ComplaintStatus } from '$lib/server/db/schema/complaint';
 	import type { PageProps } from './$types';
@@ -21,7 +22,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminComplaints_pageTitle()}</title>
+	<title>{pageTitle(m.adminComplaints_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">

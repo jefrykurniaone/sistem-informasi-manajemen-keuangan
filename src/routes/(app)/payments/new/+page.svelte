@@ -4,6 +4,7 @@
 		EMPTY_PAYMENT_FORM_VALUES,
 		type PaymentFormValues
 	} from '$lib/components/dues/payment-form.svelte';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -14,7 +15,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.payments_new_pageTitle()}</title>
+	<title>{pageTitle(m.payments_new_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-10">

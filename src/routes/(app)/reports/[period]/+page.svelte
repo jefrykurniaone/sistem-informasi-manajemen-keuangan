@@ -3,6 +3,7 @@
 	import CategoryTable from '$lib/components/report/category-table.svelte';
 	import ReportSummary from '$lib/components/report/report-summary.svelte';
 	import { formatRupiah } from '$lib/money';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import { formatDateTime, formatDay } from '$lib/time';
 	import type { PageProps } from './$types';
@@ -35,7 +36,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.reports_detail_pageTitle({ period: data.report.period })}</title>
+	<title>{pageTitle(m.reports_detail_pageTitle({ period: data.report.period }))}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">

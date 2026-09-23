@@ -41,7 +41,9 @@
 				>
 					<option value="">{m.adminExemptions_unitPlaceholder()}</option>
 					{#each units as unit (unit.id)}
-						<option value={unit.id}>{unit.block} — {unit.number}</option>
+						<option value={unit.id}>
+							{m.unit_label({ block: unit.block, number: unit.number })}
+						</option>
 					{/each}
 				</select>
 			</div>

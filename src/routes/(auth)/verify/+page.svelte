@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { pageTitle } from '$lib/complex-name';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -10,7 +12,7 @@
 </script>
 
 <svelte:head>
-	<title>Verifikasi email — Komplek</title>
+	<title>{pageTitle(m.verify_pageTitle())}</title>
 </svelte:head>
 
 <main class="flex flex-col gap-6">

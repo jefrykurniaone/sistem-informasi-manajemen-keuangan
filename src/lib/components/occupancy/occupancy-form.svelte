@@ -59,7 +59,7 @@
 				>
 					<option value="">{m.adminOccupancies_residentPlaceholder()}</option>
 					{#each residents as resident (resident.residentId)}
-						<option value={resident.residentId}>{resident.name} — {resident.email}</option>
+						<option value={resident.residentId}>{resident.name} ({resident.email})</option>
 					{/each}
 				</select>
 			</div>

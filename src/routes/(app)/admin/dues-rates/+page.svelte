@@ -1,6 +1,7 @@
 <script lang="ts">
 	import DuesRateForm from '$lib/components/dues/dues-rate-form.svelte';
 	import { formatRupiah } from '$lib/money';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -8,7 +9,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminDuesRates_pageTitle()}</title>
+	<title>{pageTitle(m.adminDuesRates_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">

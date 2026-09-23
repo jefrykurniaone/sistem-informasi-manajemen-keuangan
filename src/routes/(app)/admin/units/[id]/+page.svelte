@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import { formatDay } from '$lib/time';
 	import type { PageProps } from './$types';
@@ -10,7 +11,7 @@
 
 <svelte:head>
 	<title>
-		{m.adminUnits_detailHeading({ block: data.unit.block, number: data.unit.number })}
+		{pageTitle(m.adminUnits_detailHeading({ block: data.unit.block, number: data.unit.number }))}
 	</title>
 </svelte:head>
 

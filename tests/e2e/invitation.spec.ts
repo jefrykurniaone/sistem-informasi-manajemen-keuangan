@@ -159,7 +159,7 @@ async function insertUnit(): Promise<{ unitId: string; block: string }> {
 async function inviteThroughScreen(page: Page, block: string, email: string): Promise<string> {
 	await open(page, '/admin/invitations');
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Undangan warga');
-	await page.getByLabel('Unit').selectOption({ label: `${block} — 1` });
+	await page.getByLabel('Unit').selectOption({ label: `Blok ${block} No 1` });
 	await page.getByLabel(EMAIL_FIELD, { exact: true }).fill(email);
 	await page.getByRole('button', { name: 'Kirim undangan', exact: true }).click();
 	await expect(page.getByRole('status')).toContainText(`Undangan terkirim ke ${email}`);

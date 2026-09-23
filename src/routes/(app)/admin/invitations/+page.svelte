@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import { formatDay } from '$lib/time';
 	import type { PageProps } from './$types';
@@ -25,7 +26,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminInvitations_pageTitle()}</title>
+	<title>{pageTitle(m.adminInvitations_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">
@@ -52,7 +53,9 @@
 					class="h-9 rounded-md border border-border bg-background px-3 text-sm"
 				>
 					{#each data.units as unit (unit.id)}
-						<option value={unit.id}>{unit.block} — {unit.number}</option>
+						<option value={unit.id}>
+							{m.unit_label({ block: unit.block, number: unit.number })}
+						</option>
 					{/each}
 				</select>
 			</div>
@@ -80,7 +83,7 @@
 				<div class="flex items-center gap-3">
 					<input type="hidden" name="unitId" value={unit.id} />
 					<label class="w-32 shrink-0 text-sm font-medium" for="bulk-email-{unit.id}-{uid}">
-						{unit.block} — {unit.number}
+						{m.unit_label({ block: unit.block, number: unit.number })}
 					</label>
 					<input
 						id="bulk-email-{unit.id}-{uid}"
@@ -106,7 +109,7 @@
 					<span class="text-sm text-muted-foreground">{statusLabel(invitation.status)}</span>
 				</div>
 				<p class="text-sm text-muted-foreground">
-					{invitation.block} — {invitation.number} ·
+					{m.unit_label({ block: invitation.block, number: invitation.number })} ·
 					{m.adminInvitations_validUntil({ date: asDay(invitation.expiresAt) })}
 				</p>
 				{#if invitation.status !== 'used'}

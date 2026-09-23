@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { pageTitle } from '$lib/complex-name';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as m from '$lib/paraglide/messages.js';
 	import { formatDateTime } from '$lib/time';
 	import type { PageProps } from './$types';
 
@@ -19,7 +21,7 @@
 </script>
 
 <svelte:head>
-	<title>Pekerjaan terjadwal — Komplek</title>
+	<title>{pageTitle(m.adminJobs_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">

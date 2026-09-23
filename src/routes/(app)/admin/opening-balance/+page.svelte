@@ -2,6 +2,7 @@
 	import RupiahInput from '$lib/components/rupiah-input.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { formatRupiah } from '$lib/money';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import { formatDay } from '$lib/time';
 	import type { PageProps } from './$types';
@@ -17,7 +18,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminOpeningBalance_pageTitle()}</title>
+	<title>{pageTitle(m.adminOpeningBalance_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-10">

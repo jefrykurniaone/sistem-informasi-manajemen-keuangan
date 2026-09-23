@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -25,7 +26,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminCashCategories_pageTitle()}</title>
+	<title>{pageTitle(m.adminCashCategories_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">
@@ -85,7 +86,7 @@
 
 				{#if category.isSystem}
 					<p class="text-sm text-muted-foreground">
-						{m.adminCashCategories_systemLabel()} — {m.adminCashCategories_systemNote()}
+						{m.adminCashCategories_systemLabel()}. {m.adminCashCategories_systemNote()}
 					</p>
 				{:else}
 					{#if !category.isActive}

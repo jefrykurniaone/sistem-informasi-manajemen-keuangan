@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -20,7 +21,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.myUnit_pageTitle()} — Komplek</title>
+	<title>{pageTitle(m.myUnit_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-xl flex-col gap-6 px-4 py-10">

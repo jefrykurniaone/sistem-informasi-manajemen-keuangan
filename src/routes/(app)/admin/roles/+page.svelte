@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { pageTitle } from '$lib/complex-name';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -13,7 +15,7 @@
 </script>
 
 <svelte:head>
-	<title>Kelola peran — Komplek</title>
+	<title>{pageTitle(m.adminRoles_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">

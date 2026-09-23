@@ -4,6 +4,7 @@
 		EMPTY_CASH_TRANSACTION_FORM_VALUES,
 		type CashTransactionFormValues
 	} from '$lib/components/cash/transaction-form.svelte';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
@@ -16,7 +17,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminCash_new_pageTitle()}</title>
+	<title>{pageTitle(m.adminCash_new_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-10">

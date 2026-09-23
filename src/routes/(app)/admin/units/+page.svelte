@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import UnitForm from '$lib/components/unit/unit-form.svelte';
+	import { pageTitle } from '$lib/complex-name';
 	import * as m from '$lib/paraglide/messages.js';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import type { PageProps } from './$types';
@@ -32,7 +33,7 @@
 </script>
 
 <svelte:head>
-	<title>{m.adminUnits_pageTitle()}</title>
+	<title>{pageTitle(m.adminUnits_pageTitle())}</title>
 </svelte:head>
 
 <main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">
@@ -75,7 +76,9 @@
 		{#each data.units as unit (unit.id)}
 			<section class="flex flex-col gap-2 rounded-lg border border-border p-4">
 				<div class="flex flex-wrap items-center justify-between gap-2">
-					<span class="font-medium">{unit.block} — {unit.number}</span>
+					<span class="font-medium">
+						{m.unit_label({ block: unit.block, number: unit.number })}
+					</span>
 					<span class="text-sm text-muted-foreground">
 						{unit.isActive ? m.adminUnits_statusActive() : m.adminUnits_statusInactive()}
 					</span>
