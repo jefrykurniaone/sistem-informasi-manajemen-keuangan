@@ -51,8 +51,8 @@ adalah tautan ke layar yang menanganinya. Pengunjung yang belum masuk diarahkan 
   diprediksi: buka setelah 300 ms melayang, tutup setelah 500 ms pergi, tidak menutup saat pointer
   pindah ke isi grup, Escape menutup.
 
-> [!note] Dibalik oleh run `uji-v1`
-> Hover-intent dihapus seluruhnya (#174, spec `shell-masuk` v1). Grup terbuka hanya lewat klik, sentuhan, Enter, atau Spasi; melayangkan pointer tidak membuka atau menutup apa pun, dan Escape tetap menutup panel melayang.
+  > [!note] Dibalik oleh run `uji-v1`
+  > Hover-intent dihapus seluruhnya (#174, spec `shell-masuk` v1). Grup terbuka hanya lewat klik, sentuhan, Enter, atau Spasi; melayangkan pointer tidak membuka atau menutup apa pun, dan Escape tetap menutup panel melayang.
 
 - Halaman aktif dan grupnya selalu terlihat saat halaman dimuat, tanpa aksi pengguna.
 - Beranda menjawab satu pertanyaan per peran dalam satu layar: "apa yang harus saya lakukan?"
@@ -183,8 +183,9 @@ layar yang menangani angka itu (riset §3). Tidak ada delta terhadap bulan lalu 
   pada 1280 dan 390 piksel: melayang membuka grup, mengklik judul dua kali kembali ke keadaan awal,
   Escape menutup panel melayang, laci menutup setelah tautan dipilih, tidak ada gulir mendatar.
 
-> [!note] Dibalik oleh run `uji-v1`
-> Kriteria walk sejak #174: melayangkan pointer 1 detik di judul grup tidak membukanya; klik membuka, klik lagi menutup; mode ikon membuka panel melayang lewat klik pada pemicu ikon, bukan hover, dan Escape menutupnya.
+  > [!note] Dibalik oleh run `uji-v1`
+  > Kriteria walk sejak #174: melayangkan pointer 1 detik di judul grup tidak membukanya; klik membuka, klik lagi menutup; mode ikon membuka panel melayang lewat klik pada pemicu ikon, bukan hover, dan Escape menutupnya.
+
 - **Pengalihan tanpa sesi** diuji lewat e2e yang sudah ada untuk tata letak, diperbarui.
 - Prior art: `tests/unit/authz.test.ts` untuk izin, `tests/unit/invoice-queries.test.ts` dan
   `tests/unit/running-balance.test.ts` untuk agregasi atas basis data uji, `tests/e2e/layout.spec.ts`.
@@ -197,8 +198,9 @@ layar yang menangani angka itu (riset §3). Tidak ada delta terhadap bulan lalu 
   target sentuh minimal 44 piksel.
 - Sidebar terlipat: ikon dengan tooltip, hover ikon grup menampilkan panel melayang berisi item.
 
-> [!note] Dibalik oleh run `uji-v1`
-> Sejak #174, panel melayang di mode ikon terbuka lewat klik pada ikon pemicu, bukan hover; tooltip pada mode ikon tidak berubah.
+  > [!note] Dibalik oleh run `uji-v1`
+  > Sejak #174, panel melayang di mode ikon terbuka lewat klik pada ikon pemicu, bukan hover; tooltip pada mode ikon tidak berubah.
+
 - Beranda tanpa sesi mengalihkan ke halaman masuk; dengan sesi warga menampilkan kartu warga;
   dengan sesi admin menampilkan kartu pengurus; tidak ada teks tentang stack aplikasi.
 - Setiap angka pada kartu cocok dengan layar tujuannya untuk data yang sama.
