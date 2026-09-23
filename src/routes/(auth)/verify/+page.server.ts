@@ -1,5 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
+import { verifyJWT } from 'better-auth/crypto';
 import { auth } from '$lib/server/auth';
 import { limitFormAction, RATE_LIMIT_POLICY } from '$lib/server/rate-limit';
 import type { Actions, PageServerLoad } from './$types';
@@ -24,7 +25,7 @@ import type { Actions, PageServerLoad } from './$types';
  * **Asking too often is refused before better-auth is asked anything**, by `limitFormAction` in
  * `$lib/server/rate-limit`, which counts the caller's address and the email typed without looking
  * either up. Every post past the limit gets `TOO_MANY_REQUESTS` and a 429, whoever the address
- * belongs to, and queues nothing, the same reasoning as `/forgot-password`, because the two forms
+ * belongs to, and queues nothing — the same reasoning as `/forgot-password`, because the two forms
  * are the same mail-sending lever with a different template behind it.
  *
  * Verifying does not sign anyone in — see the reasoning in `$lib/server/auth`. The page sends the
@@ -37,14 +38,21 @@ import type { Actions, PageServerLoad } from './$types';
  * lines 287-321) resolves to the exact same value, `{ status: true, user: null }`, whether the
  * address was already verified or is being verified for the first time, so that shape does not
  * tell the two visits apart, and this page must not pretend it does by reading `user` off it. So `load`
- * asks a question of its own first: it reads the token's payload without checking its signature,
- * purely to learn which address is named, and looks that address up through better-auth's
- * `internalAdapter.findUserByEmail` *before* calling `verifyEmail`, which is the only moment the
- * database still remembers whether this visit is the first one. `verifyEmail` itself still decides
- * `expired` and `invalid`, exactly as before; the unchecked payload is never trusted for anything
- * beyond picking which address to look up, and a payload that fails to parse goes straight to
- * `invalid` without a lookup or a call to `verifyEmail`, because a token in that shape cannot pass
- * signature verification either.
+ * asks a question of its own first, but only after the token's own signature checks out:
+ * `verifyJWT` from `better-auth/crypto` is the same `jwtVerify`, over the same `context.secret`,
+ * that `verifyEmail` itself uses (`email-verification.mjs` line 178), so a forged token is refused
+ * here exactly as it would be there. **The lookup never runs on an unverified claim.** Trusting an
+ * `email` field lifted from a token before checking who signed it would let anyone name a
+ * registered address and time how long the answer takes, which is exactly the oracle `/login`,
+ * `/register` and `/forgot-password` are built not to be; a holder of a token whose signature does
+ * check out has already proved the address is theirs, so looking it up discloses nothing new. Once
+ * the signature checks out, `load` looks that address up through better-auth's
+ * `internalAdapter.findUserByEmail`, *before* calling `verifyEmail`, which is the only moment the
+ * database still remembers whether this visit is the first one. `verifyEmail` is still called for
+ * every token, genuine or not, and it alone still decides `expired` versus `invalid`, exactly as
+ * before; a token this page's own check could not verify does not short-circuit to `invalid`,
+ * because only `verifyEmail`'s own, more detailed check tells an expired token from a merely
+ * invalid one.
  *
  * A link scanner that opens the emailed link before the person does is exactly what turns their own
  * click into `used`, and the sentence stays true when that happens, because the address really is
@@ -57,47 +65,25 @@ import type { Actions, PageServerLoad } from './$types';
 /** What this page is saying. The wording lives in the component; this is the situation. */
 export type VerificationState = 'idle' | 'sent' | 'verified' | 'used' | 'expired' | 'invalid';
 
-/**
- * What a verification token's middle segment names, read without checking the token's signature.
- * `verifyEmail` below is still the only thing that decides whether the token is genuine; this is
- * only ever used to pick which address to look up before that call runs.
- */
-interface UncheckedTokenPayload {
-	readonly email: string;
+/** What this page reads out of a verification token, once its signature has checked out. */
+interface VerifiedTokenPayload {
+	readonly email?: unknown;
 }
 
-function isUncheckedTokenPayload(value: unknown): value is UncheckedTokenPayload {
-	if (typeof value !== 'object' || value === null) {
-		return false;
-	}
-	const email = (value as Record<string, unknown>).email;
-	return typeof email === 'string' && email !== '';
+function hasEmailClaim(
+	payload: VerifiedTokenPayload | null
+): payload is { readonly email: string } {
+	return typeof payload?.email === 'string' && payload.email !== '';
 }
 
 /**
- * Reads the address a verification token names, without checking its signature or its expiry. A
- * token that does not even decode to that shape cannot pass `verifyEmail`'s real, signature-checked
- * parse either, so callers treat `undefined` here the same as an invalid token.
- */
-function decodeUncheckedTokenPayload(token: string): UncheckedTokenPayload | undefined {
-	const segments = token.split('.');
-	if (segments.length !== 3) {
-		return undefined;
-	}
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(Buffer.from(segments[1], 'base64url').toString('utf8'));
-	} catch {
-		return undefined;
-	}
-	return isUncheckedTokenPayload(parsed) ? parsed : undefined;
-}
-
-/**
- * Whether `email` was already verified, read the instant before `verifyEmail` runs and possibly
- * changes it. Goes through better-auth's own `internalAdapter.findUserByEmail` rather than a
- * Drizzle query of this application's own, so this stays in step with whatever the installed
- * version actually stores instead of a copy kept in sync by hand.
+ * Whether the address a verification token names was already verified, read the instant before
+ * `verifyEmail` runs and possibly changes it. Never called on a token this page has not verified
+ * itself first; see the module header for why an unverified claim must never reach this lookup.
+ *
+ * Goes through better-auth's own `internalAdapter.findUserByEmail` rather than a Drizzle query of
+ * this application's own, so this stays in step with whatever the installed version actually
+ * stores instead of a copy kept in sync by hand.
  */
 async function wasAlreadyVerified(email: string): Promise<boolean> {
 	const context = await auth().$context;
@@ -115,14 +101,16 @@ export const load: PageServerLoad = async ({ url }) => {
 		return { state: (url.searchParams.has('sent') ? 'sent' : 'idle') satisfies VerificationState };
 	}
 
-	const payload = decodeUncheckedTokenPayload(token);
-	if (!payload) {
-		return { state: 'invalid' satisfies VerificationState };
-	}
+	// The lookup below may only ever run on a token this page has verified itself: an unchecked
+	// `email` claim would make this page answer whether an arbitrary address is registered. A
+	// token that does not verify is not turned into `invalid` here; `verifyEmail` below still
+	// makes that call, so `expired` versus `invalid` keeps coming from its own, more detailed check.
+	const context = await auth().$context;
+	const payload = await verifyJWT<VerifiedTokenPayload>(token, context.secret);
 
 	// Read before `verifyEmail` runs: that call may itself flip this address to verified, which
 	// would make the same question asked afterwards always answer "yes".
-	const alreadyVerified = await wasAlreadyVerified(payload.email);
+	const alreadyVerified = hasEmailClaim(payload) ? await wasAlreadyVerified(payload.email) : false;
 
 	try {
 		await auth().api.verifyEmail({ query: { token } });
