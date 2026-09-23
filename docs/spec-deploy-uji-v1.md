@@ -59,6 +59,9 @@ Satu perintah dari mesin pengembang membangun image produksi, mendorongnya ke Gi
 
 **Image produksi dibangun di WSL, diterbitkan publik di GHCR.** Daemon Docker di mesin ini hidup di WSL Ubuntu, jadi `deploy.sh` dijalankan dari sana dengan `--platform linux/amd64`. Image diberi tag SHA commit dan `latest` di `ghcr.io/jefrykurniaone/sistem-informasi-manajemen-keuangan`. Paket dibuat publik supaya VM menarik tanpa login; repositori memang publik. Target `production` Dockerfile yang ada dipakai; VM tidak pernah menjalankan `git` atau `bun install`, penting karena paket $7 hanya 1 GB RAM.
 
+> [!note] Dibalik oleh run `uji-v1`
+> Paket GHCR tidak bisa dibuat publik sebelum ada: ia baru muncul pada push pertama, selalu sebagai privat, dan GitHub tidak punya API untuk mengubah visibilitasnya (#180). Deploy pertama berhenti di langkah pull dengan `unauthorized`, pemilik mengubah visibilitas di situs GitHub, lalu `deploy.sh` dijalankan ulang. `deploy.sh` juga butuh `gh` yang terpasang dan masuk di dalam WSL dengan cakupan `write:packages`; `gh` di Windows tidak dipakai (#180, dicatat di `docs/deploy.md`).
+
 **Compose produksi terpisah dari compose pengembangan.** `docker-compose.prod.yml` memuat `migrate` (image yang sama, perintah `bun run db:migrate`, `restart: no`), `app` (bergantung pada `migrate` selesai sukses, port 3000 hanya di jaringan internal, volume `storage/`), dan `caddy` (port 80 dan 443, volume data sertifikat). `Caddyfile` berisi satu blok situs `<ip>.sslip.io` yang mem-proxy ke `app:3000`. Tidak ada service basis data dan tidak ada Mailpit. `migrate` memakai `drizzle-kit` yang ada di `node_modules` image, jadi image produksi tidak berubah kecuali `drizzle/` dan `drizzle.config.ts` ikut disalin.
 
 **Satu `DATABASE_URL` ke session pooler Supabase.** Koneksi langsung Supabase gratis hanya IPv6 dan Lightsail IPv4, sehingga aplikasi dan migrasi memakai host pooler port 5432 mode sesi, yang mendukung prepared statement `pg`. `?sslmode=require` disertakan; tiket memverifikasi bahwa `pg` 8.23 menerima sertifikat pooler dengan pengaturan itu dan mencatat hasilnya.
@@ -73,6 +76,9 @@ Satu perintah dari mesin pengembang membangun image produksi, mendorongnya ke Gi
 > [!note] Dibalik oleh run `uji-v1`
 > `.env` tidak dikirim lewat `scp` (#176): `scp` menolak sumber non-reguler, yang akan memaksa salinan `.env` singgah sebagai berkas di mesin pengembang lebih dulu, melanggar syarat tiket sendiri. `setup-env.sh` mengirim isinya lewat stdin `ssh` dengan `printf` builtin (jadi nilainya tidak pernah masuk `/proc/<pid>/cmdline`); perintah remote menulis ke `.env.next`, memeriksa penanda akhir, baru `mv` ke `.env` dengan mode 600.
 
+> [!note] Dibalik oleh run `uji-v1`
+> `bootstrap-vm.sh` tidak menyalin compose dan Caddyfile: ia dijalankan lewat `ssh ... 'bash -s'` sehingga tidak membawa berkas. `setup-env.sh` yang menyalin `docker-compose.prod.yml`, `Caddyfile`, dan CA Supabase ke VM, dan `deploy.sh` menyalin ulang kedua berkas pertama bila isinya berbeda (#176). Wizard menulis `DATABASE_URL` apa adanya tanpa memeriksa bahwa ia terurai sebagai URL; kata sandi Supabase yang belum di-percent-encode membuat `migrate` keluar 1 tanpa pesan pada deploy pertama (#180, celahnya tercatat sebagai #202).
+
 **`PUBLIC_COMPLEX_NAME` masuk di build atau di runtime?** Variabel `$env/static/public` dibekukan saat build. Karena image dibangun di mesin pengembang, nilainya diberikan sebagai build arg di `deploy.sh` dari `.env.deploy`, dan runbook mencatat bahwa mengubah nama komplek berarti deploy ulang. Spec `shell-masuk` yang memperkenalkan variabel itu.
 
 **Penjadwal in-process tetap.** `hooks.server.ts` sudah memulai penjadwal saat server hidup, dengan kunci per periode dan pemicu manual di `/admin/jobs`. Cron akan bersaing memperebutkan kunci yang sama tanpa manfaat.
@@ -84,6 +90,9 @@ Satu perintah dari mesin pengembang membangun image produksi, mendorongnya ke Gi
 - **Pengirim SMTP** diuji unit di `tests/unit/ports-email.test.ts`: `readSmtpSettings` dengan dan tanpa pasangan auth, galat saat hanya satu ada, dan opsi transport yang dibangun (`auth`, `requireTLS`) diperiksa lewat `transport.options` tanpa mengirim.
 - **Compose dan Caddyfile** tidak diuji di gerbang; `docker compose -f docker-compose.prod.yml config` harus valid, diperiksa orchestrator di WSL.
 - **Deploy sungguhan** diverifikasi orchestrator lewat HTTP: `GET https://<ip>.sslip.io/api/health` 200 dengan sertifikat sah, tabel migrasi Drizzle di Supabase berisi sepuluh baris, halaman masuk dua kolom tampil, dan pendaftaran akun pemilik menghasilkan email verifikasi di Gmail. Tidak ada tes di repositori untuk ini.
+
+  > [!note] Dibalik oleh run `uji-v1`
+  > Tabel migrasi berisi tiga belas baris, bukan sepuluh: repositori memuat migrasi `0000` sampai `0012` saat deploy (#180). Angka di tiket dikoreksi sebelum dispatch.
 - Prior art: `tests/e2e/api-health.spec.ts` untuk bentuk endpoint kesehatan.
 
 ## Success criteria
@@ -91,9 +100,19 @@ Satu perintah dari mesin pengembang membangun image produksi, mendorongnya ke Gi
 - `bun run test` memuat tes auth SMTP dan lulus; `docker compose up` lokal tanpa variabel baru tetap jalan.
 - `docker compose -f docker-compose.prod.yml config` valid.
 - `scripts/deploy.sh` dari WSL menyelesaikan build, push, pull, migrasi, dan health check tanpa langkah manual.
+
+  > [!note] Dibalik oleh run `uji-v1`
+  > Berlaku untuk deploy ulang (39 detik dari awal sampai health check), bukan untuk deploy pertama (#180). Deploy pertama butuh tiga langkah tangan: memasang dan memasukkan `gh` di WSL dengan `write:packages`, membuat paket GHCR publik setelah push pertama, dan meng-encode kata sandi di `DATABASE_URL` di VM. Ketiganya kini dicatat di `docs/deploy.md`.
+
 - `https://<ip>.sslip.io/api/health` menjawab 200 dengan sertifikat sah.
 - Supabase memuat sepuluh migrasi dan tabel aplikasi.
+
+  > [!note] Dibalik oleh run `uji-v1`
+  > Tiga belas migrasi, `0000` sampai `0012` (#180).
 - Pendaftaran pemilik mengirim email verifikasi yang sampai di Gmail; `superuser:grant` di container memberi peran.
+
+  > [!note] Dibalik oleh run `uji-v1`
+  > Image produksi dari #172 tidak memuat `scripts/grant-superuser.ts` maupun `src/`, jadi `superuser:grant` di container gagal dengan `Module not found` pada deploy pertama (#180). #204 membundel skrip itu di tahap `build` `Dockerfile` menjadi `scripts/grant-superuser.js` di image. Perintah `bun run superuser:grant <email>` sama di pohon kerja dan di container, dan sesudah deploy ulang ia memberi peran superuser kepada pemilik.
 - `docs/deploy.md` cukup untuk mengulang seluruh pemasangan tanpa membaca tiket.
 - Empat perintah gerbang lulus.
 
