@@ -205,6 +205,13 @@ test('a new resident registers, verifies, signs in, and signs out', async ({
 	await page.goto(`/verify?token=${encodeURIComponent(token)}`);
 	await expect(page.getByText('Alamat email Anda sudah terverifikasi')).toBeVisible();
 
+	// The same link a second time says it was already used, not the first-visit sentence, and it
+	// carries no resend form.
+	await page.goto(`/verify?token=${encodeURIComponent(token)}`);
+	await expect(page.getByText('Tautan ini sudah pernah dipakai')).toBeVisible();
+	await expect(page.getByText('Alamat email Anda sudah terverifikasi')).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Kirim ulang email verifikasi' })).toHaveCount(0);
+
 	await signIn(page, email);
 	// This account has no `residents` row and no admin/superuser role, so it is not admitted yet;
 	// `/` is Beranda in the `(app)` group since #142, and that group's own layout sends an
