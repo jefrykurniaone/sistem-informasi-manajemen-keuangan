@@ -86,6 +86,7 @@
 					name="reason"
 					rows="3"
 					required
+					placeholder={m.voidInvoice_reasonPlaceholder()}
 					aria-describedby="void-invoice-reason-hint-{uid}"
 					class="rounded-md border border-border bg-background px-3 py-2 text-sm"></textarea>
 				<p id="void-invoice-reason-hint-{uid}" class="text-sm text-muted-foreground">

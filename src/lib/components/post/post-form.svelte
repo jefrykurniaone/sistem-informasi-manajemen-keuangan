@@ -213,6 +213,7 @@
 			type="text"
 			required
 			value={values.title}
+			placeholder={m.adminPosts_form_titlePlaceholder()}
 			class="h-11 rounded-md border border-border bg-background px-3 text-sm"
 		/>
 	</div>
@@ -226,6 +227,7 @@
 			name="summary"
 			rows="2"
 			required
+			placeholder={m.adminPosts_form_summaryPlaceholder()}
 			aria-describedby="post-form-summary-hint-{uid}"
 			class="rounded-md border border-border bg-background px-3 py-2 text-sm"
 			>{values.summary}</textarea
@@ -343,6 +345,7 @@
 					name="location"
 					type="text"
 					value={values.location}
+					placeholder={m.adminPosts_form_locationPlaceholder()}
 					class="h-11 rounded-md border border-border bg-background px-3 text-sm"
 				/>
 			</div>

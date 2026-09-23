@@ -128,6 +128,7 @@
 			name="amount"
 			required
 			value={values.amount}
+			placeholder={m.adminCash_form_amountPlaceholder()}
 			aria-describedby="cash-transaction-amount-hint-{uid}"
 		/>
 		<p id="cash-transaction-amount-hint-{uid}" class="text-sm text-muted-foreground">
@@ -144,6 +145,7 @@
 			name="description"
 			rows="3"
 			required
+			placeholder={m.adminCash_form_descriptionPlaceholder()}
 			aria-describedby="cash-transaction-description-hint-{uid}"
 			class="rounded-md border border-border bg-background px-3 py-2 text-sm"
 			>{values.description}</textarea

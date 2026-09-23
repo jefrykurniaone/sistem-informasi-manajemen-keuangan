@@ -36,6 +36,7 @@
 				type="text"
 				autocomplete="name"
 				value={form?.name ?? ''}
+				placeholder={m.register_namePlaceholder()}
 				required
 			/>
 		</div>
@@ -49,6 +50,7 @@
 				type="email"
 				autocomplete="email"
 				value={form?.email ?? ''}
+				placeholder={m.register_emailPlaceholder()}
 				required
 			/>
 		</div>
@@ -65,6 +67,7 @@
 						type="text"
 						aria-describedby="claim-hint"
 						value={form?.claimedBlock ?? ''}
+						placeholder={m.register_blockPlaceholder()}
 						required
 					/>
 				</div>
@@ -77,6 +80,7 @@
 						type="text"
 						aria-describedby="claim-hint"
 						value={form?.claimedNumber ?? ''}
+						placeholder={m.register_numberPlaceholder()}
 						required
 					/>
 				</div>

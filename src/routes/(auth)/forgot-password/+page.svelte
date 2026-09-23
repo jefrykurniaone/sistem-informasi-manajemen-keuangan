@@ -40,6 +40,7 @@
 				name="email"
 				type="email"
 				autocomplete="email"
+				placeholder={m.forgotPassword_emailPlaceholder()}
 				required
 			/>
 		</div>

@@ -70,6 +70,7 @@
 				name="category"
 				type="text"
 				value={data.filters.category}
+				placeholder={m.adminComplaints_filterCategoryPlaceholder()}
 				class="h-11 rounded-md border border-border bg-background px-3 text-sm"
 			/>
 		</div>

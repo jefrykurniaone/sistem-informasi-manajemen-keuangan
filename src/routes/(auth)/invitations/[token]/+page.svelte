@@ -57,6 +57,7 @@
 						name="name"
 						type="text"
 						autocomplete="name"
+						placeholder={m.register_namePlaceholder()}
 						required
 					/>
 				</div>

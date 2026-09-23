@@ -212,6 +212,7 @@
 			name="amount"
 			required
 			bind:value={amount}
+			placeholder={m.payments_form_amountPlaceholder()}
 			aria-describedby="payment-amount-hint-{uid}"
 			class="w-full"
 		/>

@@ -65,7 +65,12 @@
 			<div class="flex flex-col gap-1.5">
 				<label class="text-sm font-medium" for="refund-amount-{uid}">{m.refund_amountLabel()}</label
 				>
-				<RupiahInput id="refund-amount-{uid}" name="amount" required />
+				<RupiahInput
+					id="refund-amount-{uid}"
+					name="amount"
+					required
+					placeholder={m.refund_amountPlaceholder()}
+				/>
 			</div>
 
 			<div class="flex flex-col gap-1.5">
@@ -87,6 +92,7 @@
 					name="reason"
 					rows="3"
 					required
+					placeholder={m.refund_reasonPlaceholder()}
 					aria-describedby="refund-reason-hint-{uid}"
 					class="rounded-md border border-border bg-background px-3 py-2 text-sm"></textarea>
 				<p id="refund-reason-hint-{uid}" class="text-sm text-muted-foreground">

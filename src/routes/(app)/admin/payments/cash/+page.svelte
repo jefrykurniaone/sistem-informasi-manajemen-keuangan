@@ -61,7 +61,13 @@
 				<label class="text-sm font-medium" for="amount-{uid}">
 					{m.adminPayments_cash_amountLabel()}
 				</label>
-				<RupiahInput id="amount-{uid}" name="amount" required value={form?.values?.amount ?? ''} />
+				<RupiahInput
+					id="amount-{uid}"
+					name="amount"
+					required
+					value={form?.values?.amount ?? ''}
+					placeholder={m.adminPayments_cash_amountPlaceholder()}
+				/>
 				<p class="text-sm text-muted-foreground">{m.adminPayments_cash_amountHint()}</p>
 			</div>
 

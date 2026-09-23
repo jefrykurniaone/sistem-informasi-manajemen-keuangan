@@ -34,6 +34,7 @@
 				name="block"
 				type="text"
 				required
+				placeholder={m.adminUnits_blockPlaceholder()}
 				class="h-9 rounded-md border border-border bg-background px-3 text-sm"
 			/>
 		</div>
@@ -46,6 +47,7 @@
 				name="number"
 				type="text"
 				required
+				placeholder={m.adminUnits_numberPlaceholder()}
 				class="h-9 rounded-md border border-border bg-background px-3 text-sm"
 			/>
 		</div>
