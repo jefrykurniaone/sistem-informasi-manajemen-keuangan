@@ -207,3 +207,4 @@ lain diperhatikan.
 - [Spesifikasi](./docs) — salinan setiap spesifikasi run yang sedang berjalan.
 - [Tracker](./docs/agents/issue-tracker.md) — di mana spesifikasi dan tiket hidup.
 - [Glosarium](./CONTEXT.md) — bahasa kanonik yang dipakai di kode, antarmuka, dan percakapan.
+- [Runbook deploy](./docs/deploy.md): cara memasang dan men-deploy ulang fase uji.
