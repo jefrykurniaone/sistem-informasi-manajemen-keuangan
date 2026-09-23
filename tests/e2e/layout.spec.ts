@@ -253,6 +253,12 @@ test('with a session at 1920px, collapsing the sidebar puts the brand icon on th
 	await page.setViewportSize({ width: 1920, height: 1080 });
 	await signedInSuperuser(page);
 
+	// `signedInSuperuser` ends right after the client-side navigation off `/login`, a page the
+	// sidebar's code never loads on. Without this, the trigger's click handler is not attached yet
+	// and the click below is simply lost. `open` re-navigates to `/` and waits for `networkidle`, the
+	// same hydration wait every other test in this file relies on.
+	await open(page, '/');
+
 	await page.getByRole('button', { name: MENU_BUTTON_ID }).click();
 
 	// The collapse is a 200ms CSS width transition (`sidebar.svelte`'s `sidebar-container`), so the
