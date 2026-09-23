@@ -7,6 +7,7 @@
 | Peta eksekusi | [#146](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/146) |
 | Riset pendukung | [docs/research-ui-ux-v1.md](./research-ui-ux-v1.md) |
 | Disalin pada | 2026-09-20 |
+| Lintasan penutup | 2026-09-23: keputusan hover-intent yang dibalik run `uji-v1` ditandai di badan, tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
@@ -49,6 +50,10 @@ adalah tautan ke layar yang menanganinya. Pengunjung yang belum masuk diarahkan 
 - Grup terbuka pada hover di desktop dan pada sentuhan di telepon, dengan perilaku yang dapat
   diprediksi: buka setelah 300 ms melayang, tutup setelah 500 ms pergi, tidak menutup saat pointer
   pindah ke isi grup, Escape menutup.
+
+> [!note] Dibalik oleh run `uji-v1`
+> Hover-intent dihapus seluruhnya (#174, spec `shell-masuk` v1). Grup terbuka hanya lewat klik, sentuhan, Enter, atau Spasi; melayangkan pointer tidak membuka atau menutup apa pun, dan Escape tetap menutup panel melayang.
+
 - Halaman aktif dan grupnya selalu terlihat saat halaman dimuat, tanpa aksi pengguna.
 - Beranda menjawab satu pertanyaan per peran dalam satu layar: "apa yang harus saya lakukan?"
 - Lebar 390 piksel tetap yang pertama dipikirkan: laci menutup setelah tautan dipilih, target
@@ -119,6 +124,9 @@ pernah menjadi satu-satunya jalan: klik dan sentuh selalu bekerja. Status "terbu
 satu nilai di komponen sidebar, bukan oleh atribut `open` elemen HTML, supaya "satu grup terbuka"
 dan "grup halaman aktif terbuka saat dimuat" bisa ditegakkan.
 
+> [!note] Dibalik oleh run `uji-v1`
+> Seluruh mekanisme di atas dihapus (#174): `nav-group.svelte` tidak lagi memegang `setTimeout`, penangan `onpointerenter`/`onpointerleave`/`onpointermove`, konstanta delay, atau status "dipin". `Collapsible.Root` dan `DropdownMenu.Root` kini terkontrol penuh oleh `app-sidebar.svelte` lewat `open`/`onOpenChange`; status "terbuka" tetap satu nilai per sidebar seperti semula, tetapi hanya diubah oleh klik, sentuhan, Enter, Spasi, Escape, dan pemilihan tautan.
+
 **Grup tampil hanya bila minimal satu itemnya lolos izin.** Penyaringan memakai fungsi izin yang
 sudah ada; menampilkan tautan tetap bukan otorisasi, dan setiap rute tetap memeriksa sendiri.
 
@@ -174,6 +182,9 @@ layar yang menangani angka itu (riset §3). Tidak ada delta terhadap bulan lalu 
 - **Perilaku hover, klik, laci, dan mode ikon** adalah kriteria walk Playwright MCP orchestrator
   pada 1280 dan 390 piksel: melayang membuka grup, mengklik judul dua kali kembali ke keadaan awal,
   Escape menutup panel melayang, laci menutup setelah tautan dipilih, tidak ada gulir mendatar.
+
+> [!note] Dibalik oleh run `uji-v1`
+> Kriteria walk sejak #174: melayangkan pointer 1 detik di judul grup tidak membukanya; klik membuka, klik lagi menutup; mode ikon membuka panel melayang lewat klik pada pemicu ikon, bukan hover, dan Escape menutupnya.
 - **Pengalihan tanpa sesi** diuji lewat e2e yang sudah ada untuk tata letak, diperbarui.
 - Prior art: `tests/unit/authz.test.ts` untuk izin, `tests/unit/invoice-queries.test.ts` dan
   `tests/unit/running-balance.test.ts` untuk agregasi atas basis data uji, `tests/e2e/layout.spec.ts`.
@@ -185,6 +196,9 @@ layar yang menangani angka itu (riset §3). Tidak ada delta terhadap bulan lalu 
 - Pada 390 piksel: tombol menu membuka laci, tautan menutupnya, tidak ada gulir mendatar, setiap
   target sentuh minimal 44 piksel.
 - Sidebar terlipat: ikon dengan tooltip, hover ikon grup menampilkan panel melayang berisi item.
+
+> [!note] Dibalik oleh run `uji-v1`
+> Sejak #174, panel melayang di mode ikon terbuka lewat klik pada ikon pemicu, bukan hover; tooltip pada mode ikon tidak berubah.
 - Beranda tanpa sesi mengalihkan ke halaman masuk; dengan sesi warga menampilkan kartu warga;
   dengan sesi admin menampilkan kartu pengurus; tidak ada teks tentang stack aplikasi.
 - Setiap angka pada kartu cocok dengan layar tujuannya untuk data yang sama.
@@ -202,3 +216,6 @@ layar yang menangani angka itu (riset §3). Tidak ada delta terhadap bulan lalu 
 Riset di `docs/research-ui-ux-v1.md` §1 sampai §3 adalah dasar angka hover-intent, pilihan
 collapsible-plus-flyout, dan bentuk kartu. Spec ini bergantung pada modul waktu spec
 `waktu-rupiah` untuk "bulan ini"; ia tidak menulis modul itu.
+
+> [!note] Dibalik oleh run `uji-v1`
+> Riset §1 tentang angka hover-intent tidak lagi dipakai sejak #174; §2 (collapsible-plus-flyout) dan §3 (bentuk kartu) tetap berlaku.

@@ -6,12 +6,14 @@
 | Run | `uji-v1` |
 | Peta eksekusi | [#181](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/181) |
 | Disalin pada | 2026-09-22 |
+| Lintasan penutup | 2026-09-23: klaim yang dibalik run ini ditandai di badan, tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
 item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
 
----## Problem statement
+---
+## Problem statement
 
 Pengunjung yang belum masuk sudah disambut sidebar penuh: Beranda, Papan Pengumuman, Masuk, Daftar, lengkap dengan tombol lipat. Halaman masuk tampak seperti bagian dalam aplikasi yang bocor keluar, bukan pintu depan. Di layar lebar form masuk kecil di tengah ruang kosong, tanpa identitas komplek.
 
