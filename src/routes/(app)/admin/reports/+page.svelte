@@ -27,10 +27,10 @@
 
 	/**
 	 * Submits the period form the moment a different month is chosen, so the preview below follows
-	 * the `<select>` with no separate button to press — the same "no visible submit, `change`
-	 * submits" shape `$lib/components/app-shell/language-switcher.svelte` uses for its own
-	 * `<select>`. The `<form method="GET">` this belongs to still has no JavaScript requirement of
-	 * its own: without a change handler, Enter inside the lone `<select>` still submits it natively.
+	 * the `<select>` with no separate button to press. This is the JavaScript path only — Enter on a
+	 * focused `<select>` does not submit its form (measured in Chromium: no `submit` event, `?period=`
+	 * never appears), so the form also carries a submit button inside `<noscript>` below, which is the
+	 * path a visitor without JavaScript uses to change the period.
 	 */
 	function onPeriodChange(event: Event & { currentTarget: HTMLSelectElement }): void {
 		event.currentTarget.form?.requestSubmit();
@@ -64,6 +64,9 @@
 				{/each}
 			</select>
 		</label>
+		<noscript>
+			<Button type="submit" variant="outline" class="h-11">{m.adminReports_periodSubmit()}</Button>
+		</noscript>
 	</form>
 
 	<section class="flex flex-col gap-4">

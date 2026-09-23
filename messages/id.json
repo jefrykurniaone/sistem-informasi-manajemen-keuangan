@@ -821,6 +821,7 @@
 	"adminReports_heading": "Laporan bulanan",
 	"adminReports_description": "Pratinjau angka bulan mana pun kapan saja, lalu terbitkan kalau sudah benar. Menerbitkan membekukan angkanya, memberinya nomor revisi, dan mengunci periodenya dalam satu langkah.",
 	"adminReports_periodLabel": "Periode",
+	"adminReports_periodSubmit": "Lihat pratinjau",
 	"adminReports_previewHeading": "Pratinjau {month}",
 	"adminReports_previewNote": "Ini pratinjau, bukan laporan yang terbit. Angkanya dihitung ulang setiap kali halaman ini dibuka, dan baru dibekukan pada saat Anda menerbitkannya.",
 	"adminReports_publishHeading": "Terbitkan revisi {revision}",
