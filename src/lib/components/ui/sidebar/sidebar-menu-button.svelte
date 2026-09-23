@@ -13,10 +13,13 @@
 				default: 'h-8 text-sm',
 				sm: 'h-7 text-xs',
 				// `lg` is the brand button's size (`app-sidebar.svelte`'s header). A collapsed icon
-				// sidebar has no room for its label, and without this the button's own
-				// `overflow-hidden` still lets a sliver of the first letter show past the icon:
-				// `docs/spec-shell-masuk-v1.md`'s "merek tanpa sisa huruf".
-				lg: 'h-12 text-sm group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:[&>span:last-child]:hidden'
+				// sidebar has no room for its label, so the label is hidden outright
+				// (`display: none`, not just clipped) rather than relying on `overflow-hidden` and a
+				// padding override to hide it: `docs/spec-shell-masuk-v1.md`'s "merek tanpa sisa
+				// huruf". Padding is left to the base variant's `group-data-[collapsible=icon]:p-2!`
+				// so the brand icon lands on the same axis as every menu icon below it (#205); an
+				// `lg`-only `p-0!` here used to pull it to the button's left edge instead.
+				lg: 'h-12 text-sm group-data-[collapsible=icon]:[&>span:last-child]:hidden'
 			}
 		},
 		defaultVariants: {
