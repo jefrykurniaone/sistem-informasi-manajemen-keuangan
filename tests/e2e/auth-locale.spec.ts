@@ -5,15 +5,15 @@ import { expect, test, type Page } from '@playwright/test';
  *
  * `tests/e2e/auth.spec.ts`, `tests/e2e/registration.spec.ts` and `tests/e2e/invitation.spec.ts`
  * cover these same pages at the default `id` locale and match on the Indonesian text directly,
- * because none of them sets `PARAGLIDE_LOCALE` — `vite.config.ts`'s `strategy: ['cookie',
+ * because none of them sets `PARAGLIDE_LOCALE`: `vite.config.ts`'s `strategy: ['cookie',
  * 'baseLocale']` falls back to `baseLocale` (`id`, `project.inlang/settings.json`) when no cookie
  * is present. #212 moved every visible string on these pages and every message their server
  * actions return into `messages/id.json` and `messages/en.json`, and this file is the one place
  * that proves the `en` half of that catalogue actually renders, rather than only existing in the
  * JSON. It does not repeat what the specs above already prove about the flows themselves.
  *
- * `messages/id.json`'s values are unchanged — character for character equal to what used to be
- * hardcoded — which is what keeps the specs above passing without an edit.
+ * `messages/id.json`'s values are unchanged, character for character equal to what used to be
+ * hardcoded, which is what keeps the specs above passing without an edit.
  *
  * Like every file in this directory, it stands alone and copies its own `open` helper rather than
  * importing one from `auth.spec.ts`.
