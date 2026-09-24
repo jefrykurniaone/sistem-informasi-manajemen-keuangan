@@ -29,7 +29,7 @@
 	<title>{pageTitle(m.adminOccupancies_pageTitle())}</title>
 </svelte:head>
 
-<main class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">
+<main class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10">
 	<a
 		class="text-sm text-muted-foreground underline underline-offset-2"
 		href={resolve('/admin/units')}

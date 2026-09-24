@@ -19,7 +19,7 @@
 	<title>{pageTitle(m.adminPosts_edit_pageTitle())}</title>
 </svelte:head>
 
-<main class="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-10">
+<main class="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-10">
 	<header class="flex flex-col gap-2">
 		<h1 class="text-2xl font-bold tracking-tight">{m.adminPosts_edit_heading()}</h1>
 		<div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">

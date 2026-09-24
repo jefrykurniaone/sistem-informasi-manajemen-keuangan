@@ -85,8 +85,9 @@
 	{#if problems.length === 0}
 		<p class="text-sm text-muted-foreground">{m.adminImport_problemsEmpty()}</p>
 	{:else}
-		<!-- The scroll lives on this wrapper, never on the page: at 390px the reasons column wraps and
-		     only a very long address pushes the table sideways. -->
+		<!-- The scroll lives on this wrapper, never on the page, but only when the page container has
+		     a definite width: at 390px the reasons column wraps and only a very long address pushes
+		     the table sideways. -->
 		<div class="overflow-x-auto">
 			<table class="w-full border-collapse text-left text-sm">
 				<thead>

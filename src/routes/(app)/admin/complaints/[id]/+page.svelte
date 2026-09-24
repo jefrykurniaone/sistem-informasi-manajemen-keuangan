@@ -26,7 +26,7 @@
 	<title>{pageTitle(data.complaint.title)}</title>
 </svelte:head>
 
-<main class="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-10">
+<main class="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-10">
 	<header class="flex flex-col gap-1">
 		<span class="text-xs text-muted-foreground">
 			{STATUS_LABEL[data.complaint.status]?.() ?? data.complaint.status}
