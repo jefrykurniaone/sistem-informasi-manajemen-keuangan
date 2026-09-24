@@ -1,5 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
+import * as m from '$lib/paraglide/messages';
 import { auth } from '$lib/server/auth';
 import { forgiveEmail, limitFormAction, RATE_LIMIT_POLICY } from '$lib/server/rate-limit';
 import type { Actions, PageServerLoad } from './$types';
@@ -36,12 +37,6 @@ import type { Actions, PageServerLoad } from './$types';
 /** Where signing in lands. */
 const HOME_PATH = '/';
 
-/** Shown when the address or the password is wrong, without saying which. */
-const WRONG_CREDENTIALS = 'Email atau kata sandi salah.';
-
-/** Shown when the limiter refuses, whoever the address belongs to. */
-const TOO_MANY_ATTEMPTS = 'Terlalu banyak percobaan masuk. Tunggu beberapa menit, lalu coba lagi.';
-
 export const load: PageServerLoad = ({ locals, url }) => {
 	if (locals.user) {
 		redirect(303, HOME_PATH);
@@ -62,13 +57,13 @@ export const actions: Actions = {
 			return fail(400, {
 				email,
 				unverified: false,
-				message: 'Email dan kata sandi harus diisi.'
+				message: m.login_emailPasswordRequired()
 			});
 		}
 
 		const decision = await limitFormAction(event, RATE_LIMIT_POLICY.login, email);
 		if (!decision.allowed) {
-			return fail(429, { email, unverified: false, message: TOO_MANY_ATTEMPTS });
+			return fail(429, { email, unverified: false, message: m.login_tooManyAttempts() });
 		}
 
 		try {
@@ -84,11 +79,10 @@ export const actions: Actions = {
 				return fail(403, {
 					email,
 					unverified: true,
-					message:
-						'Alamat email ini belum diverifikasi, jadi akunnya belum bisa dipakai. Kirim ulang email verifikasinya, lalu buka tautan di dalamnya.'
+					message: m.login_emailNotVerified()
 				});
 			}
-			return fail(400, { email, unverified: false, message: WRONG_CREDENTIALS });
+			return fail(400, { email, unverified: false, message: m.login_wrongCredentials() });
 		}
 
 		await forgiveEmail(RATE_LIMIT_POLICY.login, email);

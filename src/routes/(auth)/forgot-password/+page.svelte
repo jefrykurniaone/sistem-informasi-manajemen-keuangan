@@ -13,9 +13,9 @@
 </svelte:head>
 
 <main class="flex flex-col gap-6">
-	<h1 class="text-2xl font-bold tracking-tight">Lupa kata sandi</h1>
+	<h1 class="text-2xl font-bold tracking-tight">{m.forgotPassword_heading()}</h1>
 	<p class="text-sm text-muted-foreground">
-		Isi alamat email akun Anda. Kami kirim satu tautan untuk memilih kata sandi baru.
+		{m.forgotPassword_intro()}
 	</p>
 
 	{#if form}
@@ -33,7 +33,7 @@
 
 	<form method="POST" class="flex flex-col gap-4">
 		<div class="flex flex-col gap-1.5">
-			<label class="text-sm font-medium" for="email">Alamat email</label>
+			<label class="text-sm font-medium" for="email">{m.forgotPassword_emailLabel()}</label>
 			<input
 				class="h-9 rounded-md border border-border bg-background px-3 text-sm"
 				id="email"
@@ -45,10 +45,12 @@
 			/>
 		</div>
 
-		<Button type="submit">Kirim tautan</Button>
+		<Button type="submit">{m.forgotPassword_submit()}</Button>
 	</form>
 
 	<p class="text-sm text-muted-foreground">
-		<a class="underline underline-offset-4" href={resolve('/login')}>Kembali ke halaman masuk</a>
+		<a class="underline underline-offset-4" href={resolve('/login')}
+			>{m.forgotPassword_backToLoginLink()}</a
+		>
 	</p>
 </main>
