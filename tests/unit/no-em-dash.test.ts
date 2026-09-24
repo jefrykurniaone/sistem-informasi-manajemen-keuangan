@@ -185,7 +185,7 @@ function stringEmDashLines(source: string): number[] {
 	while (kind !== ts.SyntaxKind.EndOfFileToken) {
 		if (isStringLikeToken(kind)) {
 			if (scanner.getTokenText().includes(EM_DASH)) {
-				lines.push(lineOfPos(source, scanner.getTokenPos()));
+				lines.push(lineOfPos(source, scanner.getTokenStart()));
 			}
 			if (kind === ts.SyntaxKind.TemplateHead || kind === ts.SyntaxKind.TemplateMiddle) {
 				substitutionDepths.push(0);
