@@ -74,8 +74,7 @@ export const actions: Actions = {
 			}
 			return fail(400, {
 				...submitted,
-				message:
-					'Pendaftaran tidak bisa diproses. Periksa lagi alamat email dan kata sandi yang Anda isi.'
+				message: m.register_signUpFailed()
 			});
 		}
 
@@ -103,16 +102,16 @@ interface RegistrationForm {
  */
 function whatIsWrong(form: RegistrationForm): string | undefined {
 	if (form.name === '' || form.email === '' || form.password === '') {
-		return 'Nama, alamat email, dan kata sandi harus diisi.';
+		return m.register_nameEmailPasswordRequired();
 	}
 	if (form.claimedBlock === '' || form.claimedNumber === '') {
 		return m.register_claimMissing();
 	}
 	if (form.password.length < MINIMUM_PASSWORD_LENGTH) {
-		return `Kata sandi harus terdiri dari sedikitnya ${MINIMUM_PASSWORD_LENGTH} karakter.`;
+		return m.register_passwordTooShort({ min: MINIMUM_PASSWORD_LENGTH });
 	}
 	if (form.password !== form.passwordAgain) {
-		return 'Kedua kata sandi yang Anda isi tidak sama.';
+		return m.register_passwordMismatch();
 	}
 	return undefined;
 }

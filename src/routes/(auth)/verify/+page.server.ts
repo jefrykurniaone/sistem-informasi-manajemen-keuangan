@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
 import { verifyJWT } from 'better-auth/crypto';
+import * as m from '$lib/paraglide/messages';
 import { auth } from '$lib/server/auth';
 import { limitFormAction, RATE_LIMIT_POLICY } from '$lib/server/rate-limit';
 import type { Actions, PageServerLoad } from './$types';
@@ -91,10 +92,6 @@ async function wasAlreadyVerified(email: string): Promise<boolean> {
 	return found?.user.emailVerified ?? false;
 }
 
-/** Shown when the limiter refuses, whoever the address belongs to. */
-const TOO_MANY_REQUESTS =
-	'Terlalu banyak permintaan email verifikasi. Tunggu beberapa menit, lalu coba lagi.';
-
 export const load: PageServerLoad = async ({ url }) => {
 	const token = url.searchParams.get('token');
 	if (token === null) {
@@ -131,12 +128,12 @@ export const actions: Actions = {
 		const email = String(form.get('email') ?? '').trim();
 
 		if (email === '') {
-			return fail(400, { sent: false, message: 'Isi dulu alamat email Anda.' });
+			return fail(400, { sent: false, message: m.verify_emailRequired() });
 		}
 
 		const decision = await limitFormAction(event, RATE_LIMIT_POLICY.resendVerification, email);
 		if (!decision.allowed) {
-			return fail(429, { sent: false, message: TOO_MANY_REQUESTS });
+			return fail(429, { sent: false, message: m.verify_tooManyRequests() });
 		}
 
 		try {
@@ -156,8 +153,7 @@ export const actions: Actions = {
 
 		return {
 			sent: true,
-			message:
-				'Kalau alamat itu terdaftar dan belum terverifikasi, email verifikasinya sudah kami kirim ulang. Periksa kotak masuk Anda.'
+			message: m.verify_resendSent()
 		};
 	}
 };

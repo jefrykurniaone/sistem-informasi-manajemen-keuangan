@@ -13,10 +13,9 @@
 </svelte:head>
 
 <main class="flex flex-col gap-6">
-	<h1 class="text-2xl font-bold tracking-tight">Daftar</h1>
+	<h1 class="text-2xl font-bold tracking-tight">{m.register_heading()}</h1>
 	<p class="text-sm text-muted-foreground">
-		Kalau alamat email yang Anda isi belum terdaftar, kami mengirim satu email verifikasi ke sana.
-		Akun baru bisa dipakai setelah tautan di dalam email itu Anda buka.
+		{m.register_intro()}
 	</p>
 	<p class="text-sm text-muted-foreground">{m.register_reviewNotice()}</p>
 
@@ -28,7 +27,7 @@
 
 	<form method="POST" class="flex flex-col gap-4">
 		<div class="flex flex-col gap-1.5">
-			<label class="text-sm font-medium" for="name">Nama</label>
+			<label class="text-sm font-medium" for="name">{m.register_nameLabel()}</label>
 			<input
 				class="h-9 rounded-md border border-border bg-background px-3 text-sm"
 				id="name"
@@ -42,7 +41,7 @@
 		</div>
 
 		<div class="flex flex-col gap-1.5">
-			<label class="text-sm font-medium" for="email">Alamat email</label>
+			<label class="text-sm font-medium" for="email">{m.register_emailLabel()}</label>
 			<input
 				class="h-9 rounded-md border border-border bg-background px-3 text-sm"
 				id="email"
@@ -89,7 +88,7 @@
 		</fieldset>
 
 		<div class="flex flex-col gap-1.5">
-			<label class="text-sm font-medium" for="password">Kata sandi</label>
+			<label class="text-sm font-medium" for="password">{m.register_passwordLabel()}</label>
 			<input
 				class="h-9 rounded-md border border-border bg-background px-3 text-sm"
 				id="password"
@@ -101,13 +100,14 @@
 				required
 			/>
 			<p class="text-xs text-muted-foreground" id="password-hint">
-				Sedikitnya {data.minimumPasswordLength} karakter. Kalimat pendek yang mudah Anda ingat lebih aman
-				daripada satu kata dengan angka di belakangnya.
+				{m.register_passwordHint({ min: data.minimumPasswordLength })}
 			</p>
 		</div>
 
 		<div class="flex flex-col gap-1.5">
-			<label class="text-sm font-medium" for="passwordAgain">Ulangi kata sandi</label>
+			<label class="text-sm font-medium" for="passwordAgain"
+				>{m.register_passwordAgainLabel()}</label
+			>
 			<input
 				class="h-9 rounded-md border border-border bg-background px-3 text-sm"
 				id="passwordAgain"
@@ -119,11 +119,11 @@
 			/>
 		</div>
 
-		<Button type="submit">Daftar</Button>
+		<Button type="submit">{m.register_submit()}</Button>
 	</form>
 
 	<p class="text-sm text-muted-foreground">
-		Sudah punya akun?
-		<a class="underline underline-offset-4" href={resolve('/login')}>Masuk</a>
+		{m.register_hasAccountPrompt()}
+		<a class="underline underline-offset-4" href={resolve('/login')}>{m.register_loginLink()}</a>
 	</p>
 </main>

@@ -1,5 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
+import * as m from '$lib/paraglide/messages';
 import { auth } from '$lib/server/auth';
 import { limitFormAction, RATE_LIMIT_POLICY } from '$lib/server/rate-limit';
 import type { Actions } from './$types';
@@ -24,26 +25,18 @@ import type { Actions } from './$types';
  * `src/lib/server/email/templates/password-reset.ts` and `src/lib/server/db/schema/auth.ts`.
  */
 
-/** Said whether or not the address is registered. */
-const SAME_ANSWER_EITHER_WAY =
-	'Kalau alamat itu terdaftar, kami sudah mengirim tautan untuk mengatur ulang kata sandi ke sana. Tautannya berlaku satu jam dan hanya bisa dipakai sekali.';
-
-/** Shown when the limiter refuses, whoever the address belongs to. */
-const TOO_MANY_REQUESTS =
-	'Terlalu banyak permintaan tautan. Tunggu beberapa menit, lalu coba lagi.';
-
 export const actions: Actions = {
 	default: async (event) => {
 		const form = await event.request.formData();
 		const email = String(form.get('email') ?? '').trim();
 
 		if (email === '') {
-			return fail(400, { sent: false, message: 'Isi dulu alamat email Anda.' });
+			return fail(400, { sent: false, message: m.forgotPassword_emailRequired() });
 		}
 
 		const decision = await limitFormAction(event, RATE_LIMIT_POLICY.forgotPassword, email);
 		if (!decision.allowed) {
-			return fail(429, { sent: false, message: TOO_MANY_REQUESTS });
+			return fail(429, { sent: false, message: m.forgotPassword_tooManyRequests() });
 		}
 
 		try {
@@ -59,6 +52,6 @@ export const actions: Actions = {
 			}
 		}
 
-		return { sent: true, message: SAME_ANSWER_EITHER_WAY };
+		return { sent: true, message: m.forgotPassword_linkSent() };
 	}
 };

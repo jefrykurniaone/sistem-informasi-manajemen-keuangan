@@ -17,38 +17,33 @@
 </svelte:head>
 
 <main class="flex flex-col gap-6">
-	<h1 class="text-2xl font-bold tracking-tight">Verifikasi email</h1>
+	<h1 class="text-2xl font-bold tracking-tight">{m.verify_heading()}</h1>
 
 	{#if data.state === 'verified'}
 		<p class="rounded-md border border-border px-3 py-2 text-sm">
-			Alamat email Anda sudah terverifikasi. Sekarang Anda bisa masuk dengan email dan kata sandi
-			Anda.
+			{m.verify_verifiedBody()}
 		</p>
-		<Button href={resolve('/login')}>Masuk</Button>
+		<Button href={resolve('/login')}>{m.verify_loginButton()}</Button>
 	{:else if data.state === 'used'}
 		<p class="rounded-md border border-border px-3 py-2 text-sm">
-			Tautan ini sudah pernah dipakai. Alamat emailnya memang sudah terverifikasi, jadi Anda bisa
-			langsung masuk dengan email dan kata sandi Anda.
+			{m.verify_usedBody()}
 		</p>
-		<Button href={resolve('/login')}>Masuk</Button>
+		<Button href={resolve('/login')}>{m.verify_loginButton()}</Button>
 	{:else if data.state === 'sent'}
 		<p class="text-sm">
-			Kalau alamat yang Anda isi belum terdaftar, email verifikasinya sudah kami kirim ke sana. Buka
-			tautan di dalam email itu untuk mengaktifkan akun Anda.
+			{m.verify_sentBody()}
 		</p>
 	{:else if data.state === 'expired'}
 		<p class="rounded-md border border-destructive px-3 py-2 text-sm text-destructive" role="alert">
-			Tautan verifikasi ini sudah kedaluwarsa. Minta email yang baru di bawah ini.
+			{m.verify_expiredBody()}
 		</p>
 	{:else if data.state === 'invalid'}
 		<p class="rounded-md border border-destructive px-3 py-2 text-sm text-destructive" role="alert">
-			Tautan verifikasi ini tidak bisa dipakai. Biasanya tautannya terpotong saat disalin dari
-			email. Minta email yang baru di bawah ini.
+			{m.verify_invalidBody()}
 		</p>
 	{:else}
 		<p class="text-sm">
-			Akun baru harus diverifikasi lebih dulu lewat tautan yang kami kirim ke alamat emailnya. Belum
-			menerima emailnya? Isi alamat email Anda di bawah ini dan kami kirim ulang.
+			{m.verify_idleBody()}
 		</p>
 	{/if}
 
@@ -61,7 +56,7 @@
 
 		<form method="POST" action="?/resend" class="flex flex-col gap-4">
 			<div class="flex flex-col gap-1.5">
-				<label class="text-sm font-medium" for="email">Alamat email</label>
+				<label class="text-sm font-medium" for="email">{m.verify_emailLabel()}</label>
 				<input
 					class="h-9 rounded-md border border-border bg-background px-3 text-sm"
 					id="email"
@@ -73,11 +68,13 @@
 				/>
 			</div>
 
-			<Button type="submit" variant="outline">Kirim ulang email verifikasi</Button>
+			<Button type="submit" variant="outline">{m.verify_resendSubmit()}</Button>
 		</form>
 
 		<p class="text-sm text-muted-foreground">
-			<a class="underline underline-offset-4" href={resolve('/login')}>Kembali ke halaman masuk</a>
+			<a class="underline underline-offset-4" href={resolve('/login')}
+				>{m.verify_backToLoginLink()}</a
+			>
 		</p>
 	{/if}
 </main>

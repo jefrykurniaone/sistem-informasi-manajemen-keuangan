@@ -1,5 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
+import * as m from '$lib/paraglide/messages';
 import { AUTH_PATHS, MINIMUM_PASSWORD_LENGTH, auth } from '$lib/server/auth';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -24,10 +25,6 @@ import type { Actions, PageServerLoad } from './$types';
 /** Where a finished reset lands, with a note for the sign-in page to show. */
 const SIGN_IN_AGAIN = `${AUTH_PATHS.login}?reset=1`;
 
-/** Said for a token that is spent, expired, or was never real. */
-const LINK_NO_LONGER_WORKS =
-	'Tautan ini sudah tidak berlaku. Tautan pemulihan hanya bisa dipakai sekali dan kedaluwarsa satu jam setelah diminta. Minta tautan baru di halaman lupa kata sandi.';
-
 export const load: PageServerLoad = ({ url }) => {
 	return {
 		token: url.searchParams.get('token') ?? '',
@@ -43,15 +40,15 @@ export const actions: Actions = {
 		const passwordAgain = String(form.get('passwordAgain') ?? '');
 
 		if (token === '') {
-			return fail(400, { message: LINK_NO_LONGER_WORKS });
+			return fail(400, { message: m.setPassword_linkExpired() });
 		}
 		if (password.length < MINIMUM_PASSWORD_LENGTH) {
 			return fail(400, {
-				message: `Kata sandi harus terdiri dari sedikitnya ${MINIMUM_PASSWORD_LENGTH} karakter.`
+				message: m.setPassword_passwordTooShort({ min: MINIMUM_PASSWORD_LENGTH })
 			});
 		}
 		if (password !== passwordAgain) {
-			return fail(400, { message: 'Kedua kata sandi yang Anda isi tidak sama.' });
+			return fail(400, { message: m.setPassword_passwordMismatch() });
 		}
 
 		try {
@@ -60,7 +57,7 @@ export const actions: Actions = {
 			if (!(error instanceof APIError)) {
 				throw error;
 			}
-			return fail(400, { message: LINK_NO_LONGER_WORKS });
+			return fail(400, { message: m.setPassword_linkExpired() });
 		}
 
 		redirect(303, SIGN_IN_AGAIN);
