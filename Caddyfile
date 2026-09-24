@@ -2,5 +2,39 @@
 # Caddy obtain and renew a TLS certificate for it and redirect HTTP to HTTPS on its own; ORIGIN in
 # .env must be the same address with https:// in front.
 {$SITE_ADDRESS} {
-	reverse_proxy app:3000
+	reverse_proxy app:3000 {
+		# Resend a GET or HEAD whose round trip to the app failed, instead of answering the browser
+		# 502 (#213, found in the caddy log as "msg":"EOF").
+		#
+		# The cause is in Bun 1.3.14, not here: its node:http closes a kept-alive connection with no
+		# response and no `Connection: close` when the next request arrives while the previous
+		# response is still being finished (oven-sh/bun#31889, fixed in Bun 1.4.0). adapter-node
+		# serves every static file that way, so a request Caddy sends on a connection that has just
+		# carried one can read EOF, and it never reaches SvelteKit. Go's transport already resends
+		# such a GET by itself when the browser came over HTTP/1.1 or HTTP/2. It does not when the
+		# browser came over HTTP/3, because Caddy then passes on a request body of unknown length
+		# that cannot be rewound, so those reached the browser as a 502.
+		#
+		# What the two lines below do in Caddy 2.11, per
+		# https://caddyserver.com/docs/caddyfile/directives/reverse_proxy and LoadBalancing.tryAgain
+		# in modules/caddyhttp/reverseproxy/reverseproxy.go of v2.11.4:
+		# - Retries stay off until lb_retries or lb_try_duration is set. lb_retries 2 allows two more
+		#   attempts after the first, sent straight away: lb_try_interval only defaults to 250ms when
+		#   lb_try_duration is set.
+		# - A request whose connection could not be opened at all is retried whatever its method,
+		#   since the app never received it. Caddy always does that once retries are on.
+		# - A request whose connection was opened but whose round trip then failed is retried only
+		#   when it matches lb_retry_match. Without the block that means GET alone; the block adds
+		#   HEAD. Both are safe methods (RFC 9110 section 9.2.1), and the one GET here known to change
+		#   something, /verify?token=, lands on the same verified address when it arrives twice (see
+		#   its load function). After the Bun drop above, the retry is the first attempt SvelteKit sees.
+		# - POST, and every method other than GET and HEAD, is never resent once the app may have
+		#   received it: a form action is not idempotent, and running one twice could record a
+		#   payment twice. Such a request still answers 502 when the connection drops under it; only
+		#   a Bun with the fix removes that.
+		lb_retries 2
+		lb_retry_match {
+			method GET HEAD
+		}
+	}
 }
