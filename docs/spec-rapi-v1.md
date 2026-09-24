@@ -1,4 +1,4 @@
-# Spec: rapi - Koneksi Caddy ke aplikasi, tata letak (app), teks tamu dua bahasa, deploy yang gagal dengan pesan
+# Spec: rapi - Koneksi Caddy, tata letak (app), teks tamu dua bahasa, deploy dengan pesan, penjadwal tahan koneksi putus
 
 | Keterangan | Nilai |
 |---|---|
@@ -15,7 +15,7 @@ item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan 
 ---
 ## Problem statement
 
-Run `uji-v1` meninggalkan delapan temuan di luar cakupannya. Semuanya kecil, tetapi masing-masing terasa oleh orang yang memakai aplikasi atau yang men-deploy-nya.
+Run `uji-v1` meninggalkan delapan temuan di luar cakupannya, dan diagnosis salah satunya menemukan yang kesembilan. Semuanya kecil, tetapi masing-masing terasa oleh orang yang memakai aplikasi atau yang men-deploy-nya.
 
 **Galat 500 di produksi.** Pengguna yang kembali ke aplikasi sesudah jeda kadang mendapat layar polos "500 Internal Error". Pemilik mengalaminya dua kali: sesudah memverifikasi email (2026-09-23 17:36 WITA), dan lagi pada 2026-09-24 09:52 WITA. Log Caddy mencatat satu kejadian lagi dari sebuah ponsel Android pada 00:27 WITA. Aplikasinya sendiri tidak pernah galat, dan container-nya tidak restart. Caddy mendapat `EOF` saat meneruskan permintaan `GET` ke aplikasi (chunk JavaScript dan `__data.json`), dalam 0,6 sampai 30 milidetik, lalu membalas 502. SvelteKit di peramban kemudian gagal memuat modul dan menampilkan halaman galat bawaannya. Penyebab di sisi aplikasi belum diketahui. Diukur 2026-09-24 di container produksi: aplikasi tidak menutup koneksi keep-alive yang menganggur dalam 150 detik, dan permintaan kedua di koneksi yang sama sesudah jeda sampai 110 detik selalu dijawab. Jadi ini bukan balapan batas waktu menganggur yang sederhana.
 
@@ -31,6 +31,8 @@ Run `uji-v1` meninggalkan delapan temuan di luar cakupannya. Semuanya kecil, tet
 
 **Kunci privat bisa ikut ke konteks build.** `.dockerignore` tidak menyaring `*.pem` dan `*.key`, sementara tahap `build` menyalin seluruh pohon. Kunci yang kebetulan tersimpan di dalam repositori ikut masuk ke lapisan image tahap `build` di mesin pembangun.
 
+**Penjadwal rapuh saat koneksi basis data diputus.** Empat kali dalam sehari, Supabase memutus koneksi (`57P01`, "terminating connection due to administrator command") tepat saat penjadwal menulis klaim `job_runs`. Setiap kali, sisa tick itu batal, sehingga job lain yang urutannya sesudahnya ikut tidak dicoba. Dampaknya sejauh ini hanya tertunda 30 detik, dan tidak ada job yang hilang atau berjalan dua kali. Pool basis data masih memakai semua nilai bawaan: tanpa penangan galat untuk klien yang menganggur, sehingga proses bisa crash, dan tanpa batas waktu koneksi maupun query, sehingga penjadwal bisa berhenti diam-diam.
+
 ## Solution
 
 Pengguna tidak lagi melihat layar 500 karena koneksi ke aplikasi putus di tengah jalan. Caddy mengulang permintaan `GET` atau `HEAD` yang gagal seperti itu, sedangkan permintaan lain tidak pernah diulang. Penyebab putusnya didiagnosis lewat reproduksi lokal. Kalau perbaikannya ada di konfigurasi proxy atau compose, perbaikan itu ikut dipasang. Kalau tidak, penyebabnya diajukan sebagai issue baru lengkap dengan buktinya.
@@ -45,6 +47,8 @@ Wizard menolak `DATABASE_URL` yang tidak terurai sebagai URL dan menawarkan untu
 
 Konteks build tidak lagi membawa `*.pem` dan `*.key`.
 
+Penjadwal tetap berjalan dan tetap benar ketika koneksi basis data diputus dari sisi server. Kegagalan satu job tidak lagi melewatkan job lain. Klaim dan penyelesaian run diulang sekali untuk galat kelas koneksi, sedangkan job-nya sendiri tidak pernah diulang di dalam tick. Pool punya penangan galat dan batas waktu.
+
 ## Goals and non-goals
 
 **Goals**
@@ -58,13 +62,14 @@ Konteks build tidak lagi membawa `*.pem` dan `*.key`.
 - Nol em dash di string templat email, dijaga tes.
 - `DATABASE_URL` yang tidak terurai berhenti di wizard, dan kegagalan koneksi `migrate` selalu punya pesan.
 - `*.pem` dan `*.key` tidak pernah masuk konteks build.
+- Koneksi basis data yang diputus server tidak membuat proses crash, tidak melewatkan job lain di tick yang sama, dan tidak pernah membuat job berjalan dua kali.
 
 **Non-goals**
 
 - Tidak ada halaman `+error.svelte` baru. Halaman galat yang lebih ramah adalah pekerjaan terpisah.
 - Empat email tanpa locale (undangan, verifikasi email, atur ulang kata sandi, pendaftaran disetujui) tetap berbahasa Indonesia.
 - Tidak men-deploy. Deploy ke VM tetap langkah pemilik sesudah run.
-- Tidak menyelidiki koneksi basis data yang diputus Supabase saat menulis `job_runs`. Itu issue terpisah.
+- Tidak mengubah perilaku pengulangan job yang gagal karena konfigurasi, misalnya `issue-invoices` tanpa Tarif (#218).
 
 ## User stories
 
@@ -84,6 +89,8 @@ Konteks build tidak lagi membawa `*.pem` dan `*.key`.
 14. Sebagai pemilik, saya ingin kata sandi basis data tidak pernah tercetak di layar atau di log, baik oleh wizard maupun oleh `migrate`.
 15. Sebagai pemilik yang men-deploy, saya ingin `migrate` yang gagal menyebut penyebabnya (URL tidak terurai, autentikasi, TLS, host), supaya saya tahu apa yang harus diperbaiki.
 16. Sebagai pemilik, saya ingin kunci privat yang tidak sengaja tersimpan di pohon kerja tidak ikut ke konteks build Docker.
+17. Sebagai pengurus, saya ingin Tagihan terbit dan email terkirim tepat waktu walaupun basis data sesekali memutus koneksi, supaya warga tidak menunggu.
+18. Sebagai pemilik, saya ingin aplikasi tetap hidup dan penjadwal tetap berdetak sesudah koneksi basis data diputus, supaya saya tidak perlu me-restart container.
 
 ## Implementation decisions
 
@@ -105,6 +112,12 @@ Konteks build tidak lagi membawa `*.pem` dan `*.key`.
 
 **Konteks build.** `.dockerignore` menyaring `*.pem` dan `*.key`, dan `.gitignore` ikut menyaring `*.key`. `.env` dan `.env.*` sudah tersaring.
 
+**Penjadwal dan pool di bawah koneksi yang diputus.**
+- Pool mendapat penangan galat yang mencatat kode tanpa membuat proses crash, batas waktu koneksi, keep-alive TCP, dan batas waktu query yang lebih panjang daripada query sah terpanjang.
+- Setiap job dalam satu tick diisolasi: kegagalan klaim, run, atau penyelesaiannya dicatat dengan nama job dan kodenya, lalu job berikutnya tetap dicoba.
+- Klaim, penyelesaian dan penandaan gagal diulang sekali untuk galat kelas koneksi, karena ketiganya idempoten terhadap kunci klaim dan status `running`. Job-nya sendiri tidak pernah diulang di dalam tick.
+- Klaim yang ter-commit tetapi dilaporkan gagal akan bentrok saat diulang dan dilewati, lalu diambil alih sesudah lease habis. Kasus terburuknya tertunda, tidak pernah berjalan dua kali.
+
 ## Testing decisions
 
 Tes yang baik di sini menguji perilaku yang terlihat dari luar: apa yang dilihat pengguna di peramban, apa yang dicetak skrip, apa yang ada di image. Detail implementasi tidak diuji.
@@ -117,6 +130,7 @@ Tes yang baik di sini menguji perilaku yang terlihat dari luar: apa yang dilihat
 - **Pemeriksaan awal `migrate`**: tes unit memanggil skrip dengan URL tidak terurai dan dengan host yang tidak terjangkau, memeriksa pesan dan status keluarnya, dan memastikan kata sandi tidak muncul di keluaran.
 - **Wizard**: dicoba orchestrator di WSL dengan kata sandi yang belum di-encode. Tidak ada tes Vitest yang memanggil `bash`, karena `bash` di mesin pengembang crash sekitar 5% dan tes seperti itu akan tidak stabil.
 - **Konteks build**: orchestrator menaruh `.pem` palsu di akar pohon, membangun `--target build` di Docker WSL, dan memastikan berkas itu tidak ada di image.
+- **Penjadwal**: tes unit di Postgres uji memutus koneksi dengan `pg_terminate_backend`, baik koneksi yang membawa klaim maupun klien yang menganggur di pool. Yang diperiksa: job lain tetap berjalan, job yang terkena berjalan tepat sekali, dan tidak ada galat yang tak tertangani. Prior art: `tests/unit/scheduler-lock.test.ts` dan `tests/unit/scheduler-jobs.test.ts`.
 
 ## Success criteria
 
@@ -129,6 +143,7 @@ Tes yang baik di sini menguji perilaku yang terlihat dari luar: apa yang dilihat
 - Tes em dash gagal bila string templat email memuat U+2014, dan lulus pada kode sesudah perbaikan.
 - `.pem` palsu tidak ada di image `--target build`.
 - Wizard menolak kata sandi yang belum di-encode dan menawarkan meng-encode-nya. `migrate` dengan URL tidak terurai mencetak penyebabnya tanpa kata sandi.
+- Koneksi yang diputus di tengah tick tidak melewatkan job lain, tidak membuat job berjalan dua kali, dan tidak membuat proses crash, dibuktikan tes.
 - Empat perintah gerbang lulus.
 
 ## Out of scope
@@ -136,9 +151,10 @@ Tes yang baik di sini menguji perilaku yang terlihat dari luar: apa yang dilihat
 - Halaman `+error.svelte` yang lebih ramah.
 - Lokalisasi empat email tanpa locale.
 - Deploy ke VM.
-- Koneksi yang diputus Supabase saat menulis `job_runs` (issue terpisah).
+- Jeda untuk job yang gagal karena konfigurasi (#218).
+- Email yang bisa terkirim dua kali bila penandaan terkirim gagal sesudah pengiriman SMTP.
 - Access log Caddy dan pelaporan galat klien.
 
 ## Further notes
 
-Kedelapan tiket adalah issue yang sudah ada: #186, #187, #189, #194, #198, #202, #212, #213. Laporan aslinya dibiarkan utuh, dan bagian tiket ditambahkan di bawahnya. Premis #186 dikoreksi di bagian tiketnya: tabel sudah dibungkus wadah yang menggulir sendiri sejak `707fc23`, dan yang melebar adalah wadah utama halaman. Premis #213 juga dikoreksi: galatnya bukan galat klien yang tak diketahui, melainkan 502 dari Caddy (`http.log.error` `EOF`). Pemeriksaan pertama tidak menemukannya karena yang dicari baris 5xx, bukan `EOF`. Versi pertama spec ini menyebut penyebabnya balapan batas waktu keep-alive. Pengukuran pada 2026-09-24 membantahnya, dan badan spec dikoreksi pada hari yang sama.
+Kesembilan tiket adalah issue yang sudah ada: #186, #187, #189, #194, #198, #202, #212, #213, dan #215. #215 ditemukan saat mendiagnosis #213, lalu dimasukkan ke run atas keputusan pemilik sesudah peta #216 terbit. Laporan aslinya dibiarkan utuh, dan bagian tiket ditambahkan di bawahnya. Premis #186 dikoreksi di bagian tiketnya: tabel sudah dibungkus wadah yang menggulir sendiri sejak `707fc23`, dan yang melebar adalah wadah utama halaman. Premis #213 juga dikoreksi: galatnya bukan galat klien yang tak diketahui, melainkan 502 dari Caddy (`http.log.error` `EOF`). Pemeriksaan pertama tidak menemukannya karena yang dicari baris 5xx, bukan `EOF`. Versi pertama spec ini menyebut penyebabnya balapan batas waktu keep-alive. Pengukuran pada 2026-09-24 membantahnya, dan badan spec dikoreksi pada hari yang sama.
