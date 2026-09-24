@@ -21,7 +21,7 @@
 	<title>{pageTitle(m.pendingApproval_pageTitle())}</title>
 </svelte:head>
 
-<main class="mx-auto flex max-w-xl flex-col gap-6 px-4 py-10">
+<main class="mx-auto flex w-full max-w-xl flex-col gap-6 px-4 py-10">
 	{#if data.registration?.status === 'pending'}
 		<header class="flex flex-col gap-2">
 			<h1 class="text-2xl font-bold tracking-tight">{m.pendingApproval_pendingHeading()}</h1>

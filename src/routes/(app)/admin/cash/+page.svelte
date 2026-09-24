@@ -48,7 +48,7 @@
 	<title>{pageTitle(m.adminCash_pageTitle())}</title>
 </svelte:head>
 
-<main class="mx-auto flex max-w-5xl flex-col gap-6 px-4 py-10">
+<main class="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-10">
 	<header class="flex flex-col gap-1">
 		<h1 class="text-2xl font-bold tracking-tight">{m.adminCash_heading()}</h1>
 		<p class="text-sm text-muted-foreground">{m.adminCash_description()}</p>
