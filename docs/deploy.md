@@ -230,3 +230,54 @@ seluruh warga:
 - **Backup otomatis untuk `storage/`**, yang saat ini hanya ada di disk VM tanpa salinan.
 - **Deploy dari CI**, menggantikan `scripts/deploy.sh` yang dijalankan tangan dari mesin
   pengembang.
+
+## 9. Pemecahan masalah: 502 dengan `"msg":"EOF"` di log caddy
+
+**Gejala.** Pengguna sesekali melihat layar galat 500 saat berpindah halaman, masuk, atau kembali
+ke tab sesudah jeda, lalu halaman yang sama berjalan normal saat dicoba lagi. Log `app` tidak
+mencatat apa pun pada waktu itu. Layar 500 itu dirender SvelteKit di peramban ketika potongan
+modul (`/_app/immutable/chunks/*.js`) atau `__data.json` yang diminta navigasi dijawab 502 oleh
+Caddy.
+
+**Cara menemukannya.** Caddyfile tidak menyalakan access log, jadi satu-satunya catatan ada di log
+galat Caddy (logger `http.log.error`). Cari pesan galatnya, bukan kode statusnya:
+
+```bash
+ssh -i ~/.ssh/<nama-kunci>.pem <user>@<ip-statis> 'cd /opt/komplek && docker compose -f docker-compose.prod.yml logs --since 24h caddy' | grep '"msg":"EOF"'
+```
+
+Setiap baris yang cocok adalah satu permintaan yang dijawab 502 karena koneksi Caddy ke `app:3000`
+ditutup tanpa jawaban. Baris itu memuat `"status":502`, `err_trace`
+`reverseproxy.statusError`, metode, URI, protokol peramban (`"proto":"HTTP/3.0"` dan seterusnya),
+serta `duration` yang biasanya hanya beberapa milidetik.
+
+**Penyebabnya ada di Bun, bukan di Caddy atau aplikasi.** `node:http` di Bun 1.3.14 menutup
+koneksi keep-alive tanpa jawaban dan tanpa `Connection: close` bila permintaan berikutnya tiba
+saat respons berkas statis sebelumnya belum selesai ditutup di sisi Bun
+([oven-sh/bun#31889](https://github.com/oven-sh/bun/issues/31889), diperbaiki mulai Bun 1.4.0).
+adapter-node mengirim setiap berkas statis dengan cara yang memicunya, jadi permintaan yang
+ditolak itu tidak pernah sampai ke SvelteKit, dan karena itu log `app` kosong. Untuk `GET` dari
+peramban yang datang lewat HTTP/1.1 atau HTTP/2, pustaka HTTP Go di dalam Caddy sudah mengirim
+ulang permintaan itu sendiri. Untuk `GET` lewat HTTP/3 tidak, sehingga hanya permintaan HTTP/3
+yang sampai ke pengguna sebagai 502. Rinciannya, beserta reproduksinya, ada di #213.
+
+**Apa yang dilakukan pengulangan di Caddyfile.** `lb_retries 2` dan
+`lb_retry_match { method GET HEAD }` membuat Caddy langsung mengirim ulang `GET` atau `HEAD` yang
+round-trip-nya ke `app` gagal, paling banyak dua kali lagi, lewat koneksi lain. Peramban menerima
+jawaban dari percobaan yang berhasil, dan percobaan yang gagal tidak dicatat sama sekali. Jadi
+sesudah perubahan ini, baris `"msg":"EOF"` untuk `GET` atau `HEAD` hanya muncul bila ketiga
+percobaan gagal.
+
+**Batasnya.**
+
+- `POST` dan metode lain tidak pernah dikirim ulang, karena aksi form tidak idempoten. Aksi form
+  yang terkena penutupan koneksi ini tetap dijawab 502, dan baris `"msg":"EOF"` dengan
+  `"method":"POST"` tetap muncul. Pada penyebab di atas aksinya tidak pernah dijalankan (Bun
+  membuang permintaannya sebelum sampai ke SvelteKit), jadi mengirim ulang form itu dengan tangan
+  aman.
+- Pengulangan menutupi gejala, tidak menghapus penyebab. Yang menghapusnya adalah Bun 1.4.0 atau
+  lebih baru di `Dockerfile`, yang dicatat sebagai issue tersendiri.
+- Permintaan yang koneksinya tidak bisa dibuka sama sekali, misalnya saat `app` sedang dimulai
+  ulang, juga dikirim ulang oleh Caddy untuk metode apa pun, karena `app` belum menerimanya. Ketiga
+  percobaan itu dikirim berturut-turut tanpa jeda, jadi selama `app` belum siap jawabannya tetap
+  502 seperti sebelumnya.
