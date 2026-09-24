@@ -10,13 +10,26 @@
 	 * `setLocale` writes the `PARAGLIDE_LOCALE` cookie (configured in `vite.config.ts`) and, by
 	 * default, performs a full document navigation — which is what makes the choice survive a
 	 * reload and take effect through `src/hooks.server.ts`'s `localeHandle` on the very next
-	 * request, server-rendered `<html lang>` included.
+	 * request, server-rendered `<html lang>` included. That is also why a choice made on a
+	 * signed-out page still applies once the visitor signs in.
+	 *
+	 * Reused at three placements: the `(app)` sidebar footer, the `(public)` header, and the
+	 * `(auth)` form column. The two guest placements are tight on width, so `hideLabel` lets them
+	 * keep the label in the accessibility tree while hiding it visually (`sr-only`); the sidebar
+	 * footer has room and leaves it visible.
 	 */
+
+	interface Props {
+		/** Visually hide the label (`sr-only`) without removing it for screen readers. */
+		readonly hideLabel?: boolean;
+	}
 
 	const LANGUAGE_LABEL: Readonly<Record<Locale, () => string>> = {
 		id: m.appShell_languageId,
 		en: m.appShell_languageEn
 	};
+
+	let { hideLabel = false }: Props = $props();
 
 	const uid = $props.id();
 
@@ -26,7 +39,7 @@
 </script>
 
 <div class="flex items-center gap-2 text-sm">
-	<label class="text-muted-foreground" for="app-shell-language-{uid}">
+	<label class="text-muted-foreground" class:sr-only={hideLabel} for="app-shell-language-{uid}">
 		{m.appShell_languageLabel()}
 	</label>
 	<select

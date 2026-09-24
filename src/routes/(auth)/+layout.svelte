@@ -1,4 +1,5 @@
 <script lang="ts">
+	import LanguageSwitcher from '$lib/components/app-shell/language-switcher.svelte';
 	import BrandPanel from '$lib/components/auth/brand-panel.svelte';
 	import type { LayoutProps } from './$types';
 
@@ -19,6 +20,11 @@
 	 * selector on the form column, rather than in six forms: the same `min-h-11 md:min-h-0` pair the
 	 * `(public)` header uses, applied to every `button[type=submit]` in the group.
 	 *
+	 * Since #189, `LanguageSwitcher` sits above `children`, right-aligned, inside the `max-w-sm`
+	 * wrapper: a visitor still without a session can choose the interface language here too, before
+	 * the form itself is rendered in that language. There is room for the full label here, unlike the
+	 * `(public)` header, so it does not pass `hideLabel`.
+	 *
 	 * A `<div>`, not a `<main>`: each page of this group renders its own `<main>`.
 	 */
 	let { children }: LayoutProps = $props();
@@ -30,7 +36,10 @@
 	<div
 		class="flex min-w-0 items-center justify-center px-4 py-10 md:px-10 [&_button[type=submit]]:min-h-11 md:[&_button[type=submit]]:min-h-0"
 	>
-		<div class="w-full max-w-sm">
+		<div class="flex w-full max-w-sm flex-col gap-4">
+			<div class="flex justify-end">
+				<LanguageSwitcher />
+			</div>
 			{@render children()}
 		</div>
 	</div>
