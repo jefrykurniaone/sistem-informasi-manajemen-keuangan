@@ -10,7 +10,12 @@
 	}: WithElementRef<HTMLAttributes<HTMLElement>> = $props();
 </script>
 
-<main
+<!--
+	A `<div>`, not a `<main>`. Each `(app)` page renders its own `<main>` around its content, the same
+	per-page convention the `(public)` layout follows, so a `<main>` here would nest a second landmark
+	inside the first, violating `landmark-no-duplicate-main`.
+-->
+<div
 	bind:this={ref}
 	data-slot="sidebar-inset"
 	class={cn(
@@ -20,4 +25,4 @@
 	{...restProps}
 >
 	{@render children?.()}
-</main>
+</div>
