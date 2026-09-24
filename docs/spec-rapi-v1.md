@@ -1,4 +1,4 @@
-# Spec: rapi - Koneksi Caddy, tata letak (app), teks tamu dua bahasa, deploy dengan pesan, penjadwal tahan koneksi putus
+# Spec: rapi - Koneksi Caddy, tata letak (app), teks tamu dua bahasa, deploy dengan pesan, penjadwal tahan koneksi putus dan berjeda sesudah gagal
 
 | Keterangan | Nilai |
 |---|---|
@@ -6,6 +6,7 @@
 | Run | `rapi-v1` |
 | Peta eksekusi | [#216](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/216) |
 | Disalin pada | 2026-09-24 |
+| Diamandemen | 2026-09-24: #218 masuk run, dan waktu WITA dikoreksi menjadi WIB |
 | Lintasan penutup | belum |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
@@ -15,9 +16,9 @@ item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan 
 ---
 ## Problem statement
 
-Run `uji-v1` meninggalkan delapan temuan di luar cakupannya, dan diagnosis salah satunya menemukan yang kesembilan. Semuanya kecil, tetapi masing-masing terasa oleh orang yang memakai aplikasi atau yang men-deploy-nya.
+Run `uji-v1` meninggalkan delapan temuan di luar cakupannya. Diagnosis salah satunya menemukan yang kesembilan, dan diagnosis yang kesembilan menemukan yang kesepuluh. Semuanya kecil, tetapi masing-masing terasa oleh orang yang memakai aplikasi atau yang men-deploy-nya.
 
-**Galat 500 di produksi.** Pengguna yang kembali ke aplikasi sesudah jeda kadang mendapat layar polos "500 Internal Error". Pemilik mengalaminya dua kali: sesudah memverifikasi email (2026-09-23 17:36 WITA), dan lagi pada 2026-09-24 09:52 WITA. Log Caddy mencatat satu kejadian lagi dari sebuah ponsel Android pada 00:27 WITA. Aplikasinya sendiri tidak pernah galat, dan container-nya tidak restart. Caddy mendapat `EOF` saat meneruskan permintaan `GET` ke aplikasi (chunk JavaScript dan `__data.json`), dalam 0,6 sampai 30 milidetik, lalu membalas 502. SvelteKit di peramban kemudian gagal memuat modul dan menampilkan halaman galat bawaannya. Penyebab di sisi aplikasi belum diketahui. Diukur 2026-09-24 di container produksi: aplikasi tidak menutup koneksi keep-alive yang menganggur dalam 150 detik, dan permintaan kedua di koneksi yang sama sesudah jeda sampai 110 detik selalu dijawab. Jadi ini bukan balapan batas waktu menganggur yang sederhana.
+**Galat 500 di produksi.** Pengguna yang kembali ke aplikasi sesudah jeda kadang mendapat layar polos "500 Internal Error". Pemilik mengalaminya dua kali: sesudah memverifikasi email (2026-09-23 16:36 WIB), dan lagi pada 2026-09-24 08:52 WIB. Log Caddy mencatat satu kejadian lagi dari sebuah ponsel Android pada 2026-09-23 23:27 WIB. Aplikasinya sendiri tidak pernah galat, dan container-nya tidak restart. Caddy mendapat `EOF` saat meneruskan permintaan `GET` ke aplikasi (chunk JavaScript dan `__data.json`), dalam 0,6 sampai 30 milidetik, lalu membalas 502. SvelteKit di peramban kemudian gagal memuat modul dan menampilkan halaman galat bawaannya. Penyebab di sisi aplikasi belum diketahui. Diukur 2026-09-24 di container produksi: aplikasi tidak menutup koneksi keep-alive yang menganggur dalam 150 detik, dan permintaan kedua di koneksi yang sama sesudah jeda sampai 110 detik selalu dijawab. Jadi ini bukan balapan batas waktu menganggur yang sederhana.
 
 **Halaman `(app)` meluap di telepon.** Buku kas meluap mendatar pada lebar 390 piksel, sehingga seluruh halaman, termasuk judulnya, bisa digeser ke samping. Tabelnya sebenarnya sudah dibungkus wadah yang menggulir sendiri. Yang melebar adalah wadah utama halaman: ia rata tengah tanpa lebar pasti, jadi lebarnya mengikuti isi. Pola yang sama ada di halaman lain yang bertabel lebar (Laporan Bulanan admin dan warga, Impor), yang meluap begitu datanya cukup lebar.
 
@@ -32,6 +33,8 @@ Run `uji-v1` meninggalkan delapan temuan di luar cakupannya, dan diagnosis salah
 **Kunci privat bisa ikut ke konteks build.** `.dockerignore` tidak menyaring `*.pem` dan `*.key`, sementara tahap `build` menyalin seluruh pohon. Kunci yang kebetulan tersimpan di dalam repositori ikut masuk ke lapisan image tahap `build` di mesin pembangun.
 
 **Penjadwal rapuh saat koneksi basis data diputus.** Empat kali dalam sehari, Supabase memutus koneksi (`57P01`, "terminating connection due to administrator command") tepat saat penjadwal menulis klaim `job_runs`. Setiap kali, sisa tick itu batal, sehingga job lain yang urutannya sesudahnya ikut tidak dicoba. Dampaknya sejauh ini hanya tertunda 30 detik, dan tidak ada job yang hilang atau berjalan dua kali. Pool basis data masih memakai semua nilai bawaan: tanpa penangan galat untuk klien yang menganggur, sehingga proses bisa crash, dan tanpa batas waktu koneksi maupun query, sehingga penjadwal bisa berhenti diam-diam.
+
+**Job yang gagal diulang tanpa jeda, di halaman yang sulit dipahami.** Run yang gagal tidak menahan kunci klaim, jadi job yang gagal karena konfigurasi dicoba lagi di setiap tick 30 detik dan menulis satu baris `job_runs` baru setiap kali, sekitar 2.880 baris sehari. Sejak 2026-09-23 16:15 WIB, `issue-invoices` gagal seperti itu karena belum ada Tarif yang berlaku pada 2026-09-01. Pemilik memutuskan penagihan mulai Oktober, jadi kegagalan September itu disengaja, tetapi ia tampil sebagai ribuan kegagalan. Halaman Pekerjaan terjadwal hanya menampilkan run terakhir. Nama job tampil sebagai identifier Inggris tanpa penjelasan, periode tampil sebagai stempel UTC mentah, galat Tarif tampil dalam bahasa Inggris, dan deskripsi halamannya menyatakan bahwa periode yang sudah dijalankan dilewati, padahal periode yang gagal justru diulang. Pemilik sendiri tidak bisa menjelaskan fungsi keempat job dari halaman itu.
 
 ## Solution
 
@@ -49,6 +52,8 @@ Konteks build tidak lagi membawa `*.pem` dan `*.key`.
 
 Penjadwal tetap berjalan dan tetap benar ketika koneksi basis data diputus dari sisi server. Kegagalan satu job tidak lagi melewatkan job lain. Klaim dan penyelesaian run diulang sekali untuk galat kelas koneksi, sedangkan job-nya sendiri tidak pernah diulang di dalam tick. Pool punya penangan galat dan batas waktu.
 
+Job yang gagal dicoba lagi dengan jeda yang makin panjang, bukan setiap 30 detik, sedangkan "Jalankan sekarang" tetap langsung berjalan. Halaman Pekerjaan terjadwal menjelaskan setiap job dalam bahasa yang dipilih pengguna, menampilkan periode dan jam yang bisa dibaca, menyebut berapa kali job gagal di periode ini dan kapan ia dicoba lagi, dan menerangkan galat Tarif beserta langkah perbaikannya.
+
 ## Goals and non-goals
 
 **Goals**
@@ -63,13 +68,17 @@ Penjadwal tetap berjalan dan tetap benar ketika koneksi basis data diputus dari 
 - `DATABASE_URL` yang tidak terurai berhenti di wizard, dan kegagalan koneksi `migrate` selalu punya pesan.
 - `*.pem` dan `*.key` tidak pernah masuk konteks build.
 - Koneksi basis data yang diputus server tidak membuat proses crash, tidak melewatkan job lain di tick yang sama, dan tidak pernah membuat job berjalan dua kali.
+- Job yang gagal untuk satu periode dicoba lagi sesudah 1, 5 dan 25 menit, lalu setiap 60 menit, bukan di setiap tick. "Jalankan sekarang" tidak kena jeda.
+- Halaman Pekerjaan terjadwal bisa dipahami tanpa membaca kode, dalam bahasa Indonesia dan Inggris.
 
 **Non-goals**
 
 - Tidak ada halaman `+error.svelte` baru. Halaman galat yang lebih ramah adalah pekerjaan terpisah.
 - Empat email tanpa locale (undangan, verifikasi email, atur ulang kata sandi, pendaftaran disetujui) tetap berbahasa Indonesia.
 - Tidak men-deploy. Deploy ke VM tetap langkah pemilik sesudah run.
-- Tidak mengubah perilaku pengulangan job yang gagal karena konfigurasi, misalnya `issue-invoices` tanpa Tarif (#218).
+- Tidak ada perubahan skema `job_runs`. Galat selain galat Tarif tidak diterjemahkan.
+- Baris `failed` yang sudah menumpuk tidak dibersihkan. Pruning 90 hari yang membersihkannya.
+- Menyimpan Tarif tidak memicu `issue-invoices`, dan ringkasan job di Beranda tidak berubah.
 
 ## User stories
 
@@ -91,6 +100,10 @@ Penjadwal tetap berjalan dan tetap benar ketika koneksi basis data diputus dari 
 16. Sebagai pemilik, saya ingin kunci privat yang tidak sengaja tersimpan di pohon kerja tidak ikut ke konteks build Docker.
 17. Sebagai pengurus, saya ingin Tagihan terbit dan email terkirim tepat waktu walaupun basis data sesekali memutus koneksi, supaya warga tidak menunggu.
 18. Sebagai pemilik, saya ingin aplikasi tetap hidup dan penjadwal tetap berdetak sesudah koneksi basis data diputus, supaya saya tidak perlu me-restart container.
+19. Sebagai pemilik, saya ingin job yang gagal karena konfigurasi tidak menulis ribuan baris sehari, supaya riwayat run tetap bermakna.
+20. Sebagai pengurus yang baru mengisi Tarif, saya ingin menerbitkan Tagihan saat itu juga lewat "Jalankan sekarang", tanpa menunggu jeda habis.
+21. Sebagai superuser, saya ingin tahu dari halaman Pekerjaan terjadwal apa fungsi setiap job, periode mana yang sedang dikerjakan, berapa kali ia gagal, dan kapan ia dicoba lagi.
+22. Sebagai superuser yang memilih bahasa Inggris, saya ingin halaman itu, termasuk penjelasan galat Tarif, tampil dalam bahasa Inggris.
 
 ## Implementation decisions
 
@@ -118,6 +131,21 @@ Penjadwal tetap berjalan dan tetap benar ketika koneksi basis data diputus dari 
 - Klaim, penyelesaian dan penandaan gagal diulang sekali untuk galat kelas koneksi, karena ketiganya idempoten terhadap kunci klaim dan status `running`. Job-nya sendiri tidak pernah diulang di dalam tick.
 - Klaim yang ter-commit tetapi dilaporkan gagal akan bentrok saat diulang dan dilewati, lalu diambil alih sesudah lease habis. Kasus terburuknya tertunda, tidak pernah berjalan dua kali.
 
+**Jeda sesudah job gagal.**
+- Jeda berlaku per pasangan job dan periode, untuk semua job apa pun galatnya. Membedakan galat konfigurasi dari galat lain akan butuh kelas galat baru di modul email, sedangkan galat kelas koneksi sudah diulang sekali oleh perbaikan penjadwal di atas sebelum jeda berlaku.
+- Tahapannya mengikuti pola antrean email yang sudah ada: 1 menit sesudah kegagalan pertama, lalu dikali lima, dan mentok di 60 menit (1, 5, 25, 60, 60, dan seterusnya). Galat sesaat pada tanggal 1 dicoba lagi semenit kemudian, sedangkan kegagalan yang menetap tercatat sekitar 24 kali sehari.
+- Jumlah kegagalan dihitung dari baris `failed` pasangan itu, jadi tidak ada perubahan skema dan jeda tetap berlaku sesudah restart. Periode baru belum punya baris gagal, jadi langsung dicoba.
+- Jeda hanya menahan tick. "Jalankan sekarang" tetap langsung berjalan, dan kegagalannya ikut dihitung. Untuk job berperiode satu menit (`email-queue-drain`), jeda paling-paling menahan tick kedua di menit yang sama.
+
+**Halaman Pekerjaan terjadwal.**
+- Semua teks lewat paraglide, dalam `id` dan `en`.
+- Setiap job tampil dengan nama yang dibaca manusia dan satu kalimat fungsinya. Identifier-nya tetap tampil kecil, karena itu yang muncul di log.
+- Periode dan jam diformat menurut locale, dalam WIB (zona kompleks).
+- Bila run terakhir di periode berjalan gagal, halaman menyebut berapa kali pasangan itu gagal dan kapan paling cepat ia dicoba lagi.
+- Galat Tarif dikenali dan kalimatnya disusun saat render dari periode run-nya, jadi ia mengikuti bahasa pengguna. Kalimat itu mengarahkan ke pengisian Tarif, lalu "Jalankan sekarang".
+- Galat lain tampil sebagai teks aslinya di bawah label yang diterjemahkan. Menerjemahkannya butuh kode galat tersimpan, dan itu perubahan skema.
+- Deskripsi halaman dibetulkan: periode yang berhasil dilewati, sedangkan periode yang gagal dicoba lagi dengan jeda.
+
 ## Testing decisions
 
 Tes yang baik di sini menguji perilaku yang terlihat dari luar: apa yang dilihat pengguna di peramban, apa yang dicetak skrip, apa yang ada di image. Detail implementasi tidak diuji.
@@ -131,6 +159,8 @@ Tes yang baik di sini menguji perilaku yang terlihat dari luar: apa yang dilihat
 - **Wizard**: dicoba orchestrator di WSL dengan kata sandi yang belum di-encode. Tidak ada tes Vitest yang memanggil `bash`, karena `bash` di mesin pengembang crash sekitar 5% dan tes seperti itu akan tidak stabil.
 - **Konteks build**: orchestrator menaruh `.pem` palsu di akar pohon, membangun `--target build` di Docker WSL, dan memastikan berkas itu tidak ada di image.
 - **Penjadwal**: tes unit di Postgres uji memutus koneksi dengan `pg_terminate_backend`, baik koneksi yang membawa klaim maupun klien yang menganggur di pool. Yang diperiksa: job lain tetap berjalan, job yang terkena berjalan tepat sekali, dan tidak ada galat yang tak tertangani. Prior art: `tests/unit/scheduler-lock.test.ts` dan `tests/unit/scheduler-jobs.test.ts`.
+- **Jeda**: tes unit di Postgres uji dengan jam palsu, lewat seam penjadwal yang sama. Yang diperiksa: percobaan berikutnya jatuh pada 1, 5, 25 dan 60 menit dan tidak di antaranya; "Jalankan sekarang" tidak tertahan; periode baru langsung dicoba; jeda satu job tidak menahan job lain; data halaman memuat jumlah kegagalan dan waktu percobaan berikutnya; galat Tarif dikenali dan menghasilkan kalimat `id` dan `en`.
+- **Halaman Pekerjaan terjadwal**: walk orchestrator dengan Playwright MCP di `/admin/jobs`, locale `id` dan `en`, 1920 dan 390.
 
 ## Success criteria
 
@@ -144,6 +174,8 @@ Tes yang baik di sini menguji perilaku yang terlihat dari luar: apa yang dilihat
 - `.pem` palsu tidak ada di image `--target build`.
 - Wizard menolak kata sandi yang belum di-encode dan menawarkan meng-encode-nya. `migrate` dengan URL tidak terurai mencetak penyebabnya tanpa kata sandi.
 - Koneksi yang diputus di tengah tick tidak melewatkan job lain, tidak membuat job berjalan dua kali, dan tidak membuat proses crash, dibuktikan tes.
+- Job yang terus gagal untuk satu periode dicoba pada 1, 5 dan 25 menit, lalu setiap 60 menit, sedangkan "Jalankan sekarang" tetap langsung berjalan, dibuktikan tes.
+- `/admin/jobs` di `id` dan `en` menampilkan nama dan fungsi keempat job tanpa stempel waktu ISO mentah, dan galat Tarif tampil sebagai kalimat dalam bahasa aktif.
 - Empat perintah gerbang lulus.
 
 ## Out of scope
@@ -151,10 +183,12 @@ Tes yang baik di sini menguji perilaku yang terlihat dari luar: apa yang dilihat
 - Halaman `+error.svelte` yang lebih ramah.
 - Lokalisasi empat email tanpa locale.
 - Deploy ke VM.
-- Jeda untuk job yang gagal karena konfigurasi (#218).
+- Kolom baru di `job_runs` (kode galat, hitungan percobaan) dan terjemahan galat selain galat Tarif.
+- Menyimpan Tarif memicu `issue-invoices`, dan perubahan ringkasan job di Beranda.
+- Membersihkan baris `failed` yang sudah menumpuk.
 - Email yang bisa terkirim dua kali bila penandaan terkirim gagal sesudah pengiriman SMTP.
 - Access log Caddy dan pelaporan galat klien.
 
 ## Further notes
 
-Kesembilan tiket adalah issue yang sudah ada: #186, #187, #189, #194, #198, #202, #212, #213, dan #215. #215 ditemukan saat mendiagnosis #213, lalu dimasukkan ke run atas keputusan pemilik sesudah peta #216 terbit. Laporan aslinya dibiarkan utuh, dan bagian tiket ditambahkan di bawahnya. Premis #186 dikoreksi di bagian tiketnya: tabel sudah dibungkus wadah yang menggulir sendiri sejak `707fc23`, dan yang melebar adalah wadah utama halaman. Premis #213 juga dikoreksi: galatnya bukan galat klien yang tak diketahui, melainkan 502 dari Caddy (`http.log.error` `EOF`). Pemeriksaan pertama tidak menemukannya karena yang dicari baris 5xx, bukan `EOF`. Versi pertama spec ini menyebut penyebabnya balapan batas waktu keep-alive. Pengukuran pada 2026-09-24 membantahnya, dan badan spec dikoreksi pada hari yang sama.
+Kesepuluh tiket adalah issue yang sudah ada: #186, #187, #189, #194, #198, #202, #212, #213, #215, dan #218. #215 ditemukan saat mendiagnosis #213, lalu dimasukkan ke run atas keputusan pemilik sesudah peta #216 terbit. #218 ditemukan saat mendiagnosis #215, dan dimasukkan dengan cara yang sama pada 2026-09-24 bersama amandemen spec ini. Laporan aslinya dibiarkan utuh, dan bagian tiket ditambahkan di bawahnya. Premis #186 dikoreksi di bagian tiketnya: tabel sudah dibungkus wadah yang menggulir sendiri sejak `707fc23`, dan yang melebar adalah wadah utama halaman. Premis #213 juga dikoreksi: galatnya bukan galat klien yang tak diketahui, melainkan 502 dari Caddy (`http.log.error` `EOF`). Pemeriksaan pertama tidak menemukannya karena yang dicari baris 5xx, bukan `EOF`. Versi pertama spec ini menyebut penyebabnya balapan batas waktu keep-alive. Pengukuran pada 2026-09-24 membantahnya, dan badan spec dikoreksi pada hari yang sama. Waktu di spec ini ditulis dalam WIB, zona kompleks. Versi sebelumnya keliru menulisnya dalam WITA, dan dikoreksi pada 2026-09-24.
