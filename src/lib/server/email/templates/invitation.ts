@@ -52,7 +52,7 @@ export const invitationTemplate: EmailTemplate = (payload) => {
 			'',
 			'Pengurus Sistem Informasi dan Manajemen Keuangan Komplek mengundang Anda sebagai warga',
 			`rumah blok ${block} nomor ${number}. Buka tautan di bawah ini untuk menetapkan kata sandi`,
-			'Anda sendiri — pengurus tidak pernah tahu kata sandi Anda:',
+			'Anda sendiri. Pengurus tidak pernah tahu kata sandi Anda:',
 			'',
 			url,
 			'',
