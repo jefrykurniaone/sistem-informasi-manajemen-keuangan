@@ -268,15 +268,23 @@ jawaban dari percobaan yang berhasil, dan percobaan yang gagal tidak dicatat sam
 sesudah perubahan ini, baris `"msg":"EOF"` untuk `GET` atau `HEAD` hanya muncul bila ketiga
 percobaan gagal.
 
+**Apa yang dilakukan `keepalive off` di Caddyfile.** `transport http { keepalive off }` membuat
+Caddy membuka koneksi baru ke `app` untuk setiap permintaan dan tidak pernah memakai ulang
+koneksi. Bug Bun di atas hanya mengenai permintaan di koneksi yang dipakai ulang, jadi dengan blok
+ini bug itu tidak bisa terjadi untuk metode apa pun, termasuk `POST` yang tidak dikirim ulang oleh
+pengulangan. Biayanya satu koneksi TCP baru per permintaan di jaringan internal compose. Blok ini
+sementara (#223): cabut sesudah image berjalan di Bun 1.4 atau lebih baru. Pengulangannya tetap
+dipasang sebagai jaring pengaman.
+
 **Batasnya.**
 
-- `POST` dan metode lain tidak pernah dikirim ulang, karena aksi form tidak idempoten. Aksi form
-  yang terkena penutupan koneksi ini tetap dijawab 502, dan baris `"msg":"EOF"` dengan
-  `"method":"POST"` tetap muncul. Pada penyebab di atas aksinya tidak pernah dijalankan (Bun
-  membuang permintaannya sebelum sampai ke SvelteKit), jadi mengirim ulang form itu dengan tangan
-  aman.
-- Pengulangan menutupi gejala, tidak menghapus penyebab. Yang menghapusnya adalah Bun 1.4.0 atau
-  lebih baru di `Dockerfile`, yang dicatat sebagai issue tersendiri.
+- `POST` dan metode lain tidak pernah dikirim ulang, karena aksi form tidak idempoten. Selama
+  `keepalive off` terpasang, aksi form tidak terkena bug ini. Tanpa blok itu, aksi form yang terkena
+  penutupan koneksi tetap dijawab 502, dan baris `"msg":"EOF"` dengan `"method":"POST"` tetap
+  muncul. Pada penyebab di atas aksinya tidak pernah dijalankan (Bun membuang permintaannya sebelum
+  sampai ke SvelteKit), jadi mengirim ulang form itu dengan tangan aman.
+- Pengulangan dan `keepalive off` menutupi gejala, tidak menghapus penyebab. Yang menghapusnya
+  adalah Bun 1.4.0 atau lebih baru di `Dockerfile` (#223).
 - Permintaan yang koneksinya tidak bisa dibuka sama sekali, misalnya saat `app` sedang dimulai
   ulang, juga dikirim ulang oleh Caddy untuk metode apa pun, karena `app` belum menerimanya. Ketiga
   percobaan itu dikirim berturut-turut tanpa jeda, jadi selama `app` belum siap jawabannya tetap

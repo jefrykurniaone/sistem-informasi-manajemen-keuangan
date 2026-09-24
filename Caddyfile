@@ -31,10 +31,21 @@
 		# - POST, and every method other than GET and HEAD, is never resent once the app may have
 		#   received it: a form action is not idempotent, and running one twice could record a
 		#   payment twice. Such a request still answers 502 when the connection drops under it; only
-		#   a Bun with the fix removes that.
+		#   a Bun with the fix, or the transport block below, removes that.
 		lb_retries 2
 		lb_retry_match {
 			method GET HEAD
+		}
+
+		# Until the image runs Bun 1.4 or later (#223), never reuse a connection to the app. The Bun
+		# drop above only hits a request sent on a connection that has already carried one, so with
+		# a fresh connection per request it cannot happen for any method, POST included. The cost is
+		# one new TCP connection per request inside the compose network. Measured in #213's
+		# diagnosis before it was applied: zero 502s in 3600 GET and 600 POST across HTTP/3, HTTP/2
+		# and HTTP/1.1. Remove this block once Bun is upgraded; the retries above stay as a safety
+		# net.
+		transport http {
+			keepalive off
 		}
 	}
 }
