@@ -15,8 +15,8 @@ services:
     command: bun run db:migrate
     restart: 'no'
     # Only DATABASE_URL, not the whole of .env: drizzle.config.ts and scripts/migrate-preflight.ts
-    # read nothing else, and a one-shot job has no reason to hold the signing secrets. The image carries no .env (.dockerignore), so
-    # the value has to arrive from here.
+    # read nothing else, and a one-shot job has no reason to hold the signing secrets. The image
+    # carries no .env (.dockerignore), so the value has to arrive from here.
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in .env}
     volumes:
