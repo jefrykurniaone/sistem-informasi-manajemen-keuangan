@@ -30,26 +30,15 @@
 	 * its two ends line up with the text below them.
 	 *
 	 * **Two things can now be arbitrarily long at once: the complex name and, in the signed-in
-	 * branch, the viewer's display name.** At 390 pixels the row has 343 pixels to give the complex
-	 * name link, the viewer's name, the switcher and the Beranda button between them, which is not
-	 * enough for all four at their natural size, so the two names share the squeeze rather than one
-	 * of them taking all of it:
-	 *
-	 * - The complex name link is `shrink-0` with `max-w-[35%]` (lifted at `sm:` and up, where the row
-	 *   is wide enough that the cap would only clip names it does not need to): it renders at its
-	 *   natural width when that is under the cap (the seed name `BCIR` never reaches it) and
-	 *   truncates at exactly 35 percent of the row when it is not. It never collapses to nothing,
-	 *   because the cap, not the flex shrink algorithm, decides its width.
-	 * - The switcher and the Beranda button are each `shrink-0`; a control is either fully visible or
-	 *   not shown, never half-clipped.
-	 * - The signed-in name span is the only element with a plain `shrink-1` (the default): with
-	 *   `min-w-0` it absorbs whatever space is left after the link, the switcher and the button take
-	 *   theirs, and truncates there. The wrapping group is `min-w-0` too, so the outer flex layout can
-	 *   push it below its own content size instead of the automatic minimum stopping it early.
-	 *
-	 * The result: the complex name is always shown (truncated past 35 percent of the row), the
-	 * viewer's name truncates to whatever is left, and neither ever pushes the page wider than its
-	 * own viewport.
+	 * branch, the viewer's display name,** and neither may push the row wider than the viewport. The
+	 * complex name link is `shrink-0`, so it needs an explicit cap at every breakpoint, not just a
+	 * narrow one: `max-w-[35%]` below `sm:`, where the row is tight and the switcher, the Beranda
+	 * button and their gaps need most of what is left; `sm:max-w-[50%]` from 640 pixels up, where even
+	 * half the row still leaves that group its space. Either way the link renders at its natural width
+	 * under the cap and truncates past it, never collapsing to nothing. The switcher and the button
+	 * are `shrink-0` too, so a control is either fully visible or not shown. The signed-in name span is
+	 * the one element left with a plain, default `shrink` (`min-w-0`, same as its wrapping group), so
+	 * it absorbs whatever space the other three leave and truncates there.
 	 */
 	let { data, children }: LayoutProps = $props();
 </script>
@@ -58,7 +47,7 @@
 	<div class="mx-auto flex h-14 w-full max-w-3xl items-center justify-between gap-3 px-4">
 		<a
 			href={resolve('/posts')}
-			class="max-w-[35%] min-w-0 shrink-0 truncate text-sm font-semibold tracking-tight hover:underline sm:max-w-none"
+			class="max-w-[35%] min-w-0 shrink-0 truncate text-sm font-semibold tracking-tight hover:underline sm:max-w-[50%]"
 		>
 			{complexName}
 		</a>
