@@ -261,13 +261,15 @@ async function findStoredConflicts(
 		return conflicts;
 	}
 
-	const [storedUnits, storedEmails] = await Promise.all([
-		registeredUnitKeys(reader),
-		registeredEmails(
-			reader,
-			rows.map((row) => row.email)
-		)
-	]);
+	// Sequential, not `Promise.all`: `importResidents` calls `examine` with its own transaction client
+	// (see this module's doc comment), and firing both queries at once on that one client is the
+	// pattern `pg` deprecates and removes outright in `pg@9`, per #231. The order matches the order the
+	// two used to run in.
+	const storedUnits = await registeredUnitKeys(reader);
+	const storedEmails = await registeredEmails(
+		reader,
+		rows.map((row) => row.email)
+	);
 
 	for (const [position, row] of rows.entries()) {
 		const reasons: ImportProblemReason[] = [];
