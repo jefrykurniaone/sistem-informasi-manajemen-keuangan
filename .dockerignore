@@ -13,9 +13,8 @@ docs
 .env
 .env.*
 !.env.example
-# Kunci privat: tahap `build` di Dockerfile menyalin seluruh konteks (COPY . .), jadi kunci yang
-# kebetulan tersimpan di pohon kerja tidak boleh pernah ikut terkirim ke daemon Docker, pada
-# kedalaman berapa pun.
+# Private keys: the `build` stage in Dockerfile copies the whole context (COPY . .), so a key
+# that happens to sit in the working tree must never reach the Docker daemon, at any depth.
 **/*.pem
 **/*.key
 *.log
