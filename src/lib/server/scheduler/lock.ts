@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray, lt, lte, notInArray } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, lt, lte, ne, notInArray } from 'drizzle-orm';
 import type { Database } from '../db';
-import { jobRuns, JOB_RUN_STATUS, type JobRun } from '../db/schema/scheduler';
+import { jobRuns, JOB_RUN_STATUS, type JobRun, type JobRunStatus } from '../db/schema/scheduler';
 import type { Clock } from '../ports/clock';
 
 /**
@@ -35,7 +35,9 @@ import type { Clock } from '../ports/clock';
  * - **A job that throws.** `failJobRun` sets the row to `failed`, which takes it out of the partial
  *   index — the same statement that records the failure releases the lock, so the next attempt at
  *   that period claims it cleanly, and the failed attempt stays as history. There is no cleanup
- *   pass that could be forgotten and no second write that could be skipped.
+ *   pass that could be forgotten and no second write that could be skipped. *When* a tick makes
+ *   that next attempt is not the lock's business: since ticket #218 the tick in `./index.ts` waits
+ *   out a backoff read from the failed rows first, and the lock itself is unchanged by it.
  * - **A job that succeeds does not release it, ever.** A `succeeded` row keeps its slot in the
  *   index for good, and that is precisely what "never twice for the same period" means.
  * - **A process that dies mid-run**, writing neither outcome, leaves a `running` row holding the
@@ -231,6 +233,82 @@ export async function latestJobRun(db: Database, jobName: string): Promise<JobRu
 		.orderBy(desc(jobRuns.startedAt), desc(jobRuns.finishedAt))
 		.limit(1);
 	return row;
+}
+
+/** One run as the backoff in `./index.ts` reads it: which period, how it ended, and when. */
+export interface RecentJobRun {
+	readonly period: string;
+	readonly status: JobRunStatus;
+	readonly startedAt: Date;
+	readonly finishedAt: Date | null;
+}
+
+/**
+ * The newest `limit` runs of one job, newest first, in the order `latestJobRun` uses. Added by
+ * ticket #218 for the backoff in `./index.ts`, which reads how many of the newest runs are failures
+ * of the current period.
+ *
+ * Deliberately not filtered by period. `job_runs_job_name_started_at_idx` on
+ * `(job_name, started_at)` answers this with a backward scan that stops after `limit` rows. Adding
+ * `period = …` would make the same scan walk every row of the job to find none when the period is
+ * new, which for the email drain is some 130,000 rows on every tick. The caller stops at
+ * the first row of another period instead: every job only ever runs for the period it is in now, so
+ * the runs of the current period are the newest runs of that job.
+ */
+export async function recentJobRuns(
+	db: Database,
+	jobName: string,
+	limit: number
+): Promise<RecentJobRun[]> {
+	return db
+		.select({
+			period: jobRuns.period,
+			status: jobRuns.status,
+			startedAt: jobRuns.startedAt,
+			finishedAt: jobRuns.finishedAt
+		})
+		.from(jobRuns)
+		.where(eq(jobRuns.jobName, jobName))
+		.orderBy(desc(jobRuns.startedAt), desc(jobRuns.finishedAt))
+		.limit(limit);
+}
+
+/**
+ * How many runs of one job failed for one period. Added by ticket #218 for `/admin/jobs`.
+ *
+ * Two statements, both on `job_runs_job_name_started_at_idx` and neither needing another index.
+ * The first finds the newest run of this job for any *other* period, walking back only over the
+ * runs of this one. The second counts from that instant on, so it reads this period's runs and not
+ * the job's whole history. Without that bound the count would read every row the job has, which
+ * for the email drain is ninety days of one row a minute.
+ */
+export async function countFailedRuns(
+	db: Database,
+	jobName: string,
+	period: string
+): Promise<number> {
+	const [previous] = await db
+		.select({ startedAt: jobRuns.startedAt })
+		.from(jobRuns)
+		.where(and(eq(jobRuns.jobName, jobName), ne(jobRuns.period, period)))
+		.orderBy(desc(jobRuns.startedAt))
+		.limit(1);
+
+	const conditions = [
+		eq(jobRuns.jobName, jobName),
+		eq(jobRuns.period, period),
+		eq(jobRuns.status, JOB_RUN_STATUS.failed)
+	];
+	if (previous) {
+		// `gte`, not `gt`: a run of this period that started at the very instant of the other one
+		// (a fake clock that stood still) is still counted, and the period filter keeps the other out.
+		conditions.push(gte(jobRuns.startedAt, previous.startedAt));
+	}
+	const [row] = await db
+		.select({ failures: count() })
+		.from(jobRuns)
+		.where(and(...conditions));
+	return row?.failures ?? 0;
 }
 
 /** What one prune is allowed to remove. */
