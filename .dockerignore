@@ -13,4 +13,8 @@ docs
 .env
 .env.*
 !.env.example
+# Private keys: the `build` stage in Dockerfile copies the whole context (COPY . .), so a key
+# that happens to sit in the working tree must never reach the Docker daemon, at any depth.
+**/*.pem
+**/*.key
 *.log
