@@ -1,5 +1,17 @@
-# Bun version is pinned so the container matches the version the lockfile was written with.
-FROM oven/bun:1.3.14-alpine AS base
+# Bun is pinned to one exact version, the same as `bun-version` in .github/workflows/ci.yml, so
+# the image installs and runs on the Bun the quality gate ran on, and `bun install
+# --frozen-lockfile` below reads bun.lock with a known version. Why 1.4.2 (#223):
+# - It carries the fix for oven-sh/bun#31889 (oven-sh/bun#32488, first released in 1.4.0). 1.3.14
+#   closed a kept-alive node:http connection with no response after serving a static file, which
+#   Caddy logged as 502 "msg":"EOF" (#213). 1.4.2 is the version the #213 reproduction measured
+#   with zero dropped connections.
+# - 1.4.1 brought node:http server fixes, and regressions in `bun build` scoping and
+#   AsyncLocalStorage memory that 1.4.2 fixes, together with musl (Alpine) GC crashes.
+# - The open regression oven-sh/bun#43853 (the node:http client agent reuses a socket after a
+#   `Connection: close` request to Bun.serve) reproduces on 1.4.0 and 1.4.2 alike, so no 1.4.x
+#   patch avoids it. It does not reach this app: the app serves through a node:http server and
+#   sends no request through a node:http client. Recheck that before the next bump.
+FROM oven/bun:1.4.2-alpine AS base
 WORKDIR /app
 
 # Dependencies are installed in their own layer so that a source change does not reinstall them.

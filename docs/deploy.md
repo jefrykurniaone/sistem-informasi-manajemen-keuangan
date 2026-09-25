@@ -304,8 +304,10 @@ Caddy membuka koneksi baru ke `app` untuk setiap permintaan dan tidak pernah mem
 koneksi. Bug Bun di atas hanya mengenai permintaan di koneksi yang dipakai ulang, jadi dengan blok
 ini bug itu tidak bisa terjadi untuk metode apa pun, termasuk `POST` yang tidak dikirim ulang oleh
 pengulangan. Biayanya satu koneksi TCP baru per permintaan di jaringan internal compose. Blok ini
-sementara (#223): cabut sesudah image berjalan di Bun 1.4 atau lebih baru. Pengulangannya tetap
-dipasang sebagai jaring pengaman.
+sementara. Sejak #223 image berjalan di Bun 1.4.2, yang sudah memuat perbaikan bug itu, tetapi
+`keepalive off` tetap terpasang sampai image baru itu di-deploy dan log caddy produksi terbukti
+bebas dari `"msg":"EOF"`. Sesudah itu blok ini dicabut lewat perubahan tersendiri. Pengulangannya
+tetap dipasang sebagai jaring pengaman.
 
 **Batasnya.**
 
@@ -315,7 +317,8 @@ dipasang sebagai jaring pengaman.
   muncul. Pada penyebab di atas aksinya tidak pernah dijalankan (Bun membuang permintaannya sebelum
   sampai ke SvelteKit), jadi mengirim ulang form itu dengan tangan aman.
 - Pengulangan dan `keepalive off` menutupi gejala, tidak menghapus penyebab. Yang menghapusnya
-  adalah Bun 1.4.0 atau lebih baru di `Dockerfile` (#223).
+  adalah Bun 1.4.0 atau lebih baru di `Dockerfile`, dan `Dockerfile` kini memakai Bun 1.4.2
+  (#223).
 - Permintaan yang koneksinya tidak bisa dibuka sama sekali, misalnya saat `app` sedang dimulai
   ulang, juga dikirim ulang oleh Caddy untuk metode apa pun, karena `app` belum menerimanya. Ketiga
   percobaan itu dikirim berturut-turut tanpa jeda, jadi selama `app` belum siap jawabannya tetap
