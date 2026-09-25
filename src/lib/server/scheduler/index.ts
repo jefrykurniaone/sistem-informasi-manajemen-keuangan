@@ -2,9 +2,17 @@ import { clearInterval, setInterval } from 'node:timers';
 import { recordAuditEntry } from '../audit';
 import { ACTION, requirePermission } from '../authz';
 import { failureCode, isConnectionFailure, type Database } from '../db';
-import type { JobRun } from '../db/schema/scheduler';
+import { JOB_RUN_STATUS, type JobRun } from '../db/schema/scheduler';
 import type { Clock } from '../ports/clock';
-import { claimJobRun, completeJobRun, failJobRun, latestJobRun, pruneJobRuns } from './lock';
+import {
+	claimJobRun,
+	completeJobRun,
+	countFailedRuns,
+	failJobRun,
+	latestJobRun,
+	pruneJobRuns,
+	recentJobRuns
+} from './lock';
 import { everyMinutesSchedule, JobRegistry, type JobDefinition } from './registry';
 
 /**
@@ -27,7 +35,8 @@ import { everyMinutesSchedule, JobRegistry, type JobDefinition } from './registr
  *    `skipped` and the screen says so. A trigger that bypassed the lock would be a button that
  *    issues a month's invoices twice, which is the one thing `spec-fondasi-v1.md` asks the
  *    scheduler to make impossible — and being able to press it on a fresh database is all manual
- *    testing needs.
+ *    testing needs. It does **not** wait out the backoff a tick keeps after a failure (ticket
+ *    #218): a person pressing the button has usually just fixed the cause.
  * 3. **A job that throws never propagates out of `runJob`.** The failure is recorded on the run and
  *    reported in the returned outcome. One failing job in a tick must not stop the jobs after it,
  *    the same rule `src/lib/server/email/worker.ts` follows for one failing email. What *does*
@@ -84,6 +93,34 @@ import { everyMinutesSchedule, JobRegistry, type JobDefinition } from './registr
  *   because it holds the job and its period.
  * - **What is logged is the job, its period, the step and a code**, never a message: see
  *   `failureCode` in `../db` for why a message is not safe to print.
+ *
+ * ## Backing off a period that keeps failing
+ *
+ * Added by ticket #218, after `issue-invoices` failed on every tick for want of a Tarif and wrote
+ * 2,479 `failed` rows in under a day. A failed run releases its period (see `./lock.ts`), so without
+ * this the next tick, thirty seconds later, tried again, and again, for as long as the cause stayed.
+ *
+ * - **After `n` recorded failures of one job for one period, a tick leaves that pair alone until
+ *   the last failure's `finished_at` plus `backoffDelayMilliseconds(n)`**: 1, 5, 25, then 60
+ *   minutes, and 60 from then on. The constants and why they are these numbers are below, at
+ *   `BACKOFF_FIRST_DELAY_MILLISECONDS`.
+ * - **It lives in `runDueJob`, not in the claim.** The pause is a rule about when a *tick* tries,
+ *   and `runDueJob` is the step of a tick that holds one job and its period. The lock is untouched:
+ *   a paused pair is simply not asked for, and "Jalankan sekarang" (`triggerJob`, through `runJob`)
+ *   never passes through `runDueJob`, so it runs at once. Its failure is a `failed` row like any
+ *   other and counts towards the next pause.
+ * - **Only `failed` rows that were actually recorded count.** The single retry `writeJobRun` makes
+ *   after a lost connection happens before anything is recorded, so it adds nothing here, and an
+ *   attempt `interrupted` before its failure was written adds nothing either.
+ * - **It applies to every job, whatever the error.** A job that fails for a reason nobody can fix
+ *   in thirty seconds is the common case, not the Tarif alone, and a pause that only knew one error
+ *   would miss the next one.
+ * - **A new period starts clean.** Its pair has no failed rows, so the first tick in it tries at
+ *   once, which is what makes a monthly job issue on the first of the month whatever happened in
+ *   the month before.
+ * - **The pause is advisory; the lock is not.** Two instances may both read "not paused" and both
+ *   try to claim, and the unique index still lets exactly one of them run. Nothing about "exactly
+ *   once" rests on the read below.
  */
 
 /** How much of a failure's message is kept on the run. Matches the email worker's own limit. */
@@ -92,14 +129,56 @@ const MAXIMUM_ERROR_LENGTH = 500;
 /** The audit log's `action` for a run a superuser asked for by hand. */
 export const JOB_TRIGGER_ACTION = 'job_trigger';
 
+/**
+ * How long a tick waits after the first recorded failure of a job for one period: one minute.
+ *
+ * Short on purpose. The first failure is often passing (a mail server that blinked, a deploy in
+ * progress), and a minute is two ticks, so a cause that has gone away costs almost nothing. It is
+ * the same first delay the email queue gives a failed send (`FIRST_RETRY_DELAY_MILLISECONDS` in
+ * `../email/worker.ts`), so the two retry policies in this application read the same way.
+ */
+export const BACKOFF_FIRST_DELAY_MILLISECONDS = 60 * 1000;
+
+/**
+ * How much longer each further failure makes the wait: five times, giving 1, 5 and 25 minutes. The
+ * email queue's `RETRY_DELAY_FACTOR` again, for the same reason. A cause that outlasts three tries
+ * in half an hour is one a person has to fix, such as a Tarif nobody has entered yet.
+ */
+export const BACKOFF_DELAY_FACTOR = 5;
+
+/**
+ * The longest a tick ever waits: sixty minutes, from the fourth failure on.
+ *
+ * The cap is what keeps the pause from hiding a fix. Once someone has fixed the cause (a Superuser
+ * entered the Tarif, say), the job catches up within the hour even if nobody presses "Jalankan
+ * sekarang", and a failing pair writes at most twenty-four rows a day instead of 2,880.
+ */
+export const BACKOFF_MAXIMUM_DELAY_MILLISECONDS = 60 * 60 * 1000;
+
+/**
+ * The number of failures at which the delay reaches `BACKOFF_MAXIMUM_DELAY_MILLISECONDS` (four,
+ * with the numbers above), derived rather than written down so that changing one constant cannot
+ * leave it wrong. It bounds how many runs `backoffEndsAt` needs to read.
+ */
+const FAILURES_UNTIL_MAXIMUM_DELAY = failuresUntilMaximumDelay();
+
 /** What one attempt at running a job came to. */
 export const JOB_OUTCOME = {
 	/** The job's function returned. This period will not be run again. */
 	succeeded: 'succeeded',
-	/** The job's function threw. The failure is on the run, and the period may be attempted again. */
+	/**
+	 * The job's function threw. The failure is on the run, and the period may be attempted again:
+	 * by a tick once its backoff has passed, by "Jalankan sekarang" at once.
+	 */
 	failed: 'failed',
 	/** Something else holds the lock for this period, or already succeeded at it. Nothing ran. */
 	skipped: 'skipped',
+	/**
+	 * The period failed recently and its backoff has not passed yet, so the tick did not try to claim
+	 * it. Nothing ran and nothing was written. Only a tick answers this, never `runJob`; `retryAt`
+	 * says when a tick will try again. Added by ticket #218.
+	 */
+	paused: 'paused',
 	/**
 	 * The database failed while the period was being claimed or the outcome recorded, and the one
 	 * retry did not get through either. Only a tick answers this; `runJob` throws instead. `error`
@@ -109,13 +188,15 @@ export const JOB_OUTCOME = {
 	interrupted: 'interrupted'
 } as const;
 
-/** One of the four things an attempt can come to. */
+/** One of the five things an attempt can come to. */
 export type JobOutcomeKind = (typeof JOB_OUTCOME)[keyof typeof JOB_OUTCOME];
 
 /** The steps of an attempt that can go wrong without the job's own function having thrown. */
 export const JOB_STEP = {
 	/** Asking the job's schedule which period the current instant falls in. */
 	schedule: 'schedule',
+	/** Reading the period's recent failures, to decide whether it is paused. Added by ticket #218. */
+	backoff: 'backoff',
 	/** Claiming that period in `job_runs`. */
 	claim: 'claim',
 	/** Recording on the run that the job succeeded. */
@@ -156,6 +237,8 @@ export interface JobOutcome {
 	readonly outcome: JobOutcomeKind;
 	/** Why it failed, when it did. */
 	readonly error?: string;
+	/** When a tick will try this period again, on a `paused` outcome and no other. */
+	readonly retryAt?: Date;
 }
 
 /** Everything one attempt needs. */
@@ -202,6 +285,14 @@ export interface JobSummary {
 	readonly currentPeriod: string;
 	/** Its most recent run, or `undefined` when it has never run. */
 	readonly lastRun: JobRun | undefined;
+	/** How many runs of this job failed for `currentPeriod`. Added by ticket #218. */
+	readonly failuresInCurrentPeriod: number;
+	/**
+	 * The earliest instant a tick will try `currentPeriod` again, or `undefined` when the pair is not
+	 * paused right now. The same reading the tick itself makes, so the screen and the tick agree.
+	 * Added by ticket #218.
+	 */
+	readonly nextAttemptAt: Date | undefined;
 }
 
 /**
@@ -256,13 +347,68 @@ export async function listJobsWithLastRun(
 	// One query per job. The registry holds a handful of jobs, not a table's worth, so a join
 	// against a lateral "latest run per name" would be more SQL than the screen is worth.
 	for (const job of options.registry.list()) {
+		const currentPeriod = job.schedule.periodFor(now);
+		const lastRun = await latestJobRun(options.db, job.name);
+		// A job only runs for the period it is in now, so when its newest run is for another period
+		// the current one has no runs at all, and there is nothing to count or to be paused by.
+		const ranThisPeriod = lastRun?.period === currentPeriod;
+		const retryAt = ranThisPeriod
+			? await backoffEndsAt(options.db, job.name, currentPeriod)
+			: undefined;
 		summaries.push({
 			name: job.name,
-			currentPeriod: job.schedule.periodFor(now),
-			lastRun: await latestJobRun(options.db, job.name)
+			currentPeriod,
+			lastRun,
+			failuresInCurrentPeriod: ranThisPeriod
+				? await countFailedRuns(options.db, job.name, currentPeriod)
+				: 0,
+			nextAttemptAt: retryAt && now < retryAt ? retryAt : undefined
 		});
 	}
 	return summaries;
+}
+
+/**
+ * How long a tick waits after the `failures`-th recorded failure of one job for one period, before
+ * it tries that period again. See `BACKOFF_FIRST_DELAY_MILLISECONDS` for the numbers.
+ *
+ * @param failures how many failed runs the pair has, at least one.
+ */
+export function backoffDelayMilliseconds(failures: number): number {
+	const grown = BACKOFF_FIRST_DELAY_MILLISECONDS * BACKOFF_DELAY_FACTOR ** (failures - 1);
+	return Math.min(grown, BACKOFF_MAXIMUM_DELAY_MILLISECONDS);
+}
+
+/**
+ * The instant the backoff on one job's period ends, or `undefined` when the pair is not backing
+ * off at all: its newest run is not a failure of this period (a new period, a run in flight, or a
+ * success, which the claim then skips).
+ *
+ * Reads at most `FAILURES_UNTIL_MAXIMUM_DELAY` runs, because that is where the delay stops growing:
+ * a pair that failed four times and one that failed four thousand times wait the same sixty
+ * minutes, so counting past four would change nothing. Every run of a pair but the newest is
+ * `failed` (a succeeded run holds the pair for good, and a running one is either the newest or has
+ * since been failed), so the leading failures of this period in `recentJobRuns` are its failures.
+ */
+async function backoffEndsAt(
+	db: Database,
+	jobName: string,
+	period: string
+): Promise<Date | undefined> {
+	const runs = await recentJobRuns(db, jobName, FAILURES_UNTIL_MAXIMUM_DELAY);
+	let failures = 0;
+	let lastFailedAt: Date | undefined;
+	for (const run of runs) {
+		if (run.period !== period || run.status !== JOB_RUN_STATUS.failed) {
+			break;
+		}
+		failures += 1;
+		lastFailedAt ??= run.finishedAt ?? run.startedAt;
+	}
+	if (lastFailedAt === undefined) {
+		return undefined;
+	}
+	return new Date(lastFailedAt.getTime() + backoffDelayMilliseconds(failures));
 }
 
 /**
@@ -519,6 +665,15 @@ async function runDueJob(
 	}
 
 	try {
+		// The backoff of ticket #218, read before the claim and never inside it: see "Backing off a
+		// period that keeps failing" at the top of this file.
+		const retryAt = await writeJobRun(
+			{ jobName: job.name, period, step: JOB_STEP.backoff, report },
+			() => backoffEndsAt(options.db, job.name, period)
+		);
+		if (retryAt && options.clock.now() < retryAt) {
+			return { jobName: job.name, period, outcome: JOB_OUTCOME.paused, retryAt };
+		}
 		return await attemptJob(
 			{
 				db: options.db,
@@ -598,8 +753,12 @@ async function attemptJob(options: RunJobOptions, period: string): Promise<JobOu
 	return { jobName: job.name, period, outcome: JOB_OUTCOME.succeeded };
 }
 
-/** The steps that write to `job_runs`, which are the only ones `writeJobRun` runs. */
-type JobWriteStep = typeof JOB_STEP.claim | typeof JOB_STEP.complete | typeof JOB_STEP.fail;
+/**
+ * The steps that touch `job_runs`, which are the only ones `writeJobRun` runs: the three writes,
+ * and since ticket #218 the one read the backoff makes before the claim.
+ */
+type JobWriteStep =
+	typeof JOB_STEP.backoff | typeof JOB_STEP.claim | typeof JOB_STEP.complete | typeof JOB_STEP.fail;
 
 /** Which write of which attempt `writeJobRun` is running, and where to report it. */
 interface JobWrite {
@@ -614,6 +773,11 @@ interface JobWrite {
  * failed because the connection did (`isConnectionFailure` in `../db`), never for any other
  * failure. Only three writes come through here: the claim, `completeJobRun` and `failJobRun`.
  * `job.run` never does, and is never repeated within a tick.
+ *
+ * Since ticket #218 one read comes through here as well: the backoff's `backoffEndsAt`, which is
+ * the first statement of a job's turn in a tick and so the one most likely to meet a connection the
+ * server ended while it sat idle. It is a `select`, so repeating it changes nothing, and a read
+ * that fails twice is an `interrupted` outcome like a claim that fails twice: nothing ran.
  *
  * ## Why the retry can never make a job run twice
  *
@@ -703,6 +867,10 @@ const STEP_DESCRIPTIONS: Readonly<Record<JobStep, { doing: string; consequence: 
 		doing: 'working out its period',
 		consequence: 'Nothing ran, and the next tick asks again.'
 	},
+	[JOB_STEP.backoff]: {
+		doing: 'reading its recent failures',
+		consequence: 'Nothing ran, and the next tick reads them again.'
+	},
 	[JOB_STEP.claim]: {
 		doing: 'claiming the period',
 		consequence: 'Nothing ran here, and a later tick claims the period again.'
@@ -743,10 +911,48 @@ function reportJobIncident(incident: JobIncident): void {
 	console.error(line);
 }
 
-/** The part of a failure worth keeping on the run: its message, shortened. */
+/** What stands between a failure's name and its message on the run: `NoDuesRateError: No dues…`. */
+const FAILURE_NAME_SEPARATOR = ': ';
+
+/**
+ * The part of a failure worth keeping on the run: its message, shortened, and since ticket #218
+ * led by the error's `name` when that is anything more specific than a plain `Error`.
+ *
+ * The name is there so that a screen can recognise a failure without a schema change and without
+ * reading the English message. `job_runs.error` is one text column and its class was lost before
+ * this; the name is the one part of an error that a service sets on purpose and never rewords
+ * (`NoDuesRateError` in `../services/dues/issuance.ts` declares its own). It leads the text, in
+ * the shape `Error.prototype.toString` gives, so shortening the message can never cut it off. A
+ * plain `Error` keeps its bare message, as every run recorded before this change does.
+ */
 function describeFailure(thrown: unknown): string {
-	const message = thrown instanceof Error ? thrown.message : String(thrown);
-	return message.slice(0, MAXIMUM_ERROR_LENGTH);
+	if (!(thrown instanceof Error)) {
+		return String(thrown).slice(0, MAXIMUM_ERROR_LENGTH);
+	}
+	const named = thrown.name !== '' && thrown.name !== 'Error';
+	const text = named ? `${thrown.name}${FAILURE_NAME_SEPARATOR}${thrown.message}` : thrown.message;
+	return text.slice(0, MAXIMUM_ERROR_LENGTH);
+}
+
+/**
+ * Whether a run's `error` was recorded for an error whose `name` is `name`: the reading side of
+ * `describeFailure`, for a screen that explains one kind of failure in its own words. Added by
+ * ticket #218 for `/admin/jobs`, which recognises a missing Tarif this way.
+ *
+ * A run recorded before ticket #218 carries no name and answers `false`, as does any failure that
+ * was a plain `Error`.
+ */
+export function isFailureNamed(error: string | null | undefined, name: string): boolean {
+	return error?.startsWith(`${name}${FAILURE_NAME_SEPARATOR}`) ?? false;
+}
+
+/** How many failures it takes for `backoffDelayMilliseconds` to reach its cap. */
+function failuresUntilMaximumDelay(): number {
+	let failures = 1;
+	while (backoffDelayMilliseconds(failures) < BACKOFF_MAXIMUM_DELAY_MILLISECONDS) {
+		failures += 1;
+	}
+	return failures;
 }
 
 // The front door: a spec registering a job needs `JobDefinition` and a schedule, and importing
