@@ -35,6 +35,22 @@
 # - 600 from creation on the VM. The remote shell sets umask 077 and noclobber, removes a stale
 #   .env.next, creates it fresh, checks that the end marker arrived, and only then renames it over
 #   .env. A cut connection leaves the previous .env as it was.
+#
+# Checking one answer without the wizard. Sourced instead of run, the script sets its shell options
+# and constants, defines its functions, and returns without calling main: nothing is asked, nothing
+# is read from .env.deploy, and nothing reaches the VM. The guard is the last line of this file. A
+# check reads the caller's `answer` and reports in the caller's `problem`, exactly as settle() uses
+# it, so a harness holding a fake value can do, from WSL at the root of the repository:
+#
+#   source scripts/setup-env.sh
+#   answer='postgres://u:fake#pw@host.example:5432/postgres'
+#   check_database_url
+#   # problem is empty when the value is accepted. encodable=1 means only the password stands in
+#   # the way, and encode_database_url_password then rewrites `answer` with it percent-encoded.
+#
+# Sourcing also switches errexit, nounset and pipefail on in the calling shell, and the constants
+# are readonly, so source it once per shell. Use fake values only: a harness is not the wizard, and
+# nothing there keeps a real password off the screen.
 
 if [ -z "${BASH_VERSION:-}" ]; then
 	echo 'Jalankan dengan bash, bukan sh: bash scripts/setup-env.sh' >&2
@@ -59,6 +75,8 @@ readonly SIZE_PATTERN='^([0-9]+[KMG]?|Infinity)$'
 readonly PORT_PATTERN='^[0-9]{1,5}$'
 readonly RELATIVE_PATH_PATTERN='^[A-Za-z0-9_][A-Za-z0-9_./-]*$'
 readonly PLAIN_WORD_PATTERN='^[A-Za-z0-9_@%+=:,./-]+$'
+# The host and optional port of a DATABASE_URL, between its userinfo and its path.
+readonly DB_HOST_PORT_PATTERN='^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:([0-9]{1,5}))?$'
 
 # Run on the VM by the SSH user's login shell. Both are constants: no value is ever part of a
 # command line, locally or on the VM.
@@ -387,13 +405,89 @@ check_text() {
 	esac
 }
 
+# Splits the DATABASE_URL in the caller's `answer` into the caller's url_scheme (up to and including
+# `://`), url_user, url_password and url_host_part (everything after the userinfo: host, port, path
+# and query). A password pasted from the Supabase dashboard may hold `@`, `:`, `/`, `?` or `#`, so
+# the split cannot follow URL syntax. Two rules make it possible anyway:
+# - the userinfo ends at the LAST `@`, because a password may hold `@` and the host, port, database
+#   name and query of a Supabase URL never do;
+# - the password starts after the FIRST `:` of the userinfo, because the user never holds one.
+# Without a `@` there is no userinfo, and without a `:` in the userinfo there is no password; both
+# leave url_password empty. check_database_url and encode_database_url_password both split this way.
+split_database_url() {
+	local rest userinfo
+	url_scheme="${answer%%://*}://"
+	rest=${answer#*://}
+	url_user=''
+	url_password=''
+	url_host_part=$rest
+	if [[ $rest == *@* ]]; then
+		userinfo=${rest%@*}
+		url_host_part=${rest##*@}
+		url_user=${userinfo%%:*}
+		if [[ $userinfo == *:* ]]; then
+			url_password=${userinfo#*:}
+		fi
+	fi
+}
+
+# True when the caller's url_host_part starts with a host name and an optional port 1 to 65535, then
+# ends or goes on with `/` or `?`. An empty host, as in `@/postgres`, is refused.
+database_url_host_parses() {
+	local host_port=${url_host_part%%[/?#]*} port
+	[[ $host_port =~ $DB_HOST_PORT_PATTERN ]] || return 1
+	port=${BASH_REMATCH[3]}
+	[[ -z $port ]] || ((10#$port >= 1 && 10#$port <= 65535))
+}
+
+# True when the caller's url_password holds only what a percent-encoded password can: the
+# unreserved characters A-Z a-z 0-9 - . _ ~ and %XX. Pattern matching rather than =~, so that no
+# copy of the password lands in BASH_REMATCH; the C locale keeps the ranges to ASCII and makes every
+# byte of a multibyte character count on its own.
+database_url_password_is_encoded() {
+	local LC_ALL=C rest=$url_password
+	rest=${rest//\%[0-9A-Fa-f][0-9A-Fa-f]/}
+	[[ $rest != *[!A-Za-z0-9._~-]* ]]
+}
+
+# Rewrites the DATABASE_URL in the caller's `answer` with its password percent-encoded, split as in
+# split_database_url. Every byte outside A-Z a-z 0-9 - . _ ~ becomes %XX, `%` included: this is only
+# offered for a password holding a character that no encoded password can hold, which means it was
+# pasted as it is, so a `%` in it is a literal percent sign. Neither value is printed; printf -v
+# writes each %XX into a variable, and its operand is one character behind a quote, which printf
+# reads as that character's code and never reports as an error.
+encode_database_url_password() {
+	local LC_ALL=C url_scheme url_user url_password url_host_part encoded='' char hex index
+	split_database_url
+	for ((index = 0; index < ${#url_password}; index++)); do
+		char=${url_password:index:1}
+		if [[ $char == [A-Za-z0-9._~-] ]]; then
+			encoded+=$char
+		else
+			printf -v hex '%%%02X' "'$char"
+			encoded+=$hex
+		fi
+	done
+	answer="$url_scheme$url_user:$encoded@$url_host_part"
+}
+
+# Also sets the caller's `encodable` to 1 when the password is the only reason the value does not
+# parse, which is when ask_value offers encode_database_url_password.
 check_database_url() {
+	local url_scheme url_user url_password url_host_part
+	encodable=0
+	split_database_url
 	if [[ -z $answer ]]; then
 		problem='wajib diisi.'
 	elif [[ $answer != postgres://* && $answer != postgresql://* ]]; then
 		problem='harus diawali postgres:// atau postgresql://.'
 	elif [[ $answer == *PROJECT_REF* || $answer == *:PASSWORD@* || $answer == *REGION* ]]; then
 		problem='masih memuat penanda contoh PROJECT_REF, PASSWORD, atau REGION dari .env.production.example.'
+	elif ! database_url_host_parses; then
+		problem='tidak terurai sebagai URL: sesudah @ terakhir harus ada nama host, boleh diikuti :port (1 sampai 65535), lalu /postgres.'
+	elif ! database_url_password_is_encoded; then
+		problem='tidak terurai sebagai URL: kata sandinya memuat karakter yang wajib di-percent-encode. Di dalam kata sandi, setiap karakter di luar A-Z a-z 0-9 - . _ ~ ditulis sebagai %XX, misalnya # menjadi %23, / menjadi %2F, ? menjadi %3F, dan @ menjadi %40.'
+		encodable=1
 	elif [[ $answer == *:6543/* ]]; then
 		problem='port 6543 adalah transaction pooler; aplikasi dan migrate memakai session pooler di port 5432.'
 	elif [[ $answer == *sslmode=require* && $answer != *uselibpqcompat=true* ]]; then
@@ -443,7 +537,8 @@ settle_email_from() {
 }
 
 # Turns the raw answer for $1 into the value to store, or says in `problem` why it cannot be one.
-# Reads and writes the caller's `answer`, `problem` and `note`; never puts a value in a message.
+# Reads and writes the caller's `answer`, `problem` and `note` (and, for DATABASE_URL, `encodable`);
+# never puts a value in a message.
 settle() {
 	local key=$1
 	problem=''
@@ -470,8 +565,26 @@ settle() {
 	fi
 }
 
+# Called when check_database_url set `encodable`: explains the problem, then offers to percent-encode
+# the password in the caller's `answer`. Returns 0 with the encoded URL in `answer` when the offer
+# is taken, 1 when the URL is to be typed again. Neither the pasted value nor the encoded one is
+# printed, and the reply to the offer is a fixed word, never a value.
+offer_password_encoding() {
+	local key=$1 reply
+	warn "$key $problem"
+	say '  Wizard bisa meng-encode kata sandi itu di sini. Nilai asli dan hasilnya tetap tidak ditampilkan.'
+	printf '  Ketik encode untuk meng-encode-nya, atau Enter untuk mengetik ulang URL: '
+	IFS= read -r reply || die "masukan berakhir sebelum $key terisi."
+	[[ -t 0 ]] || printf '\n'
+	if [[ $reply != encode ]]; then
+		return 1
+	fi
+	encode_database_url_password
+	note='diterima, kata sandinya di-percent-encode oleh wizard'
+}
+
 ask_value() {
-	local key=$1 answer='' problem='' note='' hidden=0
+	local key=$1 answer='' problem='' note='' hidden=0 encodable=0
 	case $kind in
 	database_url | generated_secret | smtp_pass) hidden=1 ;;
 	*) ;;
@@ -482,7 +595,14 @@ ask_value() {
 	while true; do
 		read_answer "$key" "$hidden"
 		note=''
+		encodable=0
 		settle "$key"
+		if ((encodable)); then
+			# Declined: the offer already said what is wrong, so ask again without repeating it.
+			offer_password_encoding "$key" || continue
+			# The encoded URL goes through every check again, the port and sslmode ones included.
+			settle "$key"
+		fi
 		if [[ -z $problem ]]; then
 			break
 		fi
@@ -658,4 +778,8 @@ main() {
 	finish
 }
 
-main "$@"
+# Run only when executed. Sourced, the script stops here with its functions defined; see "Checking
+# one answer without the wizard" at the top.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+	main "$@"
+fi

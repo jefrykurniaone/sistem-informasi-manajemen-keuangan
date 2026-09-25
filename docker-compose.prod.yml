@@ -7,14 +7,16 @@ name: komplek-prod
 services:
   # Applies pending migrations and exits. `app` is only started once this exits with status 0, so
   # new code never starts against a schema it does not match. Running it on every `up` is safe:
-  # drizzle-kit skips migrations already recorded.
+  # drizzle-kit skips migrations already recorded. `db:migrate` runs scripts/migrate-preflight.ts
+  # first, which connects with DATABASE_URL and, when that fails, logs a category and a code (never
+  # the URL) and exits 1 before drizzle-kit starts, since drizzle-kit swallows a URL parse error.
   migrate:
     image: ghcr.io/jefrykurniaone/sistem-informasi-manajemen-keuangan:${APP_TAG:-latest}
     command: bun run db:migrate
     restart: 'no'
-    # Only DATABASE_URL, not the whole of .env: drizzle.config.ts reads nothing else, and a one-shot
-    # job has no reason to hold the signing secrets. The image carries no .env (.dockerignore), so
-    # the value has to arrive from here.
+    # Only DATABASE_URL, not the whole of .env: drizzle.config.ts and scripts/migrate-preflight.ts
+    # read nothing else, and a one-shot job has no reason to hold the signing secrets. The image
+    # carries no .env (.dockerignore), so the value has to arrive from here.
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in .env}
     volumes:
