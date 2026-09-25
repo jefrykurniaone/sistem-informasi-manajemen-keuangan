@@ -184,11 +184,13 @@ export async function composeReportFigures(
 	period: string
 ): Promise<ReportFigures> {
 	const range = monthRange(period);
-	const [openingBalance, categoryBreakdown, dues] = await Promise.all([
-		openingBalanceOn(writer, range.from),
-		categoryLines(writer, range),
-		duesSummaryFor(writer, clock, period)
-	]);
+	// Sequential, not `Promise.all`: `writer` is the caller's own transaction client when publication
+	// calls this (see the doc comment above), and `pg`'s deprecation warning is exactly what firing
+	// more than one query at once on the same client does, removed outright in `pg@9`, per #231. The
+	// order here is the order the three used to run in, so the figures they produce do not change.
+	const openingBalance = await openingBalanceOn(writer, range.from);
+	const categoryBreakdown = await categoryLines(writer, range);
+	const dues = await duesSummaryFor(writer, clock, period);
 
 	const totalIncome = totalOfType(categoryBreakdown, CASH_CATEGORY_TYPE.income);
 	const totalExpense = totalOfType(categoryBreakdown, CASH_CATEGORY_TYPE.expense);
