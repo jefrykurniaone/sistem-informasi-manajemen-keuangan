@@ -299,26 +299,25 @@ jawaban dari percobaan yang berhasil, dan percobaan yang gagal tidak dicatat sam
 sesudah perubahan ini, baris `"msg":"EOF"` untuk `GET` atau `HEAD` hanya muncul bila ketiga
 percobaan gagal.
 
-**Apa yang dilakukan `keepalive off` di Caddyfile.** `transport http { keepalive off }` membuat
-Caddy membuka koneksi baru ke `app` untuk setiap permintaan dan tidak pernah memakai ulang
-koneksi. Bug Bun di atas hanya mengenai permintaan di koneksi yang dipakai ulang, jadi dengan blok
-ini bug itu tidak bisa terjadi untuk metode apa pun, termasuk `POST` yang tidak dikirim ulang oleh
-pengulangan. Biayanya satu koneksi TCP baru per permintaan di jaringan internal compose. Blok ini
-sementara. Sejak #223 image berjalan di Bun 1.4.2, yang sudah memuat perbaikan bug itu, tetapi
-`keepalive off` tetap terpasang sampai image baru itu di-deploy dan log caddy produksi terbukti
-bebas dari `"msg":"EOF"`. Sesudah itu blok ini dicabut lewat perubahan tersendiri. Pengulangannya
-tetap dipasang sebagai jaring pengaman.
+**Cabutnya `keepalive off` dari Caddyfile.** `transport http { keepalive off }` dipasang lewat PR
+#224 sebagai langkah sementara: dengan blok itu Caddy membuka koneksi baru ke `app` untuk setiap
+permintaan dan tidak pernah memakai ulang koneksi, sehingga bug Bun di atas, yang hanya mengenai
+permintaan di koneksi yang dipakai ulang, tidak bisa terjadi untuk metode apa pun, termasuk `POST`
+yang tidak dikirim ulang oleh pengulangan. Sejak #223 image berjalan di Bun 1.4.2, yang sudah
+memuat perbaikan bug itu (diperiksa read-only di VM 2026-09-25 pukul 14:41 WIB, dideploy pukul
+14:40 WIB). Blok `keepalive off` dicabut di #236, sesudah Bun 1.4.2 terbukti di produksi.
+Pengulangan `GET`/`HEAD` (`lb_retries 2` dan `lb_retry_match { method GET HEAD }`) tetap dipasang
+sebagai jaring pengaman.
 
 **Batasnya.**
 
-- `POST` dan metode lain tidak pernah dikirim ulang, karena aksi form tidak idempoten. Selama
-  `keepalive off` terpasang, aksi form tidak terkena bug ini. Tanpa blok itu, aksi form yang terkena
-  penutupan koneksi tetap dijawab 502, dan baris `"msg":"EOF"` dengan `"method":"POST"` tetap
-  muncul. Pada penyebab di atas aksinya tidak pernah dijalankan (Bun membuang permintaannya sebelum
-  sampai ke SvelteKit), jadi mengirim ulang form itu dengan tangan aman.
-- Pengulangan dan `keepalive off` menutupi gejala, tidak menghapus penyebab. Yang menghapusnya
-  adalah Bun 1.4.0 atau lebih baru di `Dockerfile`, dan `Dockerfile` kini memakai Bun 1.4.2
-  (#223).
+- `POST` dan metode lain tidak pernah dikirim ulang, karena aksi form tidak idempoten. Bug Bun di
+  atas sudah diperbaiki sejak image berjalan di Bun 1.4.2 (#223), jadi aksi form tidak lagi terkena
+  bug ini, dengan atau tanpa `keepalive off`. Baris `"msg":"EOF"` dengan `"method":"POST"` sesudah
+  ini menandakan penyebab lain, bukan bug Bun 1.3.14 di atas.
+- Pengulangan menutupi gejala, bukan menghapus penyebab; `keepalive off` melakukan hal yang sama
+  sebelum dicabut di #236. Yang menghapus penyebabnya adalah Bun 1.4.0 atau lebih baru di
+  `Dockerfile`, dan `Dockerfile` kini memakai Bun 1.4.2 (#223).
 - Permintaan yang koneksinya tidak bisa dibuka sama sekali, misalnya saat `app` sedang dimulai
   ulang, juga dikirim ulang oleh Caddy untuk metode apa pun, karena `app` belum menerimanya. Ketiga
   percobaan itu dikirim berturut-turut tanpa jeda, jadi selama `app` belum siap jawabannya tetap
