@@ -13,4 +13,9 @@ docs
 .env
 .env.*
 !.env.example
+# Kunci privat: tahap `build` di Dockerfile menyalin seluruh konteks (COPY . .), jadi kunci yang
+# kebetulan tersimpan di pohon kerja tidak boleh pernah ikut terkirim ke daemon Docker, pada
+# kedalaman berapa pun.
+**/*.pem
+**/*.key
 *.log
