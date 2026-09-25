@@ -1,7 +1,7 @@
 import { clearInterval, setInterval } from 'node:timers';
 import { recordAuditEntry } from '../audit';
 import { ACTION, requirePermission } from '../authz';
-import type { Database } from '../db';
+import { failureCode, isConnectionFailure, type Database } from '../db';
 import type { JobRun } from '../db/schema/scheduler';
 import type { Clock } from '../ports/clock';
 import { claimJobRun, completeJobRun, failJobRun, latestJobRun, pruneJobRuns } from './lock';
@@ -31,8 +31,13 @@ import { everyMinutesSchedule, JobRegistry, type JobDefinition } from './registr
  * 3. **A job that throws never propagates out of `runJob`.** The failure is recorded on the run and
  *    reported in the returned outcome. One failing job in a tick must not stop the jobs after it,
  *    the same rule `src/lib/server/email/worker.ts` follows for one failing email. What *does*
- *    propagate is a database failure while writing the outcome, because at that point nothing can
- *    be trusted to have been recorded at all.
+ *    propagate out of `runJob` is a database failure while claiming the period or writing the
+ *    outcome, once the single retry in `writeJobRun` has not got through either, because at that
+ *    point nothing can be trusted to have been recorded at all; a manual trigger shows it as the
+ *    error it is. **`runDueJobs` contains it**, since ticket #215: the failure is reported with the
+ *    job's name, its period, the step and the code, that job's outcome is `interrupted`, and the
+ *    next job in the tick is still tried. Before that, one lost connection ended the whole tick,
+ *    and every job after the failing one in name order waited for the next tick.
  * 4. **`applicationJobs` holds the scheduler's own housekeeping and nothing else.** The one job
  *    registered here is `jobRunPruneJob`, which trims `job_runs`: that table is this module's, the
  *    rule for what may be deleted from it is a rule about the lock, and no other owner exists to
@@ -63,6 +68,22 @@ import { everyMinutesSchedule, JobRegistry, type JobDefinition } from './registr
  * in, and a period nobody ticked during is never revisited — so the interval has to be shorter than
  * the shortest registered schedule's period, and ticking more often than that costs one refused
  * insert per job. See `DEFAULT_TICK_INTERVAL_MILLISECONDS`.
+ *
+ * ## When the database connection fails
+ *
+ * Added by ticket #215, after the Supabase pooler ended the scheduler's connections in production
+ * (`57P01`, "terminating connection due to administrator command") and each time the tick stopped at
+ * the claim that was on that connection. Three things now hold:
+ *
+ * - **An attempt's own writes to `job_runs` are retried once after a connection failure**: the
+ *   claim, the completion and the failure record, and nothing else. `job.run` is never repeated
+ *   within a tick. `writeJobRun` carries the argument for why the retry can never run a job twice.
+ * - **One job's failure stays with that job.** `runDueJob` is the step of a tick that deals with one
+ *   job for one period, and it catches whatever that job's attempt could not survive, so that the
+ *   jobs after it still run. It is also the place for any later rule about one job in one tick,
+ *   because it holds the job and its period.
+ * - **What is logged is the job, its period, the step and a code**, never a message: see
+ *   `failureCode` in `../db` for why a message is not safe to print.
  */
 
 /** How much of a failure's message is kept on the run. Matches the email worker's own limit. */
@@ -78,11 +99,54 @@ export const JOB_OUTCOME = {
 	/** The job's function threw. The failure is on the run, and the period may be attempted again. */
 	failed: 'failed',
 	/** Something else holds the lock for this period, or already succeeded at it. Nothing ran. */
-	skipped: 'skipped'
+	skipped: 'skipped',
+	/**
+	 * The database failed while the period was being claimed or the outcome recorded, and the one
+	 * retry did not get through either. Only a tick answers this; `runJob` throws instead. `error`
+	 * says which step and the code. Nothing ran when the claim failed; the job did run when recording
+	 * its outcome failed, and its run then stays `running` until the lease expires.
+	 */
+	interrupted: 'interrupted'
 } as const;
 
-/** One of the three things an attempt can come to. */
+/** One of the four things an attempt can come to. */
 export type JobOutcomeKind = (typeof JOB_OUTCOME)[keyof typeof JOB_OUTCOME];
+
+/** The steps of an attempt that can go wrong without the job's own function having thrown. */
+export const JOB_STEP = {
+	/** Asking the job's schedule which period the current instant falls in. */
+	schedule: 'schedule',
+	/** Claiming that period in `job_runs`. */
+	claim: 'claim',
+	/** Recording on the run that the job succeeded. */
+	complete: 'complete',
+	/** Recording on the run that the job threw. */
+	fail: 'fail'
+} as const;
+
+/** One of the steps in `JOB_STEP`. */
+export type JobStep = (typeof JOB_STEP)[keyof typeof JOB_STEP];
+
+/**
+ * Something that went wrong in one attempt other than the job throwing, which the run itself
+ * records: a step that failed, and whether it is about to be tried again.
+ */
+export interface JobIncident {
+	readonly jobName: string;
+	/** The period of the attempt, or `undefined` when working it out is what failed. */
+	readonly period: string | undefined;
+	readonly step: JobStep;
+	/** What went wrong, as `failureCode` in `../db` gives it: a code, never a message. */
+	readonly code: string;
+	/** `true` when the step is about to be tried once more, `false` when the attempt is given up. */
+	readonly retrying: boolean;
+}
+
+/**
+ * Where incidents go. Defaults to the server console; a test passes its own so that a deliberate
+ * failure is asserted on rather than printed.
+ */
+export type JobIncidentReporter = (incident: JobIncident) => void;
 
 /** What one attempt did, in enough detail for a screen to explain it. */
 export interface JobOutcome {
@@ -102,6 +166,8 @@ export interface RunJobOptions {
 	readonly job: JobDefinition;
 	/** How long this run's claim is honoured. Defaults to `DEFAULT_LEASE_MILLISECONDS`. */
 	readonly leaseMilliseconds?: number;
+	/** Where a write that is about to be retried is reported. Defaults to the server console. */
+	readonly onIncident?: JobIncidentReporter;
 }
 
 /** Everything one tick of the whole registry needs. */
@@ -110,6 +176,8 @@ export interface RunDueJobsOptions {
 	readonly clock: Clock;
 	readonly registry: JobRegistry;
 	readonly leaseMilliseconds?: number;
+	/** Where every incident of the tick is reported, retried or not. Defaults to the server console. */
+	readonly onIncident?: JobIncidentReporter;
 }
 
 /** Who is asking to see the jobs. */
@@ -141,30 +209,13 @@ export interface JobSummary {
  *
  * Never throws because the job threw: the failure is written to the run and returned. See the lock
  * module for why a claim that is refused is a `skipped` outcome rather than an error.
+ *
+ * @throws {Error} when claiming the period or recording its outcome failed and the one retry
+ *   `writeJobRun` allows did not get through either. Its message names the job, the period, the step
+ *   and the code; the database's own error is its `cause`.
  */
 export async function runJob(options: RunJobOptions): Promise<JobOutcome> {
-	const { db, clock, job } = options;
-	const period = job.schedule.periodFor(clock.now());
-
-	const claim = await claimJobRun(db, clock, {
-		jobName: job.name,
-		period,
-		leaseMilliseconds: options.leaseMilliseconds
-	});
-	if (!claim) {
-		return { jobName: job.name, period, outcome: JOB_OUTCOME.skipped };
-	}
-
-	try {
-		await job.run({ db, clock, period, startedAt: claim.startedAt });
-	} catch (thrown) {
-		const error = describeFailure(thrown);
-		await failJobRun(db, clock, claim.runId, error);
-		return { jobName: job.name, period, outcome: JOB_OUTCOME.failed, error };
-	}
-
-	await completeJobRun(db, clock, claim.runId);
-	return { jobName: job.name, period, outcome: JOB_OUTCOME.succeeded };
+	return attemptJob(options, options.job.schedule.periodFor(options.clock.now()));
 }
 
 /**
@@ -172,19 +223,19 @@ export async function runJob(options: RunJobOptions): Promise<JobOutcome> {
  * anything likes — a job whose period has already run answers `skipped`.
  *
  * The jobs run one after another rather than all at once, so that a slow job costs time rather than
- * a connection from the pool, and so that a failure is attributable to one job.
+ * a connection from the pool, and so that a failure is attributable to one job. A job whose attempt
+ * failed does not stop the ones after it: see `runDueJob`.
+ *
+ * @returns one outcome per job whose period could be worked out, in the registry's order.
  */
 export async function runDueJobs(options: RunDueJobsOptions): Promise<readonly JobOutcome[]> {
+	const report = options.onIncident ?? reportJobIncident;
 	const outcomes: JobOutcome[] = [];
 	for (const job of options.registry.list()) {
-		outcomes.push(
-			await runJob({
-				db: options.db,
-				clock: options.clock,
-				job,
-				leaseMilliseconds: options.leaseMilliseconds
-			})
-		);
+		const outcome = await runDueJob(job, options, report);
+		if (outcome) {
+			outcomes.push(outcome);
+		}
 	}
 	return outcomes;
 }
@@ -319,11 +370,14 @@ export interface StartJobSchedulerOptions {
 	readonly intervalMilliseconds?: number;
 	/**
 	 * Where a tick that could not be completed at all is reported. A job that merely threw never
-	 * reaches here — `runJob` records that on the run — so anything arriving is a database failure
-	 * while writing an outcome, which is worth a line in the server log. Defaults to
-	 * `console.error`; a test passes its own so that a deliberate failure is not printed.
+	 * reaches here, because `runJob` records that on the run, and since ticket #215 neither does a
+	 * database failure in one job's attempt, which `runDueJob` contains and reports through
+	 * `onIncident`. What is left is a defect in this module, which is worth a line in the server log.
+	 * Defaults to `console.error`; a test passes its own so that a deliberate failure is not printed.
 	 */
 	readonly onTickError?: (error: unknown) => void;
+	/** Where each tick's incidents are reported. See `RunDueJobsOptions.onIncident`. */
+	readonly onIncident?: JobIncidentReporter;
 }
 
 /** A running periodic trigger. */
@@ -395,7 +449,12 @@ export function startJobScheduler(options: StartJobSchedulerOptions): JobSchedul
 		}
 		ticking = true;
 		try {
-			await runDueJobs({ db: options.db, clock: options.clock, registry: options.registry });
+			await runDueJobs({
+				db: options.db,
+				clock: options.clock,
+				registry: options.registry,
+				onIncident: options.onIncident
+			});
 		} catch (error) {
 			report(error);
 		} finally {
@@ -433,9 +492,255 @@ export function stopJobScheduler(): void {
  * Where a tick that failed outright goes by default. There is no logger in this application yet,
  * and a tick nobody hears about is a queue that quietly stops draining, so the console the server
  * already writes its errors to is the honest place for it.
+ *
+ * By its code alone since ticket #215: the error itself was printed before, and a Drizzle query
+ * error prints the SQL text and every parameter value with it.
  */
 function reportTickFailure(error: unknown): void {
-	console.error('A scheduler tick could not be completed.', error);
+	console.error(`A scheduler tick could not be completed (${failureCode(error)}).`);
+}
+
+/**
+ * One job of one tick: works out its period, then attempts it, and turns whatever that attempt
+ * could not survive into an incident and an `interrupted` outcome rather than letting it end the
+ * tick. The jobs after this one in the registry are tried whatever happens here.
+ *
+ * @returns the outcome, or `undefined` when the job's schedule could not say which period it is in,
+ *   in which case there was nothing to attempt and only the incident is reported.
+ */
+async function runDueJob(
+	job: JobDefinition,
+	options: RunDueJobsOptions,
+	report: JobIncidentReporter
+): Promise<JobOutcome | undefined> {
+	const period = periodOrReport(job, options.clock, report);
+	if (period === undefined) {
+		return undefined;
+	}
+
+	try {
+		return await attemptJob(
+			{
+				db: options.db,
+				clock: options.clock,
+				job,
+				leaseMilliseconds: options.leaseMilliseconds,
+				onIncident: report
+			},
+			period
+		);
+	} catch (error) {
+		// `attemptJob` catches everything the job throws and sends every write through
+		// `writeJobRun`, so anything else reaching here is a defect in this module; it is left to end
+		// the tick and reach `onTickError` rather than be filed under a step it did not happen in.
+		if (!(error instanceof JobWriteError)) {
+			throw error;
+		}
+		report(error.incident);
+		return {
+			jobName: job.name,
+			period,
+			outcome: JOB_OUTCOME.interrupted,
+			error: describeIncident(error.incident)
+		};
+	}
+}
+
+/** The period `job` is in now, or `undefined` after reporting that its schedule threw. */
+function periodOrReport(
+	job: JobDefinition,
+	clock: Clock,
+	report: JobIncidentReporter
+): string | undefined {
+	try {
+		return job.schedule.periodFor(clock.now());
+	} catch (error) {
+		report({
+			jobName: job.name,
+			period: undefined,
+			step: JOB_STEP.schedule,
+			code: failureCode(error),
+			retrying: false
+		});
+		return undefined;
+	}
+}
+
+/**
+ * `runJob` for a period already worked out, so that `runDueJob` knows the period of an attempt that
+ * fails. Every write goes through `writeJobRun`; the job's own function is called once, outside it.
+ */
+async function attemptJob(options: RunJobOptions, period: string): Promise<JobOutcome> {
+	const { db, clock, job } = options;
+	const report = options.onIncident ?? reportJobIncident;
+	const writeAt = (step: JobWriteStep): JobWrite => ({ jobName: job.name, period, step, report });
+
+	const claim = await writeJobRun(writeAt(JOB_STEP.claim), () =>
+		claimJobRun(db, clock, {
+			jobName: job.name,
+			period,
+			leaseMilliseconds: options.leaseMilliseconds
+		})
+	);
+	if (!claim) {
+		return { jobName: job.name, period, outcome: JOB_OUTCOME.skipped };
+	}
+
+	try {
+		await job.run({ db, clock, period, startedAt: claim.startedAt });
+	} catch (thrown) {
+		const error = describeFailure(thrown);
+		await writeJobRun(writeAt(JOB_STEP.fail), () => failJobRun(db, clock, claim.runId, error));
+		return { jobName: job.name, period, outcome: JOB_OUTCOME.failed, error };
+	}
+
+	await writeJobRun(writeAt(JOB_STEP.complete), () => completeJobRun(db, clock, claim.runId));
+	return { jobName: job.name, period, outcome: JOB_OUTCOME.succeeded };
+}
+
+/** The steps that write to `job_runs`, which are the only ones `writeJobRun` runs. */
+type JobWriteStep = typeof JOB_STEP.claim | typeof JOB_STEP.complete | typeof JOB_STEP.fail;
+
+/** Which write of which attempt `writeJobRun` is running, and where to report it. */
+interface JobWrite {
+	readonly jobName: string;
+	readonly period: string;
+	readonly step: JobWriteStep;
+	readonly report: JobIncidentReporter;
+}
+
+/**
+ * Runs one of an attempt's writes to `job_runs`, and runs it exactly once more when the first try
+ * failed because the connection did (`isConnectionFailure` in `../db`), never for any other
+ * failure. Only three writes come through here: the claim, `completeJobRun` and `failJobRun`.
+ * `job.run` never does, and is never repeated within a tick.
+ *
+ * ## Why the retry can never make a job run twice
+ *
+ * A connection failure leaves it unknown whether the statement took effect: the server may have
+ * committed it and lost the connection before the answer reached this process. The retry is safe
+ * for each of the three writes either way.
+ *
+ * - **The claim** is `claimJobRun`, whose deciding statement is an `insert … on conflict do nothing`
+ *   that the partial unique index `job_runs_claim_unique` rules on (see `./lock.ts`). If the first
+ *   try did not commit, the retry is an ordinary claim. If it did commit, this process holds a
+ *   `running` row it was never told about: the retried insert conflicts with that very row and
+ *   answers nothing, and the attempt is `skipped` without the job running. Nothing then holds that
+ *   row but its lease, so once `DEFAULT_LEASE_MILLISECONDS` (fifteen minutes) has passed, a later
+ *   claim takes it over as abandoned and runs the period. The worst case is a period run up to
+ *   fifteen minutes late, never one run twice: the job only runs after a claim that returned a row,
+ *   and the index lets one claim per period hold it at a time. The takeover inside `claimJobRun` is
+ *   safe to repeat for the same reason: an expiry that committed has already moved the row out of
+ *   the index, so the retry's insert simply succeeds.
+ * - **`completeJobRun` and `failJobRun`** update one row by its id, and only while it is still
+ *   `running`. If the first try committed, the row is no longer `running`, so the retry matches
+ *   nothing and changes nothing; it cannot overwrite a later outcome, nor the takeover of a run
+ *   whose lease expired.
+ *
+ * What the retry narrows but cannot remove: a completion that fails twice leaves the run `running`,
+ * and once its lease expires its period is taken over and run a second time. That was already the
+ * cost of a process dying between running a job and recording it (see `DEFAULT_LEASE_MILLISECONDS`),
+ * and the jobs registered today are idempotent against it on their own: issuance skips a Unit whose
+ * Tagihan for the Periode exists (`invoices_unit_id_period_unique`, through `issueInvoice` in
+ * `../services/dues/invoice.ts`), the monthly report reads `email_queue` before queuing a Periode
+ * for an address (`../services/report/notification.ts`), and the email drain and the history prune
+ * are safe to repeat. The retry makes that case rarer; it does not create it.
+ *
+ * One retry, straight away, rather than a loop or a delay: `pg-pool` drops a connection whose query
+ * failed, so the retry goes out on a new one, which is all it takes when one session was ended. A
+ * failure that outlasts that is the next tick's to retry, thirty seconds later, rather than
+ * something to hold this tick up for.
+ *
+ * @throws {JobWriteError} when the write failed for good, carrying the incident to report.
+ */
+async function writeJobRun<T>(write: JobWrite, statement: () => Promise<T>): Promise<T> {
+	try {
+		return await statement();
+	} catch (error) {
+		if (!isConnectionFailure(error)) {
+			throw new JobWriteError(write, error);
+		}
+		write.report(incidentOf(write, error, true));
+	}
+
+	try {
+		return await statement();
+	} catch (error) {
+		throw new JobWriteError(write, error);
+	}
+}
+
+/**
+ * A write to `job_runs` that failed for good. Its message is `describeIncident`'s, so it names the
+ * job, the period, the step and the code and nothing else; the database's error is its `cause`.
+ */
+class JobWriteError extends Error {
+	/** What `runDueJob` reports for it. */
+	readonly incident: JobIncident;
+
+	constructor(write: JobWrite, cause: unknown) {
+		const incident = incidentOf(write, cause, false);
+		super(describeIncident(incident), { cause });
+		this.name = 'JobWriteError';
+		this.incident = incident;
+	}
+}
+
+/** The incident for one failed try of a write. */
+function incidentOf(write: JobWrite, error: unknown, retrying: boolean): JobIncident {
+	return {
+		jobName: write.jobName,
+		period: write.period,
+		step: write.step,
+		code: failureCode(error),
+		retrying
+	};
+}
+
+/** What each step was doing, and what it means for the period when it fails for good. */
+const STEP_DESCRIPTIONS: Readonly<Record<JobStep, { doing: string; consequence: string }>> = {
+	[JOB_STEP.schedule]: {
+		doing: 'working out its period',
+		consequence: 'Nothing ran, and the next tick asks again.'
+	},
+	[JOB_STEP.claim]: {
+		doing: 'claiming the period',
+		consequence: 'Nothing ran here, and a later tick claims the period again.'
+	},
+	[JOB_STEP.complete]: {
+		doing: 'recording that the job succeeded',
+		consequence:
+			'The job ran; its run stays running until the lease expires, and the period may then run again.'
+	},
+	[JOB_STEP.fail]: {
+		doing: 'recording that the job failed',
+		consequence:
+			'Its run stays running until the lease expires, and the period is then tried again.'
+	}
+};
+
+/** One incident as a sentence for the server log and for an `interrupted` outcome's `error`. */
+function describeIncident(incident: JobIncident): string {
+	const { doing, consequence } = STEP_DESCRIPTIONS[incident.step];
+	const subject =
+		incident.period === undefined
+			? `Job "${incident.jobName}"`
+			: `Job "${incident.jobName}" for period ${incident.period}`;
+	const next = incident.retrying ? 'Retrying once.' : consequence;
+	return `${subject}: ${doing} failed (${incident.code}). ${next}`;
+}
+
+/**
+ * Where an incident goes by default: the console, for the reason `reportTickFailure` gives. A write
+ * about to be retried is a warning, because it usually gets through; one given up on is an error.
+ */
+function reportJobIncident(incident: JobIncident): void {
+	const line = `Scheduler: ${describeIncident(incident)}`;
+	if (incident.retrying) {
+		console.warn(line);
+		return;
+	}
+	console.error(line);
 }
 
 /** The part of a failure worth keeping on the run: its message, shortened. */

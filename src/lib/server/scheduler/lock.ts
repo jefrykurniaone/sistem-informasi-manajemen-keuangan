@@ -44,6 +44,12 @@ import type { Clock } from '../ports/clock';
  *   lock the `update` takes — under READ COMMITTED the loser waits, then re-evaluates its `where`
  *   against the *updated* row, finds `status = 'failed'`, and matches nothing. Exactly one takeover
  *   happens, and which of them then gets the new run is decided by the unique index again.
+ * - **A claim that committed but whose answer never arrived**, because the connection failed after
+ *   the server had committed the insert. The claimer was never told it holds the row, so the row is
+ *   in the position of the process that died mid-run above: it holds the slot until its lease has
+ *   passed, and is then taken over. `writeJobRun` in `./index.ts` retries a claim after exactly this
+ *   kind of failure; the retry meets this row in the index and skips. The worst case is a period run
+ *   late, never a period run twice. Added by ticket #215.
  * - **Nothing holds a database transaction open for the length of a job.** The claim commits by
  *   itself, the job runs outside any transaction, and its outcome is a second short statement. The
  *   opposite arrangement — running the work inside a transaction that holds a `select … for update`
@@ -70,6 +76,10 @@ import type { Clock } from '../ports/clock';
  * lease costs in the worst case is one repeated execution — a job that is still running when its
  * lease expires can have its period claimed by a second one — which is why it is generously long
  * and why `completeJobRun` refuses to write an outcome onto a run that was taken over.
+ *
+ * It is also how long a period waits when its claim committed but the connection failed before the
+ * answer arrived, and how long a run whose outcome could not be written stays `running`. See
+ * `writeJobRun` in `./index.ts`.
  */
 export const DEFAULT_LEASE_MILLISECONDS = 15 * 60 * 1000;
 
@@ -142,6 +152,11 @@ export interface JobClaimRequest {
  *   transaction would be holding the lock for as long as that transaction lives.
  * @returns the claim, or `undefined` when the pair is already held — by a run still going, or by
  *   one that has already succeeded. A held lock is a reason to skip, never an error.
+ *
+ * Safe to call again after a call whose answer was lost with its connection. Every statement in it
+ * is decided by the unique index or by the row's own status, so repeating one that had already
+ * taken effect either finds the pair held and answers `undefined`, or finds an expiry already done
+ * and claims the freed pair. `writeJobRun` in `./index.ts` relies on this.
  */
 export async function claimJobRun(
 	db: Database,
@@ -170,6 +185,10 @@ export async function claimJobRun(
  * Refuses to touch a row that is no longer `running` — a run whose lease expired and was taken over
  * is already `failed`, and letting a late finisher write `succeeded` over that would claim a lock
  * that a second run is holding.
+ *
+ * That same condition makes it idempotent: once one call has taken effect the row is no longer
+ * `running`, so a second call changes nothing. `writeJobRun` in `./index.ts` relies on this when it
+ * repeats the call after a lost connection.
  */
 export async function completeJobRun(db: Database, clock: Clock, runId: string): Promise<void> {
 	await db
@@ -182,7 +201,8 @@ export async function completeJobRun(db: Database, clock: Clock, runId: string):
  * Records that a run failed, and releases its lock in the same statement — `failed` is outside the
  * partial unique index, so writing it frees the pair for another attempt.
  *
- * Refuses a row that is no longer `running`, for the same reason `completeJobRun` does.
+ * Refuses a row that is no longer `running`, for the same reason `completeJobRun` does, and is
+ * idempotent for the same reason too.
  */
 export async function failJobRun(
 	db: Database,
