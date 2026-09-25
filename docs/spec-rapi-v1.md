@@ -7,11 +7,20 @@
 | Peta eksekusi | [#216](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/216) |
 | Disalin pada | 2026-09-24 |
 | Diamandemen | 2026-09-24: #218 masuk run, dan waktu WITA dikoreksi menjadi WIB |
-| Lintasan penutup | belum |
+| Lintasan penutup | 2026-09-25, sesudah Gelombang 4 (`e7bc418`) |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
 item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
+
+Lintasan penutup menambahkan penanda *Sesudah run* di bawah garis pada setiap klaim yang dibalik
+atau diubah bentuknya oleh tiket run ini. Tidak ada teks yang dihapus. Klaim yang ditandai:
+
+- penyebab 502 `EOF` yang "belum diketahui" (#213);
+- `<main>` yang mungkin butuh lebar minimum nol pada pembungkus shell (#186);
+- skrip pemeriksaan awal `migrate` yang "dibundel" seperti `superuser:grant` (#202);
+- pola `*.pem` dan `*.key` di `.dockerignore` (#194);
+- periode dan jam yang "diformat menurut locale" di halaman Pekerjaan terjadwal (#218).
 
 ---
 ## Problem statement
@@ -19,6 +28,8 @@ item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan 
 Run `uji-v1` meninggalkan delapan temuan di luar cakupannya. Diagnosis salah satunya menemukan yang kesembilan, dan diagnosis yang kesembilan menemukan yang kesepuluh. Semuanya kecil, tetapi masing-masing terasa oleh orang yang memakai aplikasi atau yang men-deploy-nya.
 
 **Galat 500 di produksi.** Pengguna yang kembali ke aplikasi sesudah jeda kadang mendapat layar polos "500 Internal Error". Pemilik mengalaminya dua kali: sesudah memverifikasi email (2026-09-23 16:36 WIB), dan lagi pada 2026-09-24 08:52 WIB. Log Caddy mencatat satu kejadian lagi dari sebuah ponsel Android pada 2026-09-23 23:27 WIB. Aplikasinya sendiri tidak pernah galat, dan container-nya tidak restart. Caddy mendapat `EOF` saat meneruskan permintaan `GET` ke aplikasi (chunk JavaScript dan `__data.json`), dalam 0,6 sampai 30 milidetik, lalu membalas 502. SvelteKit di peramban kemudian gagal memuat modul dan menampilkan halaman galat bawaannya. Penyebab di sisi aplikasi belum diketahui. Diukur 2026-09-24 di container produksi: aplikasi tidak menutup koneksi keep-alive yang menganggur dalam 150 detik, dan permintaan kedua di koneksi yang sama sesudah jeda sampai 110 detik selalu dijawab. Jadi ini bukan balapan batas waktu menganggur yang sederhana.
+
+> *Sesudah run (2026-09-25):* penyebabnya ditemukan di #213, yaitu bug `node:http` di Bun 1.3.14, bukan konfigurasi Caddy atau compose. Kenaikan versi Bun diajukan sebagai #223, di luar run. Sampai #223 dikerjakan, `transport http { keepalive off }` di Caddyfile dipasang sebagai langkah sementara lewat PR #224, juga di luar run.
 
 **Halaman `(app)` meluap di telepon.** Buku kas meluap mendatar pada lebar 390 piksel, sehingga seluruh halaman, termasuk judulnya, bisa digeser ke samping. Tabelnya sebenarnya sudah dibungkus wadah yang menggulir sendiri. Yang melebar adalah wadah utama halaman: ia rata tengah tanpa lebar pasti, jadi lebarnya mengikuti isi. Pola yang sama ada di halaman lain yang bertabel lebar (Laporan Bulanan admin dan warga, Impor), yang meluap begitu datanya cukup lebar.
 
@@ -111,6 +122,8 @@ Job yang gagal dicoba lagi dengan jeda yang makin panjang, bukan setiap 30 detik
 
 **Lebar halaman `(app)`.** Wadah utama halaman yang rata tengah mendapat lebar penuh sebagai lebar pasti, dibatasi oleh lebar maksimum yang sudah ada. Ini sudah menjadi pola di sebagian halaman `(app)` dan kini berlaku di semuanya, termasuk halaman yang hari ini belum meluap. Pembungkus tabel yang menggulir sendiri tetap dipakai, dan komentar yang keliru menyatakan bahwa ia sudah cukup dibetulkan. Kalau pengukuran menunjukkan pembungkus shell ikut melebar, pembungkus itu diberi lebar minimum nol lewat kelas di layout `(app)`, tidak di komponen shadcn.
 
+> *Sesudah run (2026-09-25):* pengukuran di #186 menunjukkan pembungkus shell tidak ikut melebar. `min-w-0` tidak ditambahkan, dan `src/routes/(app)/+layout.svelte` tidak disentuh.
+
 **Satu landmark utama.** Pembungkus shell sidebar (komponen shadcn yang disalin ke repositori) me-render elemen non-landmark. Setiap halaman tetap memegang `<main>`-nya sendiri, sama seperti pola yang sudah dicatat di layout `(public)`.
 
 **Teks `(auth)` lewat paraglide.** Setiap teks terlihat di kelima halaman `(auth)` (masuk, daftar, lupa kata sandi, atur kata sandi, verifikasi) pindah ke katalog, dengan kunci baru di `id` dan `en`. Teks Indonesia tidak diubah kata per kata, sehingga e2e yang ada, yang berjalan di locale dasar `id`, tetap lulus tanpa diubah. Kunci baru mengikuti penamaan yang sudah ada per halaman (`login_*`, `register_*` dan seterusnya).
@@ -123,7 +136,11 @@ Job yang gagal dicoba lagi dengan jeda yang makin panjang, bukan setiap 30 detik
 
 **Pemeriksaan awal `migrate`.** Sebelum `drizzle-kit migrate`, sebuah skrip kecil mengurai `DATABASE_URL` dan mencoba tersambung dengan `pg`. Bila gagal, ia mencetak kategori dan kode galatnya (URL tidak terurai, autentikasi, TLS, host tidak terjangkau), lalu keluar dengan status bukan nol. URL dan kata sandi tidak pernah dicetak. Objek galat tidak dicetak utuh, karena galat penguraian URL dari Node membawa masukan aslinya, termasuk kata sandi. Skrip ini dibundel ke image dengan cara yang sama seperti `superuser:grant`, karena image produksi tidak memuat `src/`.
 
+> *Sesudah run (2026-09-25):* #202 tidak membundel skrip ini. `scripts/migrate-preflight.ts` disalin ke image apa adanya, dan script `db:migrate` menjadi `bun scripts/migrate-preflight.ts && drizzle-kit migrate`, jadi perintah layanan `migrate` tidak berubah. Alasannya ada di komentar penutup #202.
+
 **Konteks build.** `.dockerignore` menyaring `*.pem` dan `*.key`, dan `.gitignore` ikut menyaring `*.key`. `.env` dan `.env.*` sudah tersaring.
+
+> *Sesudah run (2026-09-25):* pola di `.dockerignore` ditulis `**/*.pem` dan `**/*.key` (#194). `.dockerignore` mencocokkan pola terhadap akar konteks, jadi pola tanpa awalan tidak menyaring kunci di subdirektori.
 
 **Penjadwal dan pool di bawah koneksi yang diputus.**
 - Pool mendapat penangan galat yang mencatat kode tanpa membuat proses crash, batas waktu koneksi, keep-alive TCP, dan batas waktu query yang lebih panjang daripada query sah terpanjang.
@@ -141,6 +158,8 @@ Job yang gagal dicoba lagi dengan jeda yang makin panjang, bukan setiap 30 detik
 - Semua teks lewat paraglide, dalam `id` dan `en`.
 - Setiap job tampil dengan nama yang dibaca manusia dan satu kalimat fungsinya. Identifier-nya tetap tampil kecil, karena itu yang muncul di log.
 - Periode dan jam diformat menurut locale, dalam WIB (zona kompleks).
+
+  > *Sesudah run (2026-09-25):* hanya nama bulan pada periode bulanan yang mengikuti bahasa ("September 2026"). Tanggal dan jam memakai `formatDay` dan `formatDateTime` dari `src/lib/time.ts`, yang selalu berformat `id-ID` karena hanya locale itu yang mencetak `WIB` (keputusan 2 di berkas itu). Di `en` jam tampil sebagai "25 Sep 2026, 12.57 WIB" (#218).
 - Bila run terakhir di periode berjalan gagal, halaman menyebut berapa kali pasangan itu gagal dan kapan paling cepat ia dicoba lagi.
 - Galat Tarif dikenali dan kalimatnya disusun saat render dari periode run-nya, jadi ia mengikuti bahasa pengguna. Kalimat itu mengarahkan ke pengisian Tarif, lalu "Jalankan sekarang".
 - Galat lain tampil sebagai teks aslinya di bawah label yang diterjemahkan. Menerjemahkannya butuh kode galat tersimpan, dan itu perubahan skema.
