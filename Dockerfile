@@ -41,10 +41,10 @@ RUN bun build scripts/grant-superuser.ts --target bun \
 RUN bun run build
 
 # Production image. adapter-node emits build/index.js, which Bun runs directly.
-# The migrations and drizzle.config.ts are copied as well, so the `migrate` service in
-# docker-compose.prod.yml runs `bun run db:migrate` from this same image instead of from a second
-# one that could drift from it. drizzle-kit is a dev dependency, and it is present because the
-# deps stage installs dev dependencies too.
+# The migrations, drizzle.config.ts and scripts/migrate-preflight.ts are copied as well, so the
+# `migrate` service in docker-compose.prod.yml runs `bun run db:migrate` from this same image
+# instead of from a second one that could drift from it. drizzle-kit is a dev dependency, and it is
+# present because the deps stage installs dev dependencies too.
 FROM base AS production
 ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
@@ -56,5 +56,10 @@ COPY drizzle ./drizzle
 # .ts in a working tree and this .js in the image, so `bun run superuser:grant <email>` is the same
 # command in both places.
 COPY --from=build /app/dist/grant-superuser.js ./scripts/grant-superuser.js
+# `bun run db:migrate` runs this check before drizzle-kit, so that a DATABASE_URL which does not
+# parse or connect is named instead of swallowed (#202). Copied as it is rather than bundled like
+# grant-superuser: it imports nothing but pg, which node_modules above already carries, Bun runs
+# the .ts directly, and the path is the same as in a working tree. See the file's own comment.
+COPY scripts/migrate-preflight.ts ./scripts/migrate-preflight.ts
 EXPOSE 3000
 CMD ["bun", "./build/index.js"]

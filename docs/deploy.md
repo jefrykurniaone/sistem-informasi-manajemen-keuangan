@@ -14,6 +14,9 @@ tidak dipakai oleh `scripts/deploy.sh`, dan token `gh` di Windows biasanya tidak
   (`restart: unless-stopped`).
 - **migrate**: menjalankan `bun run db:migrate` sekali lalu keluar; `app` baru mulai setelah
   `migrate` keluar dengan kode 0 (`depends_on: condition: service_completed_successfully`).
+  `db:migrate` lebih dulu menjalankan `scripts/migrate-preflight.ts`, yang tersambung ke basis data
+  dengan `DATABASE_URL` dan, bila gagal, mencetak penyebabnya sebelum `drizzle-kit` dimulai (lihat
+  bagian 3).
 - **Basis data**: Supabase, dihubungi lewat **session pooler** (port 5432, bukan transaction pooler
   6543) lewat `DATABASE_URL`. Tidak ada service basis data di compose produksi.
 - **Registry**: GitHub Container Registry (GHCR), paket publik supaya VM menarik image tanpa masuk.
@@ -54,9 +57,13 @@ harus ada sebagai berkas `certs/supabase-ca.crt` di server, di sebelah `docker-c
    Connection string, mode Session) dan unduh sertifikat CA-nya (Database settings, SSL
    Configuration). **Kata sandi di dalam URL itu harus di-percent-encode**: setiap karakter di luar
    `A-Z a-z 0-9 - . _ ~` ditulis sebagai kodenya, misalnya `#` menjadi `%23`, `/` menjadi `%2F`, `?`
-   menjadi `%3F`, dan `@` menjadi `%40`. Cara yang lebih sederhana: pilih kata sandi basis data
-   Supabase yang hanya berisi huruf dan angka. Tanpa itu `DATABASE_URL` tidak terbaca sebagai URL,
-   dan `migrate` keluar dengan kode 1 tanpa pesan galat apa pun (lihat bagian 3).
+   menjadi `%3F`, dan `@` menjadi `%40`. Wizard di langkah 5 memeriksa aturan ini dan bisa
+   meng-encode kata sandinya sendiri, jadi URL dari dasbor boleh ditempelkan apa adanya. Cara yang
+   lebih sederhana tetap berlaku: pilih kata sandi basis data Supabase yang hanya berisi huruf dan
+   angka. Satu hal yang tidak bisa dikenali wizard: kata sandi yang memuat `%` diikuti dua digit
+   heksadesimal, misalnya `%41`, dianggap sudah di-encode dan dibaca sebagai karakter lain. Tulis
+   `%` seperti itu sebagai `%25`; bila terlewat, `migrate` menyebut autentikasi yang ditolak
+   (`28P01`, lihat bagian 3).
 3. Jalankan `scripts/bootstrap-vm.sh` di VM lewat SSH, dari WSL di akar repositori:
 
    ```bash
@@ -86,9 +93,22 @@ harus ada sebagai berkas `certs/supabase-ca.crt` di server, di sebelah `docker-c
    `/opt/komplek/.env` di VM (mode 600) dan menyalin `docker-compose.prod.yml`, `Caddyfile`, dan
    sertifikat CA ke sana lewat `scp`. Tidak ada nilai yang ditampilkan kembali di layar. Jalankan
    `DRY_RUN=1 bash scripts/setup-env.sh` untuk melihat pertanyaan dan perintah yang akan dijalankan
-   tanpa mengirim apa pun ke VM. Wizard menulis `DATABASE_URL` persis seperti yang ditempelkan dan
-   tidak memeriksa apakah ia terbaca sebagai URL, jadi tempelkan URL yang kata sandinya sudah
-   di-percent-encode seperti pada langkah 2.
+   tanpa mengirim apa pun ke VM.
+
+   Wizard memeriksa bahwa `DATABASE_URL` terurai sebagai URL, di samping pemeriksaan skema,
+   penanda contoh, port 6543, dan `sslmode`. Userinfo dianggap berakhir di `@` **terakhir**, dan
+   kata sandi dimulai sesudah `:` pertama sesudah skema, sehingga kata sandi yang memuat `@`, `/`,
+   `?`, atau `#` tetap bisa dipisahkan. Sesudah `@` terakhir harus ada nama host, boleh diikuti
+   `:port`. Bila kata sandinya memuat karakter di luar `A-Z a-z 0-9 - . _ ~` yang belum ditulis
+   sebagai `%XX`, wizard menjelaskan masalahnya tanpa menampilkan nilainya, lalu menawarkan:
+
+   ```text
+   Ketik encode untuk meng-encode-nya, atau Enter untuk mengetik ulang URL:
+   ```
+
+   Dengan `encode`, wizard meng-encode setiap karakter kata sandi di luar himpunan itu, termasuk
+   `%`, lalu memeriksa URL hasilnya sekali lagi. Nilai asli dan hasil encode tidak pernah
+   ditampilkan. Dengan Enter, URL diketik ulang dari awal.
 6. Ini baru bisa dilakukan setelah push image pertama, yaitu setelah menjalankan
    `scripts/deploy.sh` di bagian 3 untuk pertama kali: jadikan paket GHCR
    `sistem-informasi-manajemen-keuangan` publik lewat GitHub, Packages, Package settings, Change
@@ -152,20 +172,31 @@ ssh -i ~/.ssh/<nama-kunci>.pem <user>@<ip-statis> 'cd /opt/komplek && docker com
 ```
 
 Bila `migrate` gagal, deploy berhenti sebelum `app` pernah dijalankan dengan skema yang tidak
-cocok; log `migrate` di atas menunjukkan galat migrasinya. Satu pengecualian: bila `DATABASE_URL`
-tidak terbaca sebagai URL, biasanya karena kata sandi Supabase memuat karakter yang belum
-di-percent-encode (bagian 2 langkah 2), `drizzle-kit` menelan galat `ERR_INVALID_URL` dan log
-`migrate` berakhir tanpa penjelasan:
+cocok, di langkah `up -d --remove-orphans` dengan `migrate keluar dengan kode 1.`; log `migrate` di
+atas menunjukkan penyebabnya.
 
-```text
-Using 'pg' driver for database querying
-error: script "db:migrate" exited with code 1
-```
+**Kegagalan koneksi.** `drizzle-kit` menelan galat penguraian URL, sehingga pada deploy pertama
+log `migrate` berakhir tanpa penjelasan (`Using 'pg' driver for database querying`, lalu
+`error: script "db:migrate" exited with code 1`). Karena itu `bun run db:migrate` lebih dulu
+menjalankan `scripts/migrate-preflight.ts`: skrip ini mengurai `DATABASE_URL` seperti `pg`,
+tersambung, menjalankan `SELECT 1`, dan bila gagal mencetak kategori beserta kodenya lalu keluar
+dengan kode 1 sebelum `drizzle-kit` dimulai. URL, kata sandi, dan objek galat tidak pernah
+dicetak. Setiap baris diawali `migrate-preflight:`, dan baris terakhirnya
+`Stopped before drizzle-kit migrate; nothing was migrated.` Baris pertamanya salah satu dari:
 
-Deploy lalu berhenti di langkah `up -d --remove-orphans` dengan `migrate keluar dengan kode 1.`
-Perbaiki kata sandi di baris `DATABASE_URL` pada `/opt/komplek/.env` (atau jalankan ulang
-`scripts/setup-env.sh` dengan URL yang sudah di-encode), lalu jalankan `bash scripts/deploy.sh`
-lagi.
+| Baris pertama | Penyebab dan perbaikan |
+|---|---|
+| `DATABASE_URL is not a valid URL (ERR_INVALID_URL).` | Kata sandi memuat karakter yang belum di-percent-encode (bagian 2 langkah 2). |
+| `the database refused the user name or password (28P01).` | Pengguna atau kata sandi salah, termasuk `%XX` yang tidak disengaja di kata sandi. |
+| `the TLS connection to the database failed (<kode>).` | `sslmode` atau `sslrootcert` di URL, atau isi `certs/supabase-ca.crt`. |
+| `the CA certificate named by sslrootcert in DATABASE_URL cannot be read (ENOENT).` | `certs/supabase-ca.crt` belum ada di sebelah `docker-compose.prod.yml`. |
+| `the database host cannot be reached (ENOTFOUND).` | Host atau port salah; juga `ECONNREFUSED`, `ETIMEDOUT`, dan sejenisnya. Kata sandi dengan `#`, `/`, atau `?` yang belum di-encode juga membuat URL menunjuk host yang salah. |
+| `the database named in DATABASE_URL does not exist (3D000).` | Nama basis data sesudah host; di Supabase namanya `postgres`. |
+
+Perbaiki baris `DATABASE_URL` pada `/opt/komplek/.env` (atau jalankan ulang
+`scripts/setup-env.sh`, yang memeriksa URL dan bisa meng-encode kata sandinya), lalu jalankan
+`bash scripts/deploy.sh` lagi. Image yang dibangun sebelum #202 belum membawa pemeriksaan ini, dan
+`migrate`-nya tetap berakhir tanpa penjelasan.
 
 ## 4. Akun pertama
 
