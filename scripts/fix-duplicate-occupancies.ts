@@ -100,6 +100,11 @@ function categoryOf(error: unknown): string {
 	return SQLSTATE.test(code) ? 'database' : 'unexpected';
 }
 
+/** `count` with the noun that agrees with it: `1 occupancy`, `2 occupancies`. */
+function counted(count: number, one: string, many: string): string {
+	return `${count} ${count === 1 ? one : many}`;
+}
+
 /** One row of the plan, on one line. */
 function describeOccupancy(verdict: 'keep' | 'delete', row: PlannedOccupancy): string {
 	const lastDay = row.endedOn ?? 'no last day';
@@ -118,7 +123,8 @@ function printPlan(plan: DuplicateFixPlan): { deletions: number; moves: number }
 		console.log('');
 		console.log(`Unit block ${unit.block}, number ${unit.number}`);
 		for (const group of unit.groups) {
-			console.log(`  One resident, ${group.kept.length + group.deleted.length} occupancies:`);
+			const rows = group.kept.length + group.deleted.length;
+			console.log(`  One resident, ${counted(rows, 'occupancy', 'occupancies')}:`);
 			for (const row of group.kept) {
 				console.log(describeOccupancy('keep', row));
 			}
@@ -136,7 +142,7 @@ function printPlan(plan: DuplicateFixPlan): { deletions: number; moves: number }
 	}
 	console.log('');
 	console.log(
-		`Plan: delete ${deletions} occupancies in ${plan.units.length} units, move ${moves} Penanggung Jawab markers.`
+		`Plan: delete ${counted(deletions, 'occupancy', 'occupancies')} in ${counted(plan.units.length, 'unit', 'units')}, move ${counted(moves, 'Penanggung Jawab marker', 'Penanggung Jawab markers')}.`
 	);
 	return { deletions, moves };
 }
@@ -174,7 +180,7 @@ function report(outcome: DuplicateFixOutcome, mode: DuplicateFixMode): number {
 	}
 
 	console.log(
-		`Done in one transaction: ${deletions} occupancies deleted, ${moves} markers moved, ${deletions + moves} audit entries written by "${DATA_FIX_ACTOR_ID}".`
+		`Done in one transaction: ${counted(deletions, 'occupancy', 'occupancies')} deleted, ${counted(moves, 'marker', 'markers')} moved, ${counted(deletions + moves, 'audit entry', 'audit entries')} written by "${DATA_FIX_ACTOR_ID}".`
 	);
 	return 0;
 }
