@@ -1,8 +1,10 @@
-import { and, asc, count, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, inArray, isNull, or } from 'drizzle-orm';
 import type { Database } from '../../db';
+import { user } from '../../db/schema/auth';
 import { occupancies } from '../../db/schema/occupancy';
+import { residents } from '../../db/schema/resident';
 import { units, type Unit } from '../../db/schema/unit';
-import { stillRunningOn } from '../occupancy/visibility';
+import { isStillRunningOn, stillRunningOn } from '../occupancy/visibility';
 
 /**
  * Raw reads against `units` and `occupancies`, with no permission decision in them. The service
@@ -58,36 +60,58 @@ export async function findUnitById(db: Database, unitId: string): Promise<Unit |
 	return row;
 }
 
+/**
+ * One Penghuni Aktif of a unit — a Warga living there on the day the summary was asked about. One
+ * entry per person, however many running Masa Huni they hold in that house.
+ */
+export interface ActiveOccupant {
+	readonly residentId: string;
+	/** Read off `user` — `residents` deliberately does not copy it. */
+	readonly name: string;
+	/** Whether any of this person's running Masa Huni in the house carries the Penanggung Jawab flag. */
+	readonly isPrimaryOccupant: boolean;
+}
+
 /** What the admin screens need to know about one unit's occupancies. */
 export interface OccupancySummary {
-	/** How many people are living in the unit on the day this was asked about. */
+	/**
+	 * How many different people are living in the unit on the day this was asked about — always
+	 * `activeOccupants.length`, so the number and the names beside it cannot disagree.
+	 */
 	readonly activeOccupantCount: number;
+	/** Those people, the Penanggung Jawab first and then by name. */
+	readonly activeOccupants: readonly ActiveOccupant[];
 	/** Whether the primary-occupant slot the database guards is currently filled. */
 	readonly hasPrimaryOccupant: boolean;
 }
 
 /**
- * Each unit in `unitIds` summarised as of `today` — "jumlah penghuni aktifnya" and whether anyone
- * holds the Penanggung Jawab slot. A unit nobody is living in is absent from the result rather than
- * present with zeroes; the caller defaults a missing entry to none.
+ * Each unit in `unitIds` summarised as of `today` — "jumlah penghuni aktifnya", who they are, and
+ * whether anyone holds the Penanggung Jawab slot. A unit with no running and no open-ended Masa Huni
+ * is absent from the result rather than present with zeroes; the caller defaults a missing entry to
+ * none.
+ *
+ * **The Penghuni Aktif are counted per person, not per Masa Huni.** The schema deliberately has no
+ * unique pair on unit and resident, so one person can hold two running stays in one house, an owner
+ * row beside a tenant row or a plain duplicate. Counting rows put that person on the screen twice.
+ * The rows come back ordered Penanggung Jawab first and then by name, so keeping each person's first
+ * row keeps them where the order puts them.
  *
  * **The two halves deliberately ask two different questions, with two different predicates.** They
  * used to share one, and sharing it put a false sentence on the screen.
  *
- * - `activeOccupantCount` counts a stay that is **still running on `today`**: `ended_on is null or
- *   ended_on >= today`. An end date written before it arrives — someone announcing in March that
- *   they leave next year — does not stop them living there in the meantime, and counting them as
- *   gone told a resident their own house had no occupants.
+ * - `activeOccupants` holds a stay that is **running on `today`**: `isStillRunningOn`, which reads
+ *   both the start date and the last day. An end date written before it arrives — someone announcing
+ *   in March that they leave next year — does not stop them living there in the meantime, and a
+ *   start date still ahead means they have not moved in yet.
  * - `hasPrimaryOccupant` stays on `ended_on is null`, the predicate
  *   `occupancies_primary_occupant_unique` itself uses, so it means exactly "the slot the database
  *   guards is filled". A primary occupant with a future end date therefore reads as gone *here*, and
  *   that is the conservative direction on purpose: the unit surfaces on the admin list as needing a
  *   successor while there is still time to name one, rather than on the day the invoices go out with
- *   nobody to address them to. The `filter (where …)` clause is what keeps this half narrow while the
- *   row set around it is the wider one.
- *
- * `coalesce` is not decoration: `bool_or` over an empty filtered set is `null`, which would reach the
- * screen as a missing answer rather than as "no".
+ *   nobody to address them to. It is the one reading of occupancies in `src/` that looks at the end
+ *   date alone, and the ticket that lets the Penanggung Jawab move between stays is the one that
+ *   changes it. The query reads the rows either half needs, and each half then keeps its own.
  */
 export async function summarizeActiveOccupancies(
 	db: Database,
@@ -101,18 +125,53 @@ export async function summarizeActiveOccupancies(
 	const rows = await db
 		.select({
 			unitId: occupancies.unitId,
-			activeOccupantCount: count(),
-			hasPrimaryOccupant: sql<boolean>`coalesce(bool_or(${occupancies.isPrimaryOccupant}) filter (where ${occupancies.endedOn} is null), false)`
+			residentId: residents.id,
+			name: user.name,
+			startedOn: occupancies.startedOn,
+			endedOn: occupancies.endedOn,
+			isPrimaryOccupant: occupancies.isPrimaryOccupant
 		})
 		.from(occupancies)
-		.where(and(inArray(occupancies.unitId, unitIds), stillRunningOn(occupancies.endedOn, today)))
-		.groupBy(occupancies.unitId);
+		.innerJoin(residents, eq(residents.id, occupancies.residentId))
+		.innerJoin(user, eq(user.id, residents.userId))
+		.where(
+			and(
+				inArray(occupancies.unitId, unitIds),
+				or(stillRunningOn(occupancies, today), isNull(occupancies.endedOn))
+			)
+		)
+		.orderBy(desc(occupancies.isPrimaryOccupant), asc(user.name), asc(residents.id));
+
+	const byUnit = new Map<
+		string,
+		{ occupants: Map<string, ActiveOccupant>; hasPrimaryOccupant: boolean }
+	>();
+	for (const row of rows) {
+		let unit = byUnit.get(row.unitId);
+		if (!unit) {
+			unit = { occupants: new Map(), hasPrimaryOccupant: false };
+			byUnit.set(row.unitId, unit);
+		}
+		if (row.isPrimaryOccupant && row.endedOn === null) {
+			unit.hasPrimaryOccupant = true;
+		}
+		if (isStillRunningOn(row, today) && !unit.occupants.has(row.residentId)) {
+			unit.occupants.set(row.residentId, {
+				residentId: row.residentId,
+				name: row.name,
+				isPrimaryOccupant: row.isPrimaryOccupant
+			});
+		}
+	}
 
 	return new Map(
-		rows.map(({ unitId, activeOccupantCount, hasPrimaryOccupant }) => [
-			unitId,
-			{ activeOccupantCount, hasPrimaryOccupant }
-		])
+		[...byUnit].map(([unitId, { occupants, hasPrimaryOccupant }]) => {
+			const activeOccupants = [...occupants.values()];
+			return [
+				unitId,
+				{ activeOccupantCount: activeOccupants.length, activeOccupants, hasPrimaryOccupant }
+			];
+		})
 	);
 }
 

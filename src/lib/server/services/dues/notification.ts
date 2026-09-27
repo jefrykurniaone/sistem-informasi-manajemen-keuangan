@@ -185,7 +185,7 @@ async function activePrimaryOccupantEmail(
 			and(
 				eq(occupancies.unitId, unitId),
 				eq(occupancies.isPrimaryOccupant, true),
-				stillRunningOn(occupancies.endedOn, today)
+				stillRunningOn(occupancies, today)
 			)
 		)
 		.limit(1);

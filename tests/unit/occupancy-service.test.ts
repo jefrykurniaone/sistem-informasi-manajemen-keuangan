@@ -57,6 +57,9 @@ const MID_YEAR = '2026-06-01';
  */
 const READ_CLOCK = new FakeClock('2026-08-01T12:00:00.000Z');
 
+/** The day after `READ_CLOCK`'s: a start date that has been written but has not arrived. */
+const TOMORROW = '2026-08-02';
+
 /** Makes every block this file writes different from every other one, across every test. */
 let sequence = 0;
 function unique(prefix: string): string {
@@ -652,6 +655,19 @@ describe('listUnitOccupancies', () => {
 			['Warga Sudah Pergi Lama', false]
 		]);
 	});
+
+	it('does not mark a stay that starts tomorrow as running', async () => {
+		const superuserId = await insertSuperuser('Pengurus Riwayat Belum Mulai');
+		const unitId = await insertUnitRow();
+		const arriving = await insertResident('Warga Masuk Besok');
+		await insertOccupancyRow(unitId, arriving.residentId, { startedOn: TOMORROW });
+
+		const history = await listUnitOccupancies(testDb.db, READ_CLOCK, superuserId, unitId);
+
+		expect(history.map((row) => [row.residentName, row.isRunning])).toEqual([
+			['Warga Masuk Besok', false]
+		]);
+	});
 });
 
 describe('listAssignableResidents', () => {
@@ -766,5 +782,30 @@ describe('occupiedUnitsForUser', () => {
 		const [mine] = await occupiedUnitsForUser(testDb.db, READ_CLOCK, leavingToday.userId);
 
 		expect(mine).toMatchObject({ endedOn: '2026-08-01', isRunning: true });
+	});
+
+	it('does not call a stay that starts tomorrow running, and names no household for it', async () => {
+		const unitId = await insertUnitRow();
+		const arriving = await insertResident('Warga Pindah Besok');
+		const alreadyThere = await insertResident('Warga Sudah Tinggal');
+		await insertOccupancyRow(unitId, arriving.residentId, { startedOn: TOMORROW });
+		await insertOccupancyRow(unitId, alreadyThere.residentId);
+
+		const [mine] = await occupiedUnitsForUser(testDb.db, READ_CLOCK, arriving.userId);
+
+		expect(mine).toMatchObject({ unitId, startedOn: TOMORROW, isRunning: false });
+		expect(mine.occupants).toEqual([]);
+	});
+
+	it('leaves someone whose stay starts tomorrow out of the household list', async () => {
+		const unitId = await insertUnitRow();
+		const me = await insertResident('Warga Penghuni Lama');
+		const arriving = await insertResident('Warga Serumah Mulai Besok');
+		await insertOccupancyRow(unitId, me.residentId);
+		await insertOccupancyRow(unitId, arriving.residentId, { startedOn: TOMORROW });
+
+		const [mine] = await occupiedUnitsForUser(testDb.db, READ_CLOCK, me.userId);
+
+		expect(mine.occupants.map((occupant) => occupant.name)).toEqual(['Warga Penghuni Lama']);
 	});
 });

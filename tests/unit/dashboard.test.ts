@@ -430,6 +430,28 @@ describe('residentDashboard', () => {
 		// The neighbour's own Keluhan is resolved, and the open one above is not theirs.
 		expect(neighbour.complaints).toEqual([]);
 	});
+
+	it('does not carry a house whose Masa Huni starts tomorrow', async () => {
+		// Last in this file on purpose: it adds a house the admin figures above are not about. The
+		// house has no Tagihan, so nothing the earlier tests read changes either way.
+		const clock = new FakeClock(DURING_MONTH);
+		const arriving = await insertPerson('Warga Pindah Besok');
+		const unit = await insertUnit('BRD-BESOK');
+		const tomorrow = '2026-09-21';
+		expect(civilDayOf(clock.now()) < tomorrow).toBe(true);
+		await testDb.db.insert(occupancies).values({
+			unitId: unit.id,
+			residentId: arriving.residentId,
+			role: OCCUPANCY_ROLE.owner,
+			startedOn: tomorrow,
+			endedOn: null,
+			createdAt: new Date(DURING_MONTH)
+		});
+
+		const summary = await residentDashboard(testDb.db, clock, arriving.residentId);
+
+		expect(summary).toMatchObject({ hasUnit: false, units: [] });
+	});
 });
 
 /**

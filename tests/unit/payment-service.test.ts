@@ -279,9 +279,9 @@ describe('recordPayment', () => {
 	});
 
 	it('accepts a payer whose move-out date has been written but has not arrived', async () => {
-		// `isStillRunningOn` is `ended_on is null or ended_on >= today`, not `ended_on is null`. Somebody
-		// who told the pengurus in December that they leave in March still lives there in January, and
-		// still owes January's dues.
+		// `isStillRunningOn` is `started_on <= today and (ended_on is null or ended_on >= today)`, not
+		// `ended_on is null`. Somebody who told the pengurus in December that they leave in March still
+		// lives there in January, and still owes January's dues.
 		const userId = await insertUser('Warga Pindah Nanti');
 		const residentId = await insertResident(userId);
 		const unitId = await insertUnit('F', '2');

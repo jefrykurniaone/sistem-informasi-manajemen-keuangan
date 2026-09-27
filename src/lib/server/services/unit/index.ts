@@ -3,7 +3,7 @@ import { ACTION, requirePermission } from '../../authz';
 import { recordAuditEntry } from '../../audit';
 import type { Database } from '../../db';
 import { units, type Unit } from '../../db/schema/unit';
-import { systemClock, type Clock } from '../../ports/clock';
+import type { Clock } from '../../ports/clock';
 import { currentDay } from '../occupancy/visibility';
 import {
 	findUnitById,
@@ -11,6 +11,8 @@ import {
 	summarizeActiveOccupancies,
 	type OccupancySummary
 } from './queries';
+
+export type { ActiveOccupant, OccupancySummary } from './queries';
 
 /**
  * Managing the house register — Unit — the list `spec-warga-unit-v1.md` calls the one source of
@@ -79,9 +81,9 @@ const UNIQUE_VIOLATION = '23505';
 
 /**
  * A unit together with what its running occupancies add up to — how many people live there right
- * now, and whether one of them is the Penanggung Jawab. Shared by the list screen's rows and the
- * detail screen's single unit, so the two never drift into two slightly different shapes of the
- * same fact.
+ * now, who they are, and whether one of them is the Penanggung Jawab. Shared by the list screen's
+ * rows and the detail screen's single unit, so the two never drift into two slightly different
+ * shapes of the same fact.
  */
 export interface UnitWithOccupancySummary extends Unit, OccupancySummary {}
 
@@ -152,7 +154,8 @@ export async function listUnits(
 }
 
 /**
- * The one unit named by `unitId`, for the detail screen.
+ * The one unit named by `unitId`, for the detail screen — with its Penghuni Aktif by name, the
+ * Penanggung Jawab first, beside their count.
  *
  * @throws {PermissionDeniedError} when `actorId` does not hold `superuser`.
  * @throws {UnitNotFoundError} when `unitId` names no unit.
@@ -161,7 +164,7 @@ export async function getUnit(
 	db: Database,
 	actorId: string,
 	unitId: string,
-	clock: Clock = systemClock
+	clock: Clock
 ): Promise<UnitWithOccupancySummary> {
 	await requirePermission(db, actorId, ACTION.manageUnits);
 
@@ -177,20 +180,19 @@ export async function getUnit(
 /** What a unit nobody is living in adds up to. */
 const NO_RUNNING_OCCUPANCY: OccupancySummary = Object.freeze({
 	activeOccupantCount: 0,
+	activeOccupants: Object.freeze([]),
 	hasPrimaryOccupant: false
 });
 
 /**
  * Attaches each unit's occupancy summary, in one query regardless of how many units there are.
  *
- * The clock is here because `activeOccupantCount` means "living here on this day" — see
+ * The clock is here because `activeOccupants` means "living here on this day" — see
  * `summarizeActiveOccupancies` for why that is not the same question as `hasPrimaryOccupant`.
  * `listUnits` takes it as a required second argument, the position `createUnit` and the rest of this
- * service layer already put a `Clock` in. `getUnit` cannot: its other caller,
- * `src/routes/(app)/admin/units/[id]/+page.server.ts`, is outside this ticket's `writes:` and so
- * cannot be handed one, which is why that signature takes the clock last and defaults it. Every
- * caller that can pass one does, tests included — a test that forgot would be reading the real wall
- * clock, and its result would depend on the day it ran.
+ * service layer already put a `Clock` in. `getUnit` takes it last, where an earlier ticket had to
+ * default it; every caller now passes one, tests included — a test that forgot would be reading the
+ * real wall clock, and its result would depend on the day it ran.
  */
 async function withOccupancySummaries(
 	db: Database,

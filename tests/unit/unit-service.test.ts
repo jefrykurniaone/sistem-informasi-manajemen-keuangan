@@ -41,12 +41,15 @@ const STARTED_ON = '2026-01-01';
  * decide "living here now" against. It is months after `STARTED_ON` so that a fixture ending on
  * `STARTED_ON` really has ended, and years before `FUTURE_END` so that one ending there has not.
  *
- * Every call below passes this explicitly. `getUnit` defaults its clock to `systemClock` — it has a
- * caller outside this ticket's `writes:` that cannot pass one — and a test that leaned on that
- * default would quietly start reading the real date and would answer differently depending on the
- * day it ran.
+ * Every call below passes this explicitly. A test that read the real date instead would answer
+ * differently depending on the day it ran.
  */
 const READ_CLOCK = new FakeClock('2026-06-01T12:00:00.000Z');
+
+/** `READ_CLOCK`'s own calendar day in WIB, and the days either side of it. */
+const READ_DAY = '2026-06-01';
+const DAY_BEFORE_READ = '2026-05-31';
+const DAY_AFTER_READ = '2026-06-02';
 
 /** An end date that has been written but has not arrived, as of `READ_CLOCK`. */
 const FUTURE_END = '2027-12-31';
@@ -108,17 +111,17 @@ async function insertUnitRow(
 	return row.id;
 }
 
-/** An occupancy of `unitId` by `residentId`, running unless `endedOn` says otherwise. */
+/** An occupancy of `unitId` by `residentId`, running unless `startedOn` or `endedOn` says otherwise. */
 async function insertOccupancy(
 	unitId: string,
 	residentId: string,
-	overrides: Partial<{ endedOn: string; isPrimaryOccupant: boolean }> = {}
+	overrides: Partial<{ startedOn: string; endedOn: string; isPrimaryOccupant: boolean }> = {}
 ): Promise<void> {
 	await testDb.db.insert(occupancies).values({
 		unitId,
 		residentId,
 		role: OCCUPANCY_ROLE.owner,
-		startedOn: STARTED_ON,
+		startedOn: overrides.startedOn ?? STARTED_ON,
 		endedOn: overrides.endedOn ?? null,
 		isPrimaryOccupant: overrides.isPrimaryOccupant ?? false,
 		createdAt: new Date(START)
@@ -424,6 +427,91 @@ describe('listUnits', () => {
 		expect(row && needsPrimaryOccupant(row)).toBe(true);
 	});
 
+	it('counts one person with two running stays in the same house once', async () => {
+		// The schema has no unique pair on unit and resident, so an owner row beside a tenant row, or a
+		// plain duplicate, is possible. Penghuni Aktif is a count of people, not of Masa Huni.
+		const superuserId = await insertSuperuser('Pengurus Hitung Per Orang');
+		const block = unique('ORANG');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		const twice = await insertResident('Warga Dua Masa Huni');
+		await insertOccupancy(unitId, twice);
+		await insertOccupancy(unitId, twice, { startedOn: '2026-03-01' });
+
+		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
+
+		const row = page.units.find((unit) => unit.id === unitId);
+		expect(row?.activeOccupantCount).toBe(1);
+		expect(row?.activeOccupants.map((occupant) => occupant.residentId)).toEqual([twice]);
+	});
+
+	it('does not count a stay that starts tomorrow', async () => {
+		const superuserId = await insertSuperuser('Pengurus Masuk Besok');
+		const block = unique('BESOK');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Menetap Sekarang'));
+		await insertOccupancy(unitId, await insertResident('Warga Masuk Besok'), {
+			startedOn: DAY_AFTER_READ
+		});
+
+		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
+
+		const row = page.units.find((unit) => unit.id === unitId);
+		expect(row?.activeOccupantCount).toBe(1);
+		expect(row?.activeOccupants.map((occupant) => occupant.name)).toEqual([
+			'Warga Menetap Sekarang'
+		]);
+	});
+
+	it('counts a stay whose last day is today', async () => {
+		const superuserId = await insertSuperuser('Pengurus Hari Terakhir');
+		const block = unique('AKHIR');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Hari Terakhir'), {
+			endedOn: READ_DAY
+		});
+
+		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
+
+		expect(page.units.find((unit) => unit.id === unitId)?.activeOccupantCount).toBe(1);
+	});
+
+	it('does not count a stay whose last day was yesterday', async () => {
+		const superuserId = await insertSuperuser('Pengurus Kemarin');
+		const block = unique('KEMARIN');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Pergi Kemarin'), {
+			endedOn: DAY_BEFORE_READ
+		});
+
+		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
+
+		expect(page.units.find((unit) => unit.id === unitId)).toMatchObject({
+			activeOccupantCount: 0,
+			activeOccupants: []
+		});
+	});
+
+	it('still reports the slot as filled by a primary occupant who has not moved in yet', async () => {
+		// The Penanggung Jawab half keeps reading `ended_on is null`, the partial index's own
+		// predicate, until the ticket that lets the flag move between stays changes it. Only the
+		// Penghuni Aktif half moved to the predicate that reads the start date too.
+		const superuserId = await insertSuperuser('Pengurus Penanggung Jawab Besok');
+		const block = unique('PJBESOK');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Penanggung Jawab Besok'), {
+			startedOn: DAY_AFTER_READ,
+			isPrimaryOccupant: true
+		});
+
+		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
+
+		expect(page.units.find((unit) => unit.id === unitId)).toMatchObject({
+			activeOccupantCount: 0,
+			activeOccupants: [],
+			hasPrimaryOccupant: true
+		});
+	});
+
 	it('leaves a deactivated unit with no primary occupant unflagged, because it is not in service', async () => {
 		const superuserId = await insertSuperuser('Pengurus Unit Nonaktif');
 		const block = unique('MATI');
@@ -470,8 +558,35 @@ describe('getUnit', () => {
 		expect(detail).toMatchObject({
 			id: unitId,
 			activeOccupantCount: 1,
+			activeOccupants: [{ residentId, name: 'Warga Detail', isPrimaryOccupant: true }],
 			hasPrimaryOccupant: true
 		});
+	});
+
+	it('names the Penghuni Aktif, the Penanggung Jawab first and then by name, one entry per person', async () => {
+		const superuserId = await insertSuperuser('Pengurus Nama Penghuni');
+		const unitId = await insertUnitRow();
+		const zaki = await insertResident('Zaki Penanggung Jawab');
+		const citra = await insertResident('Citra Penyewa');
+		const bayu = await insertResident('Bayu Pemilik');
+		const dimas = await insertResident('Dimas Belum Masuk');
+		const agus = await insertResident('Agus Sudah Pergi');
+		await insertOccupancy(unitId, citra);
+		await insertOccupancy(unitId, zaki, { isPrimaryOccupant: true });
+		// Zaki also holds a second, ordinary stay: still one person, still first.
+		await insertOccupancy(unitId, zaki, { startedOn: '2026-02-01' });
+		await insertOccupancy(unitId, bayu, { endedOn: FUTURE_END });
+		await insertOccupancy(unitId, dimas, { startedOn: DAY_AFTER_READ });
+		await insertOccupancy(unitId, agus, { endedOn: DAY_BEFORE_READ });
+
+		const detail = await getUnit(testDb.db, superuserId, unitId, READ_CLOCK);
+
+		expect(detail.activeOccupants).toEqual([
+			{ residentId: zaki, name: 'Zaki Penanggung Jawab', isPrimaryOccupant: true },
+			{ residentId: bayu, name: 'Bayu Pemilik', isPrimaryOccupant: false },
+			{ residentId: citra, name: 'Citra Penyewa', isPrimaryOccupant: false }
+		]);
+		expect(detail.activeOccupantCount).toBe(detail.activeOccupants.length);
 	});
 
 	it('reports a unit nobody lives in as empty rather than leaving the summary out', async () => {
@@ -480,6 +595,7 @@ describe('getUnit', () => {
 
 		expect(await getUnit(testDb.db, superuserId, unitId, READ_CLOCK)).toMatchObject({
 			activeOccupantCount: 0,
+			activeOccupants: [],
 			hasPrimaryOccupant: false
 		});
 	});

@@ -594,7 +594,7 @@ async function ensureOccupancy(
 			and(
 				eq(occupancies.unitId, stay.unitId),
 				eq(occupancies.residentId, stay.residentId),
-				stillRunningOn(occupancies.endedOn, today)
+				stillRunningOn(occupancies, today)
 			)
 		)
 		.limit(1);

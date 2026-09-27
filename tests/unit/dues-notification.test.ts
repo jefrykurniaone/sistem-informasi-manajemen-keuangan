@@ -247,8 +247,8 @@ describe('notifyInvoiceIssued', () => {
 	});
 
 	it('treats a primary occupant whose end date has not arrived yet as still active', async () => {
-		// The same `isStillRunningOn` gap `./occupancy/visibility.ts` documents: an end date in the
-		// future does not free the slot early.
+		// `isStillRunningOn` in `./occupancy/visibility.ts` reads the last day as a day lived in: an end
+		// date in the future does not make the occupant gone early.
 		const unit = await insertUnit();
 		const occupant = await insertResident('Warga Penanggung Jawab Pindah Nanti');
 		await insertOccupancy(unit, occupant.residentId, {
@@ -269,6 +269,29 @@ describe('notifyInvoiceIssued', () => {
 
 		expect(notified).toBe(true);
 		expect(await emailsTo(occupant.email, INVOICE_ISSUED_KIND)).toHaveLength(1);
+	});
+
+	it('does not treat a primary occupant whose stay starts tomorrow as active', async () => {
+		const unit = await insertUnit();
+		const occupant = await insertResident('Warga Penanggung Jawab Masuk Besok');
+		await insertOccupancy(unit, occupant.residentId, {
+			isPrimaryOccupant: true,
+			startedOn: '2026-04-11',
+			endedOn: null
+		});
+		expect(TODAY < '2026-04-11').toBe(true);
+
+		const notified = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
+			unitId: unit,
+			block: 'F',
+			number: '1',
+			period: '2026-04',
+			amount: rupiah(150_000),
+			dueDate: '2026-04-05'
+		});
+
+		expect(notified).toBe(false);
+		expect(await emailsTo(occupant.email, INVOICE_ISSUED_KIND)).toEqual([]);
 	});
 });
 
