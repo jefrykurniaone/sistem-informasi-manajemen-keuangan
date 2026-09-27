@@ -15,12 +15,14 @@ Residents who subscribe receive the Monthly Report by email.
 
 ## Status
 
-The application scaffold is up, and every domain feature now sits on top of it: dues with
-Invoices and their issuance job, Payments with verification, the cash book with Monthly Reports,
-Posts, Complaints, a resident CSV import, notification Subscriptions (Langganan), scheduled jobs,
-and a staging deploy. SvelteKit runs, Tailwind CSS v4 and shadcn-svelte are installed, the four
-quality-gate commands exist and pass, and `docker compose up` starts the application, PostgreSQL,
-and Mailpit.
+The application scaffold is up, and every domain feature now sits on top of it: the Unit and
+Occupancy (Masa Huni) register, Invitations (Undangan) and Registrations (Pendaftaran) with
+approval, dues with Invoices, their issuance job, and Exemptions (Pembebasan), Payments with
+verification and the overdue list, the cash book with accounting Periods (Periode), the Opening
+Balance (Saldo Awal), and Monthly Reports, Posts, Complaints, an XLSX import of Residents,
+notification Subscriptions (Langganan), role management, scheduled jobs, and a staging deploy.
+SvelteKit runs, Tailwind CSS v4 and shadcn-svelte are installed, the four quality-gate commands
+exist and pass, and `docker compose up` starts the application, PostgreSQL, and Mailpit.
 
 ## Stack
 
@@ -87,8 +89,8 @@ that the change came from a machine operator rather than someone signed in.
 This command still works on a system that already has a superuser, and deliberately does not
 refuse that: it is the only way back if the last superuser account is lost. Note that holding the
 `superuser` role alone is not enough for every screen — some actions, such as granting an
-Exemption (Pembebasan), are attributed to the `residents` row of whoever performs them, so that
-account still needs to be registered as a Resident of a Unit.
+Exemption, are attributed to the `residents` row of whoever performs them, so that account still
+needs to be registered as a Resident of a Unit.
 
 ### Seed data (Data Contoh)
 
@@ -125,8 +127,8 @@ guarded by actions that `src/lib/server/authz.ts` grants to `admin` alone, so wi
 the superuser would be answered 403 on those two screens.
 
 Contents: 20 Units, 27 Residents with one Primary Occupant (Penanggung Jawab) per Unit, a Dues
-Rate (Tarif) of 150,000 effective since last month, an Opening Balance (Saldo Awal) of 12,500,000,
-20 Invoices for this month, 30 Payments (five of them still `pending` with proof, three rejected,
+Rate (Tarif) of 150,000 effective since last month, an Opening Balance of 12,500,000, 20 Invoices
+for this month, 30 Payments (five of them still `pending` with proof, three rejected,
 two overpayments that become Credit Balance (Saldo Titipan)), 26 outgoing Cash Transactions
 (Transaksi Kas) with one Correction (Koreksi), 6 Posts, 10 Complaints covering every status, and
 additional Subscriptions for some Residents. This command prints a summary of the count per
