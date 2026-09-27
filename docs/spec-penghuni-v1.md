@@ -4,7 +4,7 @@
 |---|---|
 | Item spesifikasi | [#238](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/238) |
 | Run | `huni-v1` |
-| Peta eksekusi | belum terbit (tahap peta) |
+| Peta eksekusi | [#247](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/247) |
 | Disalin pada | 2026-09-27 |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
