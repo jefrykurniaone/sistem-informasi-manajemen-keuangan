@@ -395,6 +395,46 @@ describe('approveRegistration', () => {
 		expect(stays[0].unitId).toBe(chosen.unitId);
 	});
 
+	it('does not treat a stay on that unit that starts tomorrow as running', async () => {
+		// `stillRunningOn` reads the start date too, so a Masa Huni recorded to begin tomorrow is not
+		// one the registrant already has running, and approval records the stay it promises. Which
+		// existing stays should make approval skip that write is the overlap rule's question, and the
+		// ticket that brings that rule in is the one that changes this answer.
+		const actorId = await insertSuperuser();
+		const clock = new FakeClock(START);
+		const unit = await insertUnitRow();
+		const registrant = await register('arriving', unit, clock);
+		const [residentRow] = await testDb.db
+			.insert(residents)
+			.values({ userId: registrant.userId, createdAt: new Date(START) })
+			.returning();
+		await testDb.db.insert(occupancies).values({
+			unitId: unit.unitId,
+			residentId: residentRow.id,
+			role: OCCUPANCY_ROLE.tenant,
+			startedOn: '2026-01-02',
+			endedOn: null,
+			isPrimaryOccupant: false,
+			createdAt: new Date(START)
+		});
+
+		const approved = await approveRegistration(testDb.db, clock, {
+			actorId,
+			registrationId: registrant.registrationId,
+			unitId: unit.unitId,
+			origin: TEST_ORIGIN
+		});
+
+		expect(approved).toMatchObject({ residentId: residentRow.id, createdOccupancy: true });
+		expect(
+			await testDb.db
+				.select({ startedOn: occupancies.startedOn })
+				.from(occupancies)
+				.where(eq(occupancies.residentId, residentRow.id))
+				.orderBy(occupancies.startedOn)
+		).toEqual([{ startedOn: '2026-01-01' }, { startedOn: '2026-01-02' }]);
+	});
+
 	it('queues the approval email naming the approved house and the sign-in page', async () => {
 		const actorId = await insertSuperuser();
 		const clock = new FakeClock(START);

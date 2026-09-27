@@ -48,15 +48,16 @@ import type { Clock } from '../../ports/clock';
  * **The visibility answer itself still never asks what day it is.** `unitVisibilityFor` returns the
  * days as data, and whether today falls inside them is the caller's question — which is what lets a
  * resident whose end date has been written but has not arrived still see the days they are living
- * through. `currentDay` and `isStillRunningOn` at the bottom of this file are the other half: the one
- * definition of "living here now", kept here because this is where the `YYYY-MM-DD` vocabulary lives,
- * and taking a `Clock` so that no caller reads the wall clock for itself.
+ * through. `currentDay`, `isStillRunningOn` and `stillRunningOn` at the bottom of this file are the
+ * other half: the one definition of "sedang menghuni pada hari t", kept here because this is where
+ * the `YYYY-MM-DD` vocabulary lives, and fed by a `Clock` so that no caller reads the wall clock for
+ * itself.
  */
 
 /**
  * A stretch of calendar days, both ends inclusive.
  *
- * `to: null` means the stretch has not ended — the occupancy it came from is still running, so
+ * `to: null` means the stretch has not ended — the occupancy it came from has no end date yet, so
  * every day from `from` onwards is included.
  */
 export interface DateRange {
@@ -210,7 +211,8 @@ export function visibilityDateFilter(
  * - *"Is this person living here now?"* is `isStillRunningOn` below, and it does. An end date written
  *   before it arrives — someone announcing in March that they move out next year — is a normal thing
  *   for a superuser to record, and reading it as "already gone" tells a resident their home is not
- *   theirs.
+ *   theirs. A start date written before it arrives is the same case from the other end: someone
+ *   recorded today as moving in next month does not live here yet.
  *
  * **The instant is read as a day in the complex's own zone.** `Clock.now()` answers which *moment*
  * it is, never which day it is somewhere, and `src/lib/time.ts` settles the zone the complex reads
@@ -222,20 +224,41 @@ export function currentDay(clock: Clock): string {
 }
 
 /**
- * Whether a stay ending on `endedOn` — `null` while it has not been given an end date — is still
- * running on `day`. The one definition of "living here now", shared by every screen that asks.
+ * The two days a Masa Huni is read by, as `YYYY-MM-DD`. Both are days lived in: `endedOn` is the
+ * last day of the stay, not the first day after it, and `null` while no end date has been written.
+ * Any row selected with both columns fits, so a caller passes its row rather than picking fields out.
  */
-export function isStillRunningOn(endedOn: string | null, day: string): boolean {
-	return endedOn === null || compareDays(endedOn, day) >= 0;
+export interface OccupancyDays {
+	readonly startedOn: string;
+	readonly endedOn: string | null;
 }
 
 /**
- * `isStillRunningOn` as a condition on an `ended_on` column, for the queries that ask the same
- * question of many rows at once.
+ * Whether `stay` is running on `day` — **sedang menghuni pada hari t**: it started on or before
+ * `day`, and its last day is not written yet or falls on or after `day`. The one definition of
+ * "living here now", shared by every screen and service that asks, so that a count, a label and an
+ * email recipient cannot disagree about who lives in a house.
+ *
+ * Both ends are read. A stay whose start date is still ahead has not begun, whatever its end date
+ * says, and a stay whose last day is today is still running today.
  */
-export function stillRunningOn(endedOnColumn: AnyPgColumn, day: string): SQL {
-	// `or()` only widens to `undefined` when every argument is, and neither of these is.
-	return or(isNull(endedOnColumn), gte(endedOnColumn, day)) as SQL;
+export function isStillRunningOn(stay: OccupancyDays, day: string): boolean {
+	return compareDays(stay.startedOn, day) <= 0 && isWithinOrAt(day, stay.endedOn);
+}
+
+/** The `started_on` and `ended_on` columns `stillRunningOn` reads — `occupancies` itself fits. */
+export interface OccupancyDayColumns {
+	readonly startedOn: AnyPgColumn;
+	readonly endedOn: AnyPgColumn;
+}
+
+/**
+ * `isStillRunningOn` as a condition on a Masa Huni's two date columns, for the queries that ask the
+ * same question of many rows at once. Pass the table: `stillRunningOn(occupancies, today)`.
+ */
+export function stillRunningOn(stay: OccupancyDayColumns, day: string): SQL {
+	// `and()` and `or()` only widen to `undefined` when every argument is, and none of these is.
+	return and(lte(stay.startedOn, day), or(isNull(stay.endedOn), gte(stay.endedOn, day))) as SQL;
 }
 
 /** `-1`, `0` or `1`, comparing two `YYYY-MM-DD` days. ISO days sort correctly as plain strings. */

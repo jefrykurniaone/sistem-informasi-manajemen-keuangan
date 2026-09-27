@@ -47,8 +47,9 @@ import { currentDay, isStillRunningOn, stillRunningOn, type DateRange } from './
  * "Is the primary-occupant slot filled?" and "is this person living here now?" are different
  * questions and take different predicates. The first is `ended_on is null`, because that is what
  * `occupancies_primary_occupant_unique` means; the second is `isStillRunningOn` in `./visibility.ts`,
- * `ended_on is null or ended_on >= today`. Answering the second with the first is what made a
- * resident with a future end date read as having moved out already — see
+ * `started_on <= today and (ended_on is null or ended_on >= today)`. Answering the second with the
+ * first is what made a resident with a future end date read as having moved out already, and a stay
+ * recorded to start next month read as living here already — see
  * `summarizeActiveOccupancies` for the same split on the admin side. Everything in this module that
  * says "now" uses the second one and takes a `Clock` to get the day; `assertPrimarySlotFree` uses
  * neither, because an overlap between two stays is a question about their own days and never about
@@ -139,7 +140,7 @@ export class PrimaryOccupantConflictError extends Error {
 	readonly residentName: string;
 	/** The day their occupancy started. */
 	readonly startedOn: string;
-	/** The day it ends, or `null` while it is still running. */
+	/** The last day of it, or `null` while it has no end date. */
 	readonly endedOn: string | null;
 
 	constructor(unitId: string, holder: PrimaryOccupantHolder) {
@@ -175,9 +176,10 @@ export interface OccupancyRecord {
 	readonly startedOn: string;
 	readonly endedOn: string | null;
 	/**
-	 * Whether this person is living in the house today — `ended_on is null or ended_on >= today`, not
-	 * `ended_on is null`. A stay with an end date that has not arrived yet is still a stay, and the
-	 * screen's controls for ending it or making it the primary occupant have to stay reachable.
+	 * Whether this person is living in the house today — `isStillRunningOn` in `./visibility.ts`, which
+	 * reads both ends, not `ended_on is null`. A stay with an end date that has not arrived yet is still
+	 * a stay, and the screen's controls for ending it or making it the primary occupant have to stay
+	 * reachable. A stay whose start date is still ahead has not begun, and is not running yet.
 	 */
 	readonly isRunning: boolean;
 	readonly isPrimaryOccupant: boolean;
@@ -406,7 +408,7 @@ export async function listUnitOccupancies(
 		.where(eq(occupancies.unitId, unitId))
 		.orderBy(desc(occupancies.startedOn), desc(occupancies.createdAt));
 
-	return rows.map((row) => ({ ...row, isRunning: isStillRunningOn(row.endedOn, today) }));
+	return rows.map((row) => ({ ...row, isRunning: isStillRunningOn(row, today) }));
 }
 
 /** One person who can be attached to a house, for the picker on the admin form. */
@@ -452,10 +454,10 @@ export interface OwnOccupancy {
 	readonly startedOn: string;
 	readonly endedOn: string | null;
 	/**
-	 * Whether this resident is living in that house today. An end date that has been written but has
-	 * not arrived leaves this `true`: they still live there until that day comes, and a screen reading
-	 * `endedOn === null` instead would tell them their stay was over while they were standing in the
-	 * house.
+	 * Whether this resident is living in that house today — `isStillRunningOn`. An end date that has
+	 * been written but has not arrived leaves this `true`: they still live there until that day comes,
+	 * and a screen reading `endedOn === null` instead would tell them their stay was over while they
+	 * were standing in the house. A start date still ahead leaves it `false`: they have not moved in.
 	 */
 	readonly isRunning: boolean;
 	readonly isPrimaryOccupant: boolean;
@@ -500,7 +502,7 @@ export async function occupiedUnitsForUser(
 		.where(eq(residents.userId, userId))
 		.orderBy(desc(occupancies.startedOn), desc(occupancies.createdAt));
 
-	const running = stays.filter((stay) => isStillRunningOn(stay.endedOn, today));
+	const running = stays.filter((stay) => isStillRunningOn(stay, today));
 	const occupantsByUnit = await currentOccupantsOf(
 		db,
 		today,
@@ -508,7 +510,7 @@ export async function occupiedUnitsForUser(
 	);
 
 	return stays.map((stay) => {
-		const isRunning = isStillRunningOn(stay.endedOn, today);
+		const isRunning = isStillRunningOn(stay, today);
 		return {
 			...stay,
 			isRunning,
@@ -539,7 +541,7 @@ async function currentOccupantsOf(
 		.from(occupancies)
 		.innerJoin(residents, eq(residents.id, occupancies.residentId))
 		.innerJoin(user, eq(user.id, residents.userId))
-		.where(and(inArray(occupancies.unitId, unitIds), stillRunningOn(occupancies.endedOn, today)))
+		.where(and(inArray(occupancies.unitId, unitIds), stillRunningOn(occupancies, today)))
 		.orderBy(asc(user.name));
 
 	for (const { unitId, ...occupant } of rows) {

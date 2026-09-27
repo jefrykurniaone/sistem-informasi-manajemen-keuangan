@@ -707,6 +707,20 @@ describe('queuing the invoice-issued email', () => {
 		expect(await invoiceIssuedEmails()).toEqual([]);
 	});
 
+	it('skips the email for a unit whose primary occupant only moves in tomorrow', async () => {
+		// The run happens on 1 March in Jakarta. A Masa Huni starting on the 2nd has not begun, so its
+		// occupant is not yet anyone the house's Tagihan are addressed to.
+		await insertRate(MONTHLY_RATE, '2026-01-01');
+		const unit = await insertUnit();
+		await insertPrimaryOccupant(unit.id, 'Warga Penanggung Jawab Masuk Besok', '2026-03-02');
+
+		const summary = await issue(PERIOD);
+
+		expect(summary.issuedCount).toBe(1);
+		expect(summary.skippedNotifications.map((skip) => skip.unitId)).toEqual([unit.id]);
+		expect(await invoiceIssuedEmails()).toEqual([]);
+	});
+
 	it('queues no second email when a period already issued is run again', async () => {
 		await insertRate(MONTHLY_RATE, '2026-01-01');
 		const unit = await insertUnit();

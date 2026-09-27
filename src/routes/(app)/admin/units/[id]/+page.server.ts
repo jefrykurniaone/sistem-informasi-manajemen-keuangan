@@ -14,8 +14,8 @@ import {
 import type { Actions, PageServerLoad } from './$types';
 
 /**
- * The superuser detail screen for one unit: what it is, how many occupancies of it are running,
- * and the one button that switches it off or back on. Follows the same shape
+ * The superuser detail screen for one unit: what it is, who is living in it today and how many of
+ * them there are, and the one button that switches it off or back on. Follows the same shape
  * `src/routes/(app)/admin/units/+page.server.ts` and `src/routes/(app)/admin/roles/+page.server.ts`
  * settled — nobody who is not signed in reaches the service layer, and a permission refusal becomes
  * `error(403, …)` here, never in the service.
@@ -32,7 +32,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	assertUuidParam(params.id, m.adminUnits_notFound());
 
 	try {
-		const unit = await getUnit(database(), locals.user.id, params.id);
+		const unit = await getUnit(database(), locals.user.id, params.id, systemClock);
 		return { unit };
 	} catch (caught) {
 		throwAsRouteError(caught);

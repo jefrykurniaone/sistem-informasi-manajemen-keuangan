@@ -348,32 +348,41 @@ describe('currentDay', () => {
 
 describe('isStillRunningOn', () => {
 	it.each([
-		['a stay with no end date at all', null, true],
-		['a stay ending after today', '2027-12-31', true],
-		['a stay ending today', '2026-08-01', true],
-		['a stay that ended yesterday', '2026-07-31', false]
-	])('answers %s', (_description, endedOn, expected) => {
-		expect(isStillRunningOn(endedOn, '2026-08-01')).toBe(expected);
+		['a stay with no end date at all', OLD_FROM, null, true],
+		['a stay ending after today', OLD_FROM, '2027-12-31', true],
+		['a stay ending today', OLD_FROM, '2026-08-01', true],
+		['a stay that ended yesterday', OLD_FROM, '2026-07-31', false],
+		['a stay starting today', '2026-08-01', null, true],
+		['a stay starting tomorrow, with no end date', '2026-08-02', null, false],
+		['a stay starting tomorrow, with an end date', '2026-08-02', '2027-12-31', false],
+		['a one-day stay that is today', '2026-08-01', '2026-08-01', true]
+	])('answers %s', (_description, startedOn, endedOn, expected) => {
+		expect(isStillRunningOn({ startedOn, endedOn }, '2026-08-01')).toBe(expected);
 	});
 });
 
 describe('stillRunningOn', () => {
-	it('keeps the stays that have not ended by the given day, and drops the ones that have', async () => {
+	it('keeps the stays running on the given day, and drops the ones that ended or have not started', async () => {
 		const unitId = await insertUnitRow();
 		const leavingNextYear = await insertResident('Warga Akan Pergi');
 		const gone = await insertResident('Warga Sudah Pergi');
 		const staying = await insertResident('Warga Tanpa Tanggal Selesai');
+		const lastDayToday = await insertResident('Warga Hari Terakhir');
+		const arrivingTomorrow = await insertResident('Warga Masuk Besok');
 		await insertOccupancyRow(unitId, leavingNextYear.residentId, OLD_FROM, '2027-12-31');
 		await insertOccupancyRow(unitId, gone.residentId, OLD_FROM, OLD_UNTIL);
 		await insertOccupancyRow(unitId, staying.residentId, OLD_FROM, null);
+		await insertOccupancyRow(unitId, lastDayToday.residentId, OLD_FROM, '2026-08-01');
+		await insertOccupancyRow(unitId, arrivingTomorrow.residentId, '2026-08-02', null);
 
 		const rows = await testDb.db
-			.select({ endedOn: occupancies.endedOn })
+			.select({ residentId: occupancies.residentId })
 			.from(occupancies)
-			.where(and(eq(occupancies.unitId, unitId), stillRunningOn(occupancies.endedOn, '2026-08-01')))
-			.orderBy(occupancies.endedOn);
+			.where(and(eq(occupancies.unitId, unitId), stillRunningOn(occupancies, '2026-08-01')));
 
-		expect(rows).toEqual([{ endedOn: '2027-12-31' }, { endedOn: null }]);
+		expect(rows.map((row) => row.residentId).sort()).toEqual(
+			[leavingNextYear.residentId, staying.residentId, lastDayToday.residentId].sort()
+		);
 	});
 });
 

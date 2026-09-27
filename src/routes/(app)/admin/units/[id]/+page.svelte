@@ -37,7 +37,29 @@
 		<dt class="text-muted-foreground">{m.adminUnits_tableStatus()}</dt>
 		<dd>{data.unit.isActive ? m.adminUnits_statusActive() : m.adminUnits_statusInactive()}</dd>
 		<dt class="text-muted-foreground">{m.adminUnits_detailOccupants()}</dt>
-		<dd>{data.unit.activeOccupantCount}</dd>
+		<dd class="flex min-w-0 flex-col gap-1">
+			<span>{data.unit.activeOccupantCount}</span>
+			{#if data.unit.activeOccupants.length > 0}
+				<ul class="flex flex-col gap-0.5">
+					{#each data.unit.activeOccupants as occupant (occupant.residentId)}
+						<li class="flex flex-wrap items-baseline gap-x-2 break-words">
+							<span>{occupant.name}</span>
+							{#if occupant.isPrimaryOccupant}
+								<span class="text-xs text-muted-foreground">
+									{m.adminOccupancies_primaryBadge()}
+								</span>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			<a
+				class="text-muted-foreground underline underline-offset-2"
+				href={resolve(`/admin/units/${data.unit.id}/occupancies`)}
+			>
+				{m.adminOccupancies_historyLink()}
+			</a>
+		</dd>
 		<dt class="text-muted-foreground">{m.adminUnits_detailCreatedAt()}</dt>
 		<dd>{formatDay(data.unit.createdAt)}</dd>
 	</dl>
