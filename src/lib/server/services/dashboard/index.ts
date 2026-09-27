@@ -499,9 +499,10 @@ async function jobStatuses(
  * Every house this Warga is living in today, with what it owes and what it has on deposit.
  *
  * "Living in today" is `stillRunningOn`, the one definition of it, so a Masa Huni given an end date
- * that has not arrived yet still counts and one whose start date is still ahead does not. The Tagihan come from `invoicesForUser` — one call for
- * every house, already filtered to what this Warga may see and already carrying each status — and
- * are then split by house here rather than queried per house.
+ * that has not arrived yet still counts and one whose start date is still ahead does not. The
+ * Tagihan come from `invoicesForUser` — one call for every house, already filtered to what this
+ * Warga may see and already carrying each status — and are then split by house here rather than
+ * queried per house.
  */
 async function residentUnitSummaries(
 	db: Database,
