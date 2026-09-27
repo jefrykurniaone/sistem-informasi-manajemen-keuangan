@@ -24,10 +24,19 @@ _Hindari_: user, member, penduduk
 
 **Masa Huni**:
 Hubungan berperiode antara seorang Warga dan sebuah Unit, dengan peran huni pemilik atau penyewa.
+Tanggal mulai dan tanggal selesainya sama-sama hari huni: tanggal selesai adalah hari terakhir
+menghuni.
 _Hindari_: kepemilikan, okupansi
 
+**Penghuni Aktif**:
+Warga yang pada suatu hari punya Masa Huni berjalan di sebuah Unit, yaitu yang sudah mulai dan belum
+lewat hari terakhirnya. Dihitung per orang, bukan per Masa Huni.
+_Hindari_: penghuni tercatat, okupan
+
 **Penanggung Jawab**:
-Satu Masa Huni aktif per Unit yang ditandai sebagai penerima email tagihan rumah itu.
+Satu Masa Huni yang sedang berjalan per Unit yang ditandai sebagai penerima email tagihan rumah itu.
+Penandanya berpindah dari satu Masa Huni ke yang lain dan berlaku sejak dipindahkan; siapa yang
+pernah memegangnya tercatat di Audit Log, bukan pada Masa Huni.
 _Hindari_: kepala keluarga, pemilik
 
 **Undangan**:
@@ -185,6 +194,7 @@ kolom dari nama properti lewat `casing: 'snake_case'`, jadi nama kolom tidak dit
 | Unit | `Unit` | `units` |
 | Warga | `Resident` | `residents` |
 | Masa Huni | `Occupancy` | `occupancies` |
+| Penghuni Aktif | `ActiveOccupant` | dihitung, tanpa tabel |
 | Penanggung Jawab | `PrimaryOccupant` | penanda pada `occupancies` |
 | Undangan | `Invitation` | `invitations` |
 | Pendaftaran | `Registration` | `registrations` |
