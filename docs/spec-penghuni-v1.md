@@ -155,7 +155,7 @@ Superuser adalah yang mengelola Unit dan Masa Huni. Dari sisi mereka, ada tiga m
 - Teks final ditetapkan tiket. Spec ini hanya mengikat maknanya.
 
 **8. Skrip perbaikan data satu kali.**
-- Sebuah perintah yang dijalankan terhadap `DATABASE_URL`, disusun seperti perintah pemberian superuser: sebuah fungsi yang diekspor dan diuji langsung, dibungkus perintah `package.json`.
+- Sebuah perintah yang dijalankan terhadap `DATABASE_URL`. Logikanya ada dalam satu fungsi yang diekspor dan diuji langsung, seperti perintah pemberian superuser, dan dibungkus satu berkas skrip tipis. Perintah ini **tidak** mendapat entri `package.json` dan **tidak** mengubah `Dockerfile`. Image produksi tidak membawa `src/`, jadi untuk dijalankan sekali di produksi, skrip dibundel di mesin orchestrator dengan cara yang sama seperti `Dockerfile` membundel `grant-superuser` (hanya `pg` dan `drizzle-orm` eksternal), disalin ke container `app` di VM, dijalankan di sana, lalu dihapus. Ini pola yang sama dengan pemeriksaan read-only yang sudah dipakai.
 - **Aturan penyaringan.** Untuk setiap pasangan orang dan unit, Masa Huni diurutkan menurut waktu dicatat, dan sebuah baris dipertahankan kalau tidak bersinggungan dengan baris yang sudah dipertahankan. Baris lain dihapus.
 - **Penanda ikut dipindah.** Kalau baris yang dihapus memegang penanda dan hari terakhirnya belum lewat, penanda dipindah ke baris yang dipertahankan untuk orang yang sama.
 - **Audit Log.** Setiap baris yang dihapus meninggalkan satu entri Audit Log dengan pelaku `system:data-fix`, memuat seluruh nilai baris itu di `before`.
