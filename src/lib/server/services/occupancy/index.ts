@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNull, or, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, isNull, or, type SQL } from 'drizzle-orm';
 import { ACTION, requirePermission, type DatabaseWriter, type Transaction } from '../../authz';
 import { recordAuditEntry } from '../../audit';
 import type { Database } from '../../db';
@@ -103,6 +103,15 @@ import { currentDay, isStillRunningOn, stillRunningOn, type OccupancyDays } from
  * twice for the same unit in one file is one request, not two racing ones, and is already refused by
  * `duplicateUnitInFile`/`duplicateEmailInFile` in `src/lib/server/services/import/validation.ts` before
  * any Masa Huni is written — locked by `tests/unit/import-validation.test.ts` rather than checked here.
+ *
+ * The fifth path, `endOccupancy` moving a stay's last day, was left out until #258: nothing compared
+ * the day being written with the same resident's other stays in the same unit, so moving a last day
+ * forward past the start of a later stay could make the pair intersect exactly as a fresh insertion
+ * would have been refused for. `findNextOccupancy` below asks the narrower question that path needs —
+ * only the same resident's stay in the same unit that starts after the one being ended's own start
+ * date, earliest such start first — because ending never inserts a row, so the general "does anything
+ * unended reach `startedOn`" form `findOverlappingOccupancy` asks is not what is being protected here;
+ * see `endOccupancy`'s own doc comment for the rule and `OccupancyEndOverlapError` for its refusal.
  */
 
 /** The audit log's `action` for a newly recorded occupancy. */
@@ -241,6 +250,37 @@ export class OccupancyOverlapError extends Error {
 	}
 }
 
+/**
+ * Thrown when moving an occupancy's last day would make it intersect a later Masa Huni the same
+ * resident already holds in the same unit — decision 6 of `docs/spec-penghuni-v1.md`, extended to this
+ * fifth path by #258. Both ends inclusive, so a last day landing exactly on the later stay's first day
+ * is refused too, the same boundary `OccupancyOverlapError` draws for the four paths that insert a row.
+ *
+ * Carries `latestEndedOn`, one day before the later stay's `startedOn` — the latest last day the
+ * superuser reading the refusal could retry with — and `nextStartedOn`, that later stay's own start
+ * day. When the resident has more than one later stay in the unit, the one with the earliest start day
+ * is named: it is the one a forward-moving last day would reach first, and `findNextOccupancy` is what
+ * picks it.
+ */
+export class OccupancyEndOverlapError extends Error {
+	override readonly name = 'OccupancyEndOverlapError';
+
+	/** One day before `nextStartedOn`: the latest last day this change could retry with. */
+	readonly latestEndedOn: string;
+	/** The start day of the later Masa Huni this change would otherwise reach. */
+	readonly nextStartedOn: string;
+
+	constructor(nextStartedOn: string) {
+		const latestEndedOn = previousDay(nextStartedOn);
+		super(
+			`The last day can be no later than ${latestEndedOn}, because this resident is already ` +
+				`recorded as living in this unit again from ${nextStartedOn}.`
+		);
+		this.latestEndedOn = latestEndedOn;
+		this.nextStartedOn = nextStartedOn;
+	}
+}
+
 /** One line of a unit's occupancy history, with the occupant named rather than only identified. */
 export interface OccupancyRecord {
 	readonly occupancyId: string;
@@ -373,8 +413,22 @@ export interface EndOccupancyRequest {
  *
  * **Ending never moves the Penanggung Jawab flag.** Ending the Penanggung Jawab's stay leaves the
  * flag on it, and they stay the house's Penanggung Jawab until their last day has passed; the admin
- * screens warn about exactly that stretch, so that someone moves the flag in time. Nothing here
- * compares the stay's days with anyone else's: ADR 0001 took the date-clash check out.
+ * screens warn about exactly that stretch, so that someone moves the flag in time. ADR 0001 keeps that
+ * decision free of comparing this stay's days against anyone else's: who holds the flag is never
+ * decided by date here.
+ *
+ * **The last day is compared against the resident's own later stay in this unit.** Decision 6 of
+ * `docs/spec-penghuni-v1.md` bars two Masa Huni of the same resident in the same unit from
+ * intersecting; #258 extended it to this fifth path, the one the other four could not reach through
+ * insertion. Moving `endedOn` — forward or back — is refused with `OccupancyEndOverlapError` when the
+ * resident already has a later Masa Huni in this unit whose start date is no later than the new
+ * `endedOn`, both ends inclusive; `findNextOccupancy` asks that question of the same resident's rows in
+ * this unit that start after this stay's own `startedOn`. Shortening a stay needs no rule of its own —
+ * it can only ever leave less room to intersect anything — so the same check covers it; a shortened
+ * `endedOn` that still reaches the later stay is refused with the same error, which only old data the
+ * #242 script already cleaned up can produce. Checked after the no-op return below, so a request that
+ * changes nothing is still free of it. Nothing here checks a Penanggung Jawab clash: that is ADR 0001's
+ * question, not this one's.
  *
  * **One correction takes a flag off, and never puts one on.** A flag left on a stay whose last day
  * has passed is dead — ADR 0001: nothing reads it. Correcting that last day to today or later would
@@ -392,6 +446,8 @@ export interface EndOccupancyRequest {
  * @throws {TypeError} when `endedOn` is not a `YYYY-MM-DD` day.
  * @throws {OccupancyNotFoundError} when `occupancyId` names no occupancy.
  * @throws {OccupancyDateOrderError} when `endedOn` is earlier than the day the stay started.
+ * @throws {OccupancyEndOverlapError} when `endedOn` would intersect a later Masa Huni the same
+ *   resident already holds in this unit. Nothing is changed.
  */
 export async function endOccupancy(
 	db: Database,
@@ -409,6 +465,16 @@ export async function endOccupancy(
 		}
 		if (existing.endedOn === request.endedOn) {
 			return existing;
+		}
+
+		const next = await findNextOccupancy(
+			transaction,
+			existing.residentId,
+			existing.unitId,
+			existing.startedOn
+		);
+		if (next && request.endedOn >= next.startedOn) {
+			throw new OccupancyEndOverlapError(next.startedOn);
 		}
 
 		const today = currentDay(clock);
@@ -987,6 +1053,45 @@ export async function findOverlappingOccupancy(
 	)[0];
 }
 
+/**
+ * The Masa Huni among `residentId`'s stays in `unitId` that starts after `afterStartedOn`, earliest
+ * start first, or `undefined` when there is none. `endOccupancy` asks this — see its own doc comment
+ * for the rule — to guard the fifth path decision 6 was extended to by #258: moving a stay's last day
+ * must not reach a later stay the same resident already holds in the same unit.
+ *
+ * Only a stay starting strictly *after* `afterStartedOn` — the stay being ended's own `startedOn` — is
+ * considered. A stay starting on the same day or earlier is not a later stay to reach; pairs like that
+ * exist only in data the #242 script already cleaned up, and comparing against them would make that old
+ * data impossible to end at all, the same reason `findOverlappingOccupancy` above leaves rows that have
+ * already passed out of its own comparison.
+ *
+ * Only correct while `unitId`'s row lock is held — `endOccupancy` takes it via `lockUnitOfOccupancy`,
+ * the same row `lockUnit` takes for `recordOccupancy` and for `ensureOccupancy` in `../invitation` and
+ * `../registration`. So a call ending a stay and a call recording or inviting the same resident into
+ * the same unit can never both read past this check before the other has written its row — the same
+ * argument `movePrimaryOccupantMarker`'s doc comment makes for the flag's move.
+ */
+async function findNextOccupancy(
+	transaction: Transaction,
+	residentId: string,
+	unitId: string,
+	afterStartedOn: string
+): Promise<Occupancy | undefined> {
+	const [next] = await transaction
+		.select()
+		.from(occupancies)
+		.where(
+			and(
+				eq(occupancies.residentId, residentId),
+				eq(occupancies.unitId, unitId),
+				gt(occupancies.startedOn, afterStartedOn)
+			)
+		)
+		.orderBy(asc(occupancies.startedOn))
+		.limit(1);
+	return next;
+}
+
 /** `day` plus one calendar day, both as `YYYY-MM-DD`. A calendar day has no time-zone component, so
  * doing the arithmetic in UTC cannot shift it — unlike `civilDayOf` in `$lib/time`, which reads an
  * instant, this reads and returns a day and never touches `Clock`.
@@ -995,6 +1100,13 @@ function nextDay(day: string): string {
 	const next = new Date(`${day}T00:00:00Z`);
 	next.setUTCDate(next.getUTCDate() + 1);
 	return next.toISOString().slice(0, 10);
+}
+
+/** `day` minus one calendar day, both as `YYYY-MM-DD` — the inverse of `nextDay`, same reasoning. */
+function previousDay(day: string): string {
+	const previous = new Date(`${day}T00:00:00Z`);
+	previous.setUTCDate(previous.getUTCDate() - 1);
+	return previous.toISOString().slice(0, 10);
 }
 
 /**
