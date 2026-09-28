@@ -204,15 +204,20 @@ export function visibilityDateFilter(
 /**
  * Today, as the calendar day `YYYY-MM-DD` that the occupancy table's `date` columns compare against.
  *
- * **Two different questions get two different predicates, and this one belongs to only one of them.**
+ * **This is not how the Penanggung Jawab slot is read.** Since
+ * `docs/adr/0001-penanggung-jawab-berpindah.md`, the Penanggung Jawab is the Masa Huni marked
+ * `isPrimaryOccupant` that is living here today, and that invariant is kept by the service under the
+ * Unit's row lock — `lockUnit` and `movePrimaryOccupantMarker` in
+ * `src/lib/server/services/occupancy/index.ts` — not by a query this function's day feeds. The
+ * partial unique index `occupancies_primary_occupant_unique` does key on `ended_on is null`, which
+ * remains true of the index itself, but nothing asks that as a question about who holds the flag
+ * today; see that module's doc comment for what the index does and does not cover.
  *
- * - *"Is the primary-occupant slot the database guards filled?"* is `ended_on is null`, exactly what
- *   `occupancies_primary_occupant_unique` means by it, and it does not need a day at all.
- * - *"Is this person living here now?"* is `isStillRunningOn` below, and it does. An end date written
- *   before it arrives — someone announcing in March that they move out next year — is a normal thing
- *   for a superuser to record, and reading it as "already gone" tells a resident their home is not
- *   theirs. A start date written before it arrives is the same case from the other end: someone
- *   recorded today as moving in next month does not live here yet.
+ * What this day *does* feed is *"is this person living here now?"*, which is `isStillRunningOn`
+ * below. An end date written before it arrives — someone announcing in March that they move out next
+ * year — is a normal thing for a superuser to record, and reading it as "already gone" tells a
+ * resident their home is not theirs. A start date written before it arrives is the same case from the
+ * other end: someone recorded today as moving in next month does not live here yet.
  *
  * **The instant is read as a day in the complex's own zone.** `Clock.now()` answers which *moment*
  * it is, never which day it is somewhere, and `src/lib/time.ts` settles the zone the complex reads
