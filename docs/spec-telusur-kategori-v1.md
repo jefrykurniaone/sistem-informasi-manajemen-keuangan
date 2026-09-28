@@ -8,10 +8,22 @@
 | Tiket | #267, #268, #269 |
 | Branch integrasi | `feat/telusur-kategori` (lokal; satu PR ke `main` di akhir run) |
 | Disalin pada | 2026-09-29 |
+| Lintasan penutup | 2026-09-29, sesudah Gelombang 3 (`b42dd33`) |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
 item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
+
+Lintasan penutup menambahkan penanda *Sesudah run* di bawah garis pada setiap klaim yang dibalik
+atau diubah bentuknya oleh tiket run ini. Tidak ada teks yang dihapus. Klaim yang ditandai:
+
+- kelima masalah di *Problem statement*: layar melompat, detail yang menggabungkan kedua arah dan "Sedang dibuka", kata "Rincian", tautan tidak sejajar, dan sel kosong di pratinjau admin (#267, #268, #269);
+- tempat dan bentuk akhir payload di keputusan 2 (#268, #269);
+- tempat isi baris detail dan cara tautannya dibangun di keputusan 3 (#268, #269);
+- cara kesejajaran tautan dicapai di keputusan 3 (#267);
+- pratinjau admin sesudah bulan terbit di keputusan 3 (#267);
+- "repo ini belum punya contoh pengaturan fokus" di keputusan 4 (#268);
+- "fakta ini hanya tertulis di komentar kode" di keputusan 6.
 
 ---
 
@@ -20,10 +32,24 @@ item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan 
 Warga membuka Laporan Bulanan yang sudah terbit dan mengeklik "Lihat transaksi" pada satu kategori, supaya angka besar bisa ia periksa sendiri (cerita 20 spec `kas-laporan`). Per 2026-09-29, yang terjadi:
 
 - **Layar melompat ke paling atas.** Daftar transaksinya muncul di bawah kedua tabel kategori. Pembaca harus menggulir melewati dua tabel untuk menemukannya, dan di ponsel tidak ada tanda bahwa sesuatu baru saja terbuka. Menutupnya juga melompat ke atas.
+
+> *Sesudah run (2026-09-29):* sejak #268, detail muncul tepat di bawah baris yang diklik. Membuka dan menutup tidak menggeser layar: di 390×844, `scrollY` tetap 1311 pada walk orchestrator.
+
 - **Kategori yang punya Koreksi muncul di dua tabel.** Di Data Contoh, "Perbaikan Rp 260.000" di tabel pemasukan ternyata Koreksi atas pengeluaran "Perbaikan engsel gerbang depan". Kedua baris Perbaikan sama-sama bertuliskan "Sedang dibuka". Daftarnya menggabungkan kas masuk dan kas keluar, sehingga jumlahnya tidak cocok dengan angka di baris mana pun.
+
+> *Sesudah run (2026-09-29):* sejak #268, detail dibuka per arah dan jumlahnya sama dengan angka baris itu. "Sedang dibuka" dihapus, dan baris yang terbuka bertuliskan "Tutup". Sejak #269, detail menyebut arah lain dalam satu kalimat, misalnya "Kategori ini juga punya Koreksi kas masuk Rp 260.000 bulan ini." dari sisi pengeluaran Perbaikan Data Contoh.
+
 - **Kata "Rincian" dipakai untuk dua hal.** Judul tabel "Rincian pemasukan per kategori" memakai *rincian* dalam arti daftar kategori. Kolom "Rincian" di dalamnya, "Tidak dirinci", dan "Tutup rincian" memakainya dalam arti daftar transaksi. Pemilik sendiri bertanya apa arti "Rincian: Tidak dirinci".
+
+> *Sesudah run (2026-09-29):* sejak #267 dan #268, kolomnya bernama "Transaksi", sel iuran "Tidak ditampilkan", dan tautan tutup "Tutup". Judul tabel "Rincian pemasukan/pengeluaran per kategori" tetap, sesuai keputusan 5.
+
 - **Tautannya tidak sejajar.** Pada baris yang punya tautan, barisnya lebih tinggi dan teks tautannya turun, tidak sejajar dengan nama kategori dan jumlahnya.
+
+> *Sesudah run (2026-09-29):* sejak #267, teks tautan sejajar dengan nama kategori dan jumlahnya; lihat catatan di keputusan 3.
+
 - **Pratinjau admin tidak menjelaskan sel kosong.** Kolom itu kosong untuk semua kategori selain iuran, tanpa penjelasan.
+
+> *Sesudah run (2026-09-29):* sejak #267, sel kategori selain iuran di pratinjau admin bertuliskan "Tersedia setelah terbit" dengan warna redup.
 
 ## Solution
 
@@ -107,8 +133,21 @@ interface ReportCategoryDrilldown {
 - Kolom setiap transaksi tetap enam: id, tanggal, tipe, keterangan, jumlah, dan penanda Koreksi. Tes privasi yang mengunci daftar kolom itu tidak diubah.
 - `isOwnDirection` dibaca dari tipe Kategori Kas di basis data. Baris laporan yang dibekukan membawa arah per baris, tetapi tidak membawa tipe kategorinya.
 
+> *Sesudah run (2026-09-29):*
+> - Bentuk akhirnya ada di `src/lib/server/services/report/resident-payload.ts`: `ReportCategoryDrilldown` dengan `direction: CashCategoryType`, dan `otherDirection: ReportOtherDirection` dengan tiga varian seperti sketsa di atas (#268, #269). `ReportViewRequest` mendapat `direction?`, yang dibaca loader dari parameter `type`.
+> - Urutan di `drilldownFor`: iuran atau kategori kosong menjawab `null` lebih dulu untuk arah apa pun, lalu id kategori harus ada di baris beku revisi ini sebelum query apa pun, lalu tipe Kategori Kas dibaca, lalu barisnya dipilih.
+> - `sinceRevision` dipakai bila arah lain tidak punya baris beku dan total buku kas arah itu lebih dari 0.
+
 **3. Tampilan.**
 - Komponen tabel kategori menggambar sendiri baris yang terbuka dan satu baris detail selebar tabel tepat di bawahnya. Bagian "Transaksi kategori" di bawah kedua tabel dihapus dari halaman laporan warga.
+
+> *Sesudah run (2026-09-29):*
+> - Isi baris detail ada di komponen baru `src/lib/components/report/category-drilldown.svelte`. Komponen tabel menggambar baris `<tr><td colspan=3>` tepat di bawah baris yang terbuka dan meneruskan isinya ke komponen itu (#268).
+> - Semua href (buka, "Tutup", dan tautan kalimat arah lain) dibangun di komponen tabel dan diteruskan sebagai snippet, karena lint repo mewajibkan `resolve()` inline di atribut `href`.
+> - Arah tabel sampai ke komponen lewat `ReportDrilldownTarget.direction`, dengan prop `detail` opsional. Halaman pratinjau admin memberi `drilldown={null}`, jadi tidak diubah.
+> - Id baris adalah `transaksi-<direction>-<categoryId>`, dengan judul detail `…-heading` dan tautan buka `…-open`.
+> - Tautan kalimat arah lain berada di baris sendiri di bawah kalimatnya, bukan di dalam kalimat, supaya area sentuh 44 piksel tidak merusak tinggi baris kalimat di 390 piksel (#269).
+
 - Isi baris detail, berurutan:
   - judul;
   - baris angka "Diterbitkan · Buku kas saat ini" dan pemberitahuan bahwa buku kas berubah, keduanya **hanya jika arah itu berubah**;
@@ -122,7 +161,12 @@ interface ReportCategoryDrilldown {
 
   Kata "Koreksi" hanya dipakai dari sisi tipe kategori sendiri. Dari arah itu, pernyataannya pasti benar. Dari sisi Koreksi, transaksi yang dikoreksi bisa saja ada di bulan lain.
 - Area sentuh tautan tetap minimal 44 piksel, tetapi teksnya sejajar dengan nama kategori dan jumlah di baris yang sama.
+
+> *Sesudah run (2026-09-29):* teks sejajar lewat perataan baseline `inline-flex`. Tautan memakai `-mt-3 inline-flex min-h-11 items-center` (#267), dan `-mt-3` mencegah line box sel tumbuh ke atas. Versi pertama juga memakai `-mb-3`, tetapi baris lalu menyusut ke 37 piksel dan kotak 44 piksel tautan bersebelahan saling menimpa 7 piksel, sehingga `-mb-3` dibuang. Terukur di 1280 dan 390: selisih posisi atas teks 0 piksel, tinggi tautan 44, tanpa tumpang tindih. "Tutup" di baris memakai kelas yang sama (#268).
+
 - Di pratinjau admin, sel yang akan bisa dibuka setelah terbit bertuliskan "Tersedia setelah terbit" dengan warna redup. Sel iuran tetap "Tidak ditampilkan".
+
+> *Sesudah run (2026-09-29):* sesudah laporan bulan itu terbit, pratinjau admin tetap bertuliskan "Tersedia setelah terbit", karena halaman admin selalu memberi `drilldown={null}` ke komponen tabel (#267). Halaman admin berada di luar surface run ini, jadi hal ini dicatat untuk pemilik, bukan diubah.
 
 **4. Scroll dan fokus.** Per 2026-09-29, repo ini belum punya contoh pengaturan fokus atau scroll setelah navigasi, jadi pola ini baru.
 - Semua tautan buka, tutup, dan pindah arah memakai `data-sveltekit-noscroll` dan `data-sveltekit-keepfocus`, dan href-nya membawa `#` ke baris itu. Scout memastikan perilaku SvelteKit 2.70 yang terpasang:
@@ -132,6 +176,8 @@ interface ReportCategoryDrilldown {
 - Setelah navigasi, halaman memindahkan fokus sendiri:
   - saat membuka, dan saat pindah dari satu kategori ke kategori lain: ke judul detail. Judul diberi `tabindex="-1"`. Fokus tanpa `preventScroll`, sehingga judul yang terdorong ke luar layar (karena daftar lama di atasnya runtuh) digulir masuk;
   - saat menutup: ke tautan "Lihat transaksi" baris itu, dan baris itu digulir ke tampilan.
+
+> *Sesudah run (2026-09-29):* repo ini kini punya contohnya: `afterNavigate` di `src/routes/(app)/reports/[period]/+page.svelte` (#268). Ia hanya bertindak pada navigasi bertipe `link` yang tetap di periode dan revisi yang sama, sehingga muatan pertama, ganti revisi, dan tombol kembali/maju tidak diubah. Fokus dipanggil tanpa `preventScroll`. Tautan kalimat arah lain (#269) memakai penanganan yang sama tanpa kode tambahan.
 
 **5. Kata.** Semua teks ada di katalog `id` dan `en`, tanpa em dash. Kunci yang tidak terpakai lagi dihapus, termasuk "Sedang dibuka", dua kolom kas masuk/kas keluar, dan empat kalimat diterbitkan/buku kas per arah.
 
@@ -154,6 +200,8 @@ interface ReportCategoryDrilldown {
 Kalimat arah lain punya varian untuk kedua arah: kas masuk atau kas keluar, dan Koreksi kas masuk atau Koreksi kas keluar. Judul tabel "Rincian pemasukan/pengeluaran per kategori", pemberitahuan perubahan, pesan kosong, dan penanda Koreksi tidak berubah.
 
 **6. Glosarium.** Definisi **Koreksi** di `CONTEXT.md` ditambah satu kalimat: "Arahnya selalu berlawanan dengan tipe Kategori Kas-nya." Per 2026-09-29, fakta ini hanya tertulis di komentar kode, padahal rancangan ini bergantung padanya.
+
+> *Sesudah run (2026-09-29):* definisi Koreksi di `CONTEXT.md` memuat kalimat itu sejak `06b475c`, sebelum Gelombang 1.
 
 ## Testing decisions
 
