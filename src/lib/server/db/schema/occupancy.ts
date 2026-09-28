@@ -16,7 +16,7 @@ import { units } from './unit';
 /**
  * `occupancies`: who lives in which house, for which stretch of time. This is the table that
  * answers "siapa yang tinggal di C-12 pada Maret lalu", and — through the `isPrimaryOccupant` flag
- * — "ke mana tagihan rumah itu dikirim".
+ * — "ke mana tagihan rumah itu dikirim sekarang".
  *
  * Decisions settled here:
  *
@@ -25,46 +25,56 @@ import { units } from './unit';
  *   attached to it while a tenant lives there. So there is no unique pair on `(unit_id,
  *   resident_id)` and none on either column alone. The only uniqueness here is the one below, on
  *   the primary occupant.
- * - **The primary occupant is a flag on this row, not a column on `units` and not a table of its
- *   own.** A column on `units` pointing at a resident could name someone who never lived there, and
- *   a table of its own would hold the same pair of values as the occupancy it belongs to and would
- *   then have to be kept in step with it. The flag cannot disagree with the occupancy it is part
- *   of, because it *is* part of it. This is the same argument `job_runs` makes for keeping the lock
- *   in the history row.
- * - **At most one running occupancy per unit may carry the flag, and the database is what refuses
- *   the second.** `occupancies_primary_occupant_unique` is a unique index on `unit_id` restricted
- *   to the rows where `is_primary_occupant` is true and `ended_on` is null. It is the whole
- *   mechanism: no read happens first, so two requests arriving at the same instant cannot both find
- *   the unit free and both write. `tests/unit/schema-resident-unit.test.ts` proves it by inserting
- *   the second row directly, with no service layer anywhere near it, and asserting on PostgreSQL's
- *   own `23505` and the index's name.
+ * - **The primary occupant — the Penanggung Jawab — is a flag on this row, not a column on `units`
+ *   and not a table of its own.** A column on `units` pointing at a resident could name someone who
+ *   never lived there, and a table of its own would hold the same pair of values as the occupancy it
+ *   belongs to and would then have to be kept in step with it. The flag cannot disagree with the
+ *   occupancy it is part of, because it *is* part of it. This is the same argument `job_runs` makes
+ *   for keeping the lock in the history row.
+ * - **The flag means "the house's invoice emails go here now", and it moves.**
+ *   `docs/adr/0001-penanggung-jawab-berpindah.md` settles it. Marking another running occupancy of
+ *   the same house takes the flag off the previous holder and puts it on the new one, effective at
+ *   once; the previous holder keeps living there for as long as their own stay runs. The flag only
+ *   lands on an occupancy that is running today, and the Penanggung Jawab is the flagged occupancy
+ *   running today. Who held it before is recorded in the audit log, not here: a flag left on an
+ *   occupancy whose last day has passed is not history, nothing reads it, and ending an occupancy
+ *   does not clear it. This withdraws `docs/spec-warga-unit-v1.md`'s promise that this table could
+ *   answer "the Penanggung Jawab of a Unit on a date" — that question is the audit log's.
+ * - **At most one flagged row per unit among the occupancies whose last day has not passed or has
+ *   not been written — and the service keeps that, not this table.**
+ *   `src/lib/server/services/occupancy/index.ts` takes the unit's row lock before every write that
+ *   sets the flag, and takes the flag off every such row of the unit in the same transaction; its
+ *   doc comment holds the whole argument. No constraint here can state the rule, because "has not
+ *   passed" is a question about today.
+ * - **`occupancies_primary_occupant_unique` is the last line of defence, not the rule.** It is a
+ *   unique index on `unit_id` restricted to the rows where `is_primary_occupant` is true and
+ *   `ended_on` is null. `tests/unit/schema-resident-unit.test.ts` proves it on its own, by inserting a
+ *   second such row directly and asserting on PostgreSQL's `23505` and the index's name. It still
+ *   refuses the commonest mistake — two open-ended flagged occupancies in one house, written by
+ *   something that went round the service — and costs nothing, so it stays.
  *
- *   The index is partial rather than a plain unique on `(unit_id)` for the same reason `job_runs`
- *   made its claim index partial: the flag has to survive the end of the occupancy. The spec
- *   publishes "the primary occupant of a Unit on a date" as a contract for the later specs, and a
- *   design that cleared the flag when the occupancy ended would have no answer for a date in the
- *   past. A row that has ended keeps its flag as history and leaves the index, which frees the
- *   slot for the next resident in the same statement that ends the old occupancy — no second write
- *   that could be skipped, and no unit left permanently unassignable.
- *
- *   **What this index does not cover, deliberately:** it reads "still running" as `ended_on is
- *   null`, so writing an end date that is still in the future frees the slot before that date
- *   arrives, and a second primary occupant can then be marked for the overlapping days. Closing
- *   that would take an exclusion constraint over a `daterange` — `EXCLUDE USING gist (unit_id WITH
- *   =, daterange(started_on, ended_on) WITH &&) WHERE (is_primary_occupant)` — which needs the
- *   `btree_gist` extension. That extension is rejected here, not overlooked: the test harness
+ *   **What it does not cover:** a flagged row whose last day has been written but has not arrived
+ *   is outside the index while it is still inside the rule above. That is why the lock, not the
+ *   index, keeps the rule. An exclusion constraint over a `daterange` — `EXCLUDE USING gist (unit_id
+ *   WITH =, daterange(started_on, ended_on) WITH &&) WHERE (is_primary_occupant)` — would not close
+ *   it either: it states "no two flagged occupancies overlap", which is the date-clash model ADR 0001
+ *   rejected, since it makes a housemate who has lived there all along impossible to mark. It is
+ *   also refused for a reason of its own: it needs the `btree_gist` extension, the test harness
  *   migrates inside a schema of its own with `search_path` pinned to it, Vitest runs those files in
- *   parallel, and an extension is database-wide rather than schema-wide, so `create extension if
- *   not exists` would be a no-op for the second file and its operator class would then vanish when
- *   the first file drops its schema. A correctness rule that only holds when the test files happen
- *   to run in the right order is worse than a narrower rule that always holds. The service layer
- *   that ends an occupancy therefore owns the future-dated case, and this comment is where it is
- *   written down.
+ *   parallel, and an extension is database-wide rather than schema-wide, so `create extension if not
+ *   exists` would be a no-op for the second file and its operator class would then vanish when the
+ *   first file drops its schema.
+ *
+ *   The index is partial rather than a plain unique on `(unit_id)` so that a flag left on a finished
+ *   occupancy never blocks anything: a row with a last day written leaves the index.
  * - **`startedOn` and `endedOn` are `date`, read as strings.** They are calendar days, not
  *   instants: someone moves in on the 3rd, not at 00:00 in some time zone. `mode: 'string'` keeps
  *   them as `YYYY-MM-DD` all the way through, because turning a calendar day into a JavaScript
  *   `Date` makes it an instant at midnight somewhere, and reading it back anywhere else can move it
- *   a day. `endedOn` is null while the occupancy is still running.
+ *   a day. `endedOn` is the last day lived in, not the first day after it (`CONTEXT.md`, Masa
+ *   Huni), and is null until one is written — which is not the same as "still running": an
+ *   occupancy is running on a day when it has started and its last day has not passed, see
+ *   `isStillRunningOn` in `src/lib/server/services/occupancy/visibility.ts`.
  * - **`occupancies_date_order_check` refuses an end date earlier than the start date.** Same day is
  *   allowed — someone can move in and out on the 3rd, and the spec says "lebih awal dari", not
  *   "sama dengan".
@@ -114,17 +124,20 @@ export const occupancies = pgTable(
 		role: text().$type<OccupancyRole>().notNull(),
 		/** The first day of the occupancy. */
 		startedOn: date({ mode: 'string' }).notNull(),
-		/** The last day of it, or null while it is still running. */
+		/** The last day of it, a day still lived in, or null while none has been written. */
 		endedOn: date({ mode: 'string' }),
-		/** Whether this is the occupancy the house's invoice emails are addressed to. */
+		/**
+		 * The Penanggung Jawab flag: whether the house's invoice emails go to this occupancy while it is
+		 * running. It moves between occupancies — see ADR 0001 and the decisions above.
+		 */
 		isPrimaryOccupant: boolean().notNull().default(false),
 		createdAt: timestamp({ withTimezone: true }).notNull()
 	},
 	(table) => [
-		// One primary occupant per house among the occupancies that are still running. This index is
-		// the rule; nothing reads before writing, so two requests at the same instant cannot both
-		// find the house free. See the argument above for why the predicate is `ended_on is null`
-		// and what that does not cover.
+		// At most one flagged occupancy per house among those with no last day written. The last line
+		// of defence, not the rule: the Occupancy service keeps one flag per house among the
+		// occupancies that have not passed, under the unit's row lock. See the decisions above for
+		// what this index does not cover and why ADR 0001 leaves it that way.
 		uniqueIndex('occupancies_primary_occupant_unique')
 			.on(table.unitId)
 			.where(sql`is_primary_occupant and ended_on is null`),

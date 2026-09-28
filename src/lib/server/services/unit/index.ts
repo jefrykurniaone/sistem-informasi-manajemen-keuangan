@@ -7,12 +7,13 @@ import type { Clock } from '../../ports/clock';
 import { currentDay } from '../occupancy/visibility';
 import {
 	findUnitById,
+	PRIMARY_OCCUPANT_MISSING,
 	queryUnitsPage,
 	summarizeActiveOccupancies,
 	type OccupancySummary
 } from './queries';
 
-export type { ActiveOccupant, OccupancySummary } from './queries';
+export type { ActiveOccupant, OccupancySummary, PrimaryOccupantNeed } from './queries';
 
 /**
  * Managing the house register — Unit — the list `spec-warga-unit-v1.md` calls the one source of
@@ -81,23 +82,24 @@ const UNIQUE_VIOLATION = '23505';
 
 /**
  * A unit together with what its running occupancies add up to — how many people live there right
- * now, who they are, and whether one of them is the Penanggung Jawab. Shared by the list screen's
- * rows and the detail screen's single unit, so the two never drift into two slightly different
- * shapes of the same fact.
+ * now, who they are, and whether it needs a Penanggung Jawab named. Shared by the list screen's rows
+ * and the detail screen's single unit, so the two never drift into two slightly different shapes of
+ * the same fact.
  */
 export interface UnitWithOccupancySummary extends Unit, OccupancySummary {}
 
 /**
- * Whether this unit is one the admin list flags as needing attention: it is still in service, yet
- * nobody running is its primary occupant, so an invoice issued for it would have no addressee —
- * `spec-warga-unit-v1.md` asks for exactly this to be "terlihat di daftar admin sebagai hal yang
- * perlu dibereskan".
+ * Whether this unit is one the admin list flags as "perlu penanggung jawab": it is still in service,
+ * and either nobody living there today carries the Penanggung Jawab flag — an invoice issued now
+ * would have no addressee — or the one who does already has a last day written, and the flag has to
+ * be moved before it passes. Both states of `PrimaryOccupantNeed`, the same care the list took before
+ * the flag could move (`docs/spec-penghuni-v1.md` decision 5).
  *
  * It is decided here rather than on the screen so that the list and any later screen asking the same
  * question cannot answer it two different ways.
  */
 export function needsPrimaryOccupant(unit: UnitWithOccupancySummary): boolean {
-	return unit.isActive && !unit.hasPrimaryOccupant;
+	return unit.isActive && unit.primaryOccupantNeed !== null;
 }
 
 /** What the admin unit list screen asks for. */
@@ -181,14 +183,15 @@ export async function getUnit(
 const NO_RUNNING_OCCUPANCY: OccupancySummary = Object.freeze({
 	activeOccupantCount: 0,
 	activeOccupants: Object.freeze([]),
-	hasPrimaryOccupant: false
+	primaryOccupantNeed: PRIMARY_OCCUPANT_MISSING
 });
 
 /**
- * Attaches each unit's occupancy summary, in one query regardless of how many units there are.
+ * Attaches each unit's occupancy summary, in the same two queries regardless of how many units
+ * there are.
  *
- * The clock is here because `activeOccupants` means "living here on this day" — see
- * `summarizeActiveOccupancies` for why that is not the same question as `hasPrimaryOccupant`.
+ * The clock is here because both halves of the summary mean "on this day" — who is living here, and
+ * whether the Penanggung Jawab living here has a last day — see `summarizeActiveOccupancies`.
  * `listUnits` takes it as a required second argument, the position `createUnit` and the rest of this
  * service layer already put a `Clock` in. `getUnit` takes it last, where an earlier ticket had to
  * default it; every caller now passes one, tests included — a test that forgot would be reading the

@@ -16,6 +16,12 @@
 		tenant: m.adminOccupancies_roleTenant
 	};
 
+	/**
+	 * Why this unit needs a Penanggung Jawab named, as the Unit service decided it: `missing` is the
+	 * red warning, `leaving` the yellow one, `null` neither.
+	 */
+	const primaryOccupantNeed = $derived(data.unit.primaryOccupantNeed);
+
 	/** The stay's stretch of days, read as one line. */
 	function period(startedOn: string, endedOn: string | null): string {
 		if (endedOn === null) {
@@ -44,9 +50,19 @@
 		<p class="text-sm text-muted-foreground">{m.adminOccupancies_description()}</p>
 	</header>
 
-	{#if !data.unit.hasPrimaryOccupant}
+	{#if primaryOccupantNeed?.kind === 'missing'}
 		<p class="rounded-md border border-destructive px-3 py-2 text-sm text-destructive" role="alert">
 			{m.adminOccupancies_needsPrimaryOccupant()}
+		</p>
+	{:else if primaryOccupantNeed?.kind === 'leaving'}
+		<p
+			class="rounded-md border border-amber-500 bg-amber-50 px-3 py-2 text-sm break-words text-amber-900 dark:bg-amber-950 dark:text-amber-100"
+			role="status"
+		>
+			{m.adminOccupancies_primaryLeaving({
+				resident: primaryOccupantNeed.name,
+				endedOn: primaryOccupantNeed.endedOn
+			})}
 		</p>
 	{/if}
 
@@ -68,7 +84,11 @@
 					{period(occupancy.startedOn, occupancy.endedOn)}
 				</p>
 
-				{#if occupancy.isPrimaryOccupant}
+				<!--
+					A flag on a stay that is not running today names nobody (ADR 0001), so only a running
+					stay wears the badge.
+				-->
+				{#if occupancy.isRunning && occupancy.isPrimaryOccupant}
 					<p class="text-sm font-medium">{m.adminOccupancies_primaryBadge()}</p>
 				{/if}
 
@@ -96,6 +116,7 @@
 							</Button>
 						</form>
 
+						<!-- Offered only on a stay running today that does not hold the flag already. -->
 						{#if !occupancy.isPrimaryOccupant}
 							<form method="POST" action="?/setPrimary">
 								<input type="hidden" name="occupancyId" value={occupancy.occupancyId} />

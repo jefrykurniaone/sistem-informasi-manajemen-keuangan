@@ -136,8 +136,8 @@ async function insertSuperuser(name: string): Promise<{ userId: string; resident
 
 /**
  * A resident recorded as `unitId`'s active, running primary occupant — the recipient
- * `notifyInvoiceIssued` looks for. Written straight into `occupancies`, bypassing the service that
- * guards the primary-occupant slot; nothing in this file's tests needs that guard.
+ * `notifyInvoiceIssued` looks for. Written straight into `occupancies`, bypassing the Occupancy
+ * service that moves the Penanggung Jawab flag; nothing in this file's tests needs its lock.
  */
 async function insertPrimaryOccupant(
 	unitId: string,
@@ -719,6 +719,58 @@ describe('queuing the invoice-issued email', () => {
 		expect(summary.issuedCount).toBe(1);
 		expect(summary.skippedNotifications.map((skip) => skip.unitId)).toEqual([unit.id]);
 		expect(await invoiceIssuedEmails()).toEqual([]);
+	});
+
+	it('queues the email to the new Penanggung Jawab on the day the house is handed over', async () => {
+		// ADR 0001's same-day handover, seen from the run: the previous holder's last day is the
+		// issuance day, so they still live there, but the flag has moved to the one who arrived that
+		// same day. The Tagihan's email goes to the flagged stay and to nobody else.
+		await insertRate(MONTHLY_RATE, '2026-01-01');
+		const unit = await insertUnit();
+		const now = new Date(DURING_PERIOD);
+		const people = [];
+		for (const name of ['Warga Serah Terima Lama', 'Warga Serah Terima Baru']) {
+			const userId = randomUUID();
+			await testDb.db.insert(user).values({
+				id: userId,
+				name,
+				email: `${userId}@komplek.local`,
+				emailVerified: true,
+				createdAt: now,
+				updatedAt: now
+			});
+			const [resident] = await testDb.db
+				.insert(residents)
+				.values({ userId, createdAt: now })
+				.returning();
+			people.push({ residentId: resident.id, email: `${userId}@komplek.local` });
+		}
+		const [previous, next] = people;
+		await testDb.db.insert(occupancies).values([
+			{
+				unitId: unit.id,
+				residentId: previous.residentId,
+				role: OCCUPANCY_ROLE.owner,
+				startedOn: '2025-01-01',
+				endedOn: ISSUANCE_DAY,
+				isPrimaryOccupant: false,
+				createdAt: now
+			},
+			{
+				unitId: unit.id,
+				residentId: next.residentId,
+				role: OCCUPANCY_ROLE.tenant,
+				startedOn: ISSUANCE_DAY,
+				endedOn: null,
+				isPrimaryOccupant: true,
+				createdAt: now
+			}
+		]);
+
+		const summary = await issue(PERIOD);
+
+		expect(summary.skippedNotifications).toEqual([]);
+		expect((await invoiceIssuedEmails()).map((row) => row.recipient)).toEqual([next.email]);
 	});
 
 	it('queues no second email when a period already issued is run again', async () => {

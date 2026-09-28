@@ -1,16 +1,22 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { PermissionDeniedError } from '$lib/errors';
+import { rupiah } from '$lib/money';
 import { auditEntriesFor } from '$lib/server/audit';
 import { createConnection, readDatabaseUrl } from '$lib/server/db';
+import { auditLog } from '$lib/server/db/schema/audit';
 import { user } from '$lib/server/db/schema/auth';
 import { ROLE, userRoles } from '$lib/server/db/schema/authz';
+import { emailQueue } from '$lib/server/db/schema/email';
 import { occupancies, OCCUPANCY_ROLE } from '$lib/server/db/schema/occupancy';
 import { residents } from '$lib/server/db/schema/resident';
 import { units } from '$lib/server/db/schema/unit';
 import { testDatabase } from '$lib/server/db/test-helpers';
+import { INVOICE_ISSUED_KIND } from '$lib/server/email/templates/invoice-issued';
+import type { Clock } from '$lib/server/ports/clock';
 import { FakeClock } from '$lib/server/ports/fakes';
+import { notifyInvoiceIssued } from '$lib/server/services/dues/notification';
 import {
 	endOccupancy,
 	listAssignableResidents,
@@ -21,20 +27,27 @@ import {
 	OCCUPANCY_ENDED_ACTION,
 	OCCUPANCY_RECORDED_ACTION,
 	PRIMARY_OCCUPANT_MARKED_ACTION,
-	PrimaryOccupantConflictError,
+	PrimaryOccupantAlreadyEndedError,
+	PrimaryOccupantNotStartedError,
 	recordOccupancy,
 	ResidentNotFoundError,
 	setPrimaryOccupant
 } from '$lib/server/services/occupancy';
-import { listUnits, needsPrimaryOccupant, UnitNotFoundError } from '$lib/server/services/unit';
+import {
+	getUnit,
+	listUnits,
+	needsPrimaryOccupant,
+	UnitNotFoundError
+} from '$lib/server/services/unit';
 
 /**
- * The Masa Huni service: recording a stay, ending one, and the one-primary-occupant rule.
+ * The Masa Huni service: recording a stay, ending one, and moving the Penanggung Jawab flag.
  *
  * `tests/unit/schema-resident-unit.test.ts` already proves what the database refuses on its own.
  * This file proves what the service adds: named refusals instead of raw `SQLSTATE`s, the audit
- * trail, and — the reason this ticket exists — the future-dated `ended_on` case the partial index
- * deliberately does not cover.
+ * trail, and ADR 0001's model of the flag — it moves, it lands only on a stay running today, and
+ * per unit at most one row among the stays that have not passed carries it, including the rows whose
+ * last day is written but has not arrived, which the partial index deliberately does not cover.
  */
 
 const testDb = testDatabase();
@@ -52,13 +65,26 @@ const MID_YEAR = '2026-06-01';
  * The instant every *read* in this file happens at, and therefore the day the reads decide "living
  * here now" against. It sits after `ENDED_ON` and before `FUTURE_END`, so a stay ending on the first
  * really has ended while one ending on the second has not — which is the whole distinction the
- * occupant count and `/my-unit` turn on. Writes keep using a clock at `START`, because what they
- * stamp is `createdAt` and the audit row, not a decision about today.
+ * occupant count and `/my-unit` turn on. Writes that decide nothing about today keep using a clock at
+ * `START`, because what they stamp is `createdAt` and the audit row.
  */
 const READ_CLOCK = new FakeClock('2026-08-01T12:00:00.000Z');
 
+/**
+ * The clock every write that moves the Penanggung Jawab flag reads today from. Moving the flag is a
+ * decision about today — its target has to be living here — so those writes happen on the same day
+ * the reads look at. `TODAY` is that day in WIB, and `YESTERDAY` and `TOMORROW` the days either side.
+ */
+const TODAY_CLOCK = READ_CLOCK;
+const TODAY = '2026-08-01';
+const YESTERDAY = '2026-07-31';
 /** The day after `READ_CLOCK`'s: a start date that has been written but has not arrived. */
 const TOMORROW = '2026-08-02';
+
+/** How long a call is given to start waiting on a lock before the test gives up on it. */
+const WAIT_TIMEOUT_MILLISECONDS = 10_000;
+/** How often `waitUntilWaitingOn` asks PostgreSQL again. */
+const POLL_MILLISECONDS = 10;
 
 /** Makes every block this file writes different from every other one, across every test. */
 let sequence = 0;
@@ -151,6 +177,128 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 async function readOccupancy(occupancyId: string) {
 	const [row] = await testDb.db.select().from(occupancies).where(eq(occupancies.id, occupancyId));
 	return row;
+}
+
+/**
+ * The ids of the unit's flagged rows whose last day has not passed on `day`, or has not been written
+ * — the set ADR 0001's invariant says holds at most one row.
+ */
+async function flaggedNotPassed(unitId: string, day = TODAY): Promise<readonly string[]> {
+	const rows = await testDb.db
+		.select({ id: occupancies.id, endedOn: occupancies.endedOn })
+		.from(occupancies)
+		.where(and(eq(occupancies.unitId, unitId), eq(occupancies.isPrimaryOccupant, true)));
+	return rows.filter((row) => row.endedOn === null || row.endedOn >= day).map((row) => row.id);
+}
+
+/** Every `PRIMARY_OCCUPANT_MARKED_ACTION` entry about one unit, whichever occupancy it targets. */
+async function markedEntriesOf(unitId: string) {
+	const rows = await testDb.db
+		.select()
+		.from(auditLog)
+		.where(eq(auditLog.action, PRIMARY_OCCUPANT_MARKED_ACTION));
+	return rows.filter((row) => (row.after as { unitId?: string } | null)?.unitId === unitId);
+}
+
+/**
+ * Who `notifyInvoiceIssued` addresses this unit's invoice email to on `clock`'s day, as an account
+ * id, or `undefined` when it finds nobody. Every test account's address is `<user id>@komplek.local`.
+ */
+async function invoiceRecipient(unitId: string, clock: Clock): Promise<string | undefined> {
+	const block = unique('SURAT');
+	await notifyInvoiceIssued(testDb.db, clock, {
+		unitId,
+		block,
+		number: '1',
+		period: '2026-08',
+		amount: rupiah(150_000),
+		dueDate: '2026-08-05'
+	});
+	const rows = await testDb.db
+		.select({ recipient: emailQueue.recipient, payload: emailQueue.payload })
+		.from(emailQueue)
+		.where(eq(emailQueue.kind, INVOICE_ISSUED_KIND));
+	const queued = rows.filter((row) => (row.payload as { block?: string }).block === block);
+	expect(queued.length).toBeLessThanOrEqual(1);
+	return queued[0]?.recipient.replace('@komplek.local', '');
+}
+
+/**
+ * A second, independent connection into this file's own schema, standing in for a concurrent
+ * request with its own transaction.
+ */
+async function connectToSchema() {
+	const other = createConnection(readDatabaseUrl('TEST_DATABASE_URL'), {
+		options: `-c search_path=${testDb.schemaName}`
+	});
+	const client = await other.pool.connect();
+	const [{ pid }] = (await client.query<{ pid: number }>('select pg_backend_pid() as pid')).rows;
+	return {
+		client,
+		pid,
+		release: async () => {
+			client.release();
+			await other.close();
+		}
+	};
+}
+
+/**
+ * Waits until at least `waiters` backends are waiting, directly or down a queue, on a lock the
+ * backend `blockerPid` holds. Polled, because PostgreSQL announces no event for a statement starting
+ * to wait.
+ *
+ * "Down a queue" matters as soon as two calls wait for one row: the first waits on the holder, and
+ * the second waits on the first — `pg_blocking_pids` names whoever stands directly in its way — so
+ * the chain is followed rather than only the holder's own waiters counted. Only this file's own calls
+ * can wait on a connection this file opened itself, so the count is theirs alone.
+ */
+async function waitUntilWaitingOn(blockerPid: number, waiters = 1): Promise<void> {
+	const deadline = Date.now() + WAIT_TIMEOUT_MILLISECONDS;
+	while (Date.now() < deadline) {
+		const result = await testDb.db.execute<{ waiting: number }>(
+			sql`with recursive waiting_on_blocker(pid) as (
+				select activity.pid from pg_stat_activity activity
+				where ${blockerPid}::int = any(pg_blocking_pids(activity.pid))
+				union
+				select activity.pid from pg_stat_activity activity
+				join waiting_on_blocker behind on behind.pid = any(pg_blocking_pids(activity.pid))
+			)
+			select count(*)::int as waiting from waiting_on_blocker`
+		);
+		if ((result.rows[0]?.waiting ?? 0) >= waiters) {
+			return;
+		}
+		await new Promise((resolve) => setTimeout(resolve, POLL_MILLISECONDS));
+	}
+	throw new Error(`Fewer than ${waiters} backends ever waited on backend ${blockerPid}.`);
+}
+
+/**
+ * The move ADR 0001 describes, written by hand on another connection's open transaction: the unit's
+ * row lock, the flag off every row that has not passed, the flag on `targetId`. It stops before
+ * `commit`, which is the caller's to send.
+ *
+ * The unit row is locked `for no key update` rather than the service's `for update`. The two
+ * conflict, so a service call still has to wait for this transaction in `lockUnit`; but a foreign-key
+ * check on the unit — the `insert` in `recordOccupancy` takes `for key share` on it — does not wait
+ * for `for no key update`, where it would for `for update`. That leaves the service's own lock as the
+ * only thing that can hold the call back, so a test built on this fails if that lock goes missing
+ * rather than passing on the foreign key's account.
+ */
+async function moveFlagByHand(
+	client: Awaited<ReturnType<typeof connectToSchema>>['client'],
+	unitId: string,
+	targetId: string
+): Promise<void> {
+	await client.query('begin');
+	await client.query('select id from units where id = $1 for no key update', [unitId]);
+	await client.query(
+		`update occupancies set is_primary_occupant = false
+		 where unit_id = $1 and is_primary_occupant and (ended_on is null or ended_on >= $2)`,
+		[unitId, TODAY]
+	);
+	await client.query('update occupancies set is_primary_occupant = true where id = $1', [targetId]);
 }
 
 describe('recordOccupancy', () => {
@@ -250,7 +398,7 @@ describe('recordOccupancy', () => {
 		).rejects.toThrow(ResidentNotFoundError);
 	});
 
-	it('marks the stay as the primary occupant when asked to', async () => {
+	it('marks the stay as the primary occupant when asked to, recording it and then the move', async () => {
 		const superuserId = await insertSuperuser('Pengurus Penanggung Jawab');
 		const unitId = await insertUnitRow();
 		const { residentId } = await insertResident('Warga Penanggung Jawab');
@@ -265,81 +413,95 @@ describe('recordOccupancy', () => {
 		});
 
 		expect(created.isPrimaryOccupant).toBe(true);
-	});
-
-	it('refuses a second primary occupant while the first stay is still running, naming who holds it', async () => {
-		const superuserId = await insertSuperuser('Pengurus Penanggung Jawab Ganda');
-		const unitId = await insertUnitRow();
-		const holder = await insertResident('Warga Penanggung Jawab Sekarang');
-		const challenger = await insertResident('Warga Penantang');
-		await insertOccupancyRow(unitId, holder.residentId, { isPrimaryOccupant: true });
-
-		const refusal = await rejection(
-			recordOccupancy(testDb.db, new FakeClock(START), {
-				actorId: superuserId,
-				unitId,
-				residentId: challenger.residentId,
-				role: OCCUPANCY_ROLE.tenant,
-				startedOn: MID_YEAR,
-				isPrimaryOccupant: true
-			})
+		const entries = await auditEntriesFor(testDb.db, created.id);
+		expect(entries.map((entry) => entry.action).sort()).toEqual(
+			[OCCUPANCY_RECORDED_ACTION, PRIMARY_OCCUPANT_MARKED_ACTION].sort()
 		);
-
-		expect(refusal).toBeInstanceOf(PrimaryOccupantConflictError);
-		expect(refusal).toMatchObject({
-			unitId,
-			residentId: holder.residentId,
-			residentName: 'Warga Penanggung Jawab Sekarang',
-			startedOn: STARTED_ON,
-			endedOn: null
+		// Nobody held the flag before, so the move's `before` is empty.
+		expect(entries.find((entry) => entry.action === PRIMARY_OCCUPANT_MARKED_ACTION)).toMatchObject({
+			before: null,
+			after: { occupancyId: created.id, residentId, unitId }
 		});
 	});
 
-	it('refuses a second primary occupant when the first one ends on a day that has not arrived yet', async () => {
-		// The gap `src/lib/server/db/schema/occupancy.ts` records and leaves to this layer:
-		// `occupancies_primary_occupant_unique` reads "still running" as `ended_on is null`, so a
-		// future end date frees the slot early and the database accepts the second row. Nothing about
-		// this case is visible to the index — only the service refuses it.
+	it('moves the flag onto the new stay while another Penanggung Jawab lives there, who stays', async () => {
+		// Under the date-clash model this was refused with "Unit ini sudah punya penanggung jawab pada
+		// rentang tanggal itu". ADR 0001 makes ticking the box a move instead.
+		const superuserId = await insertSuperuser('Pengurus Catat Sambil Pindah');
+		const unitId = await insertUnitRow();
+		const holder = await insertResident('Warga Penanggung Jawab Sekarang');
+		const newcomer = await insertResident('Warga Penanggung Jawab Baru');
+		const holderId = await insertOccupancyRow(unitId, holder.residentId, {
+			isPrimaryOccupant: true
+		});
+
+		const created = await recordOccupancy(testDb.db, TODAY_CLOCK, {
+			actorId: superuserId,
+			unitId,
+			residentId: newcomer.residentId,
+			role: OCCUPANCY_ROLE.tenant,
+			startedOn: MID_YEAR,
+			isPrimaryOccupant: true
+		});
+
+		expect(created.isPrimaryOccupant).toBe(true);
+		expect(await readOccupancy(holderId)).toMatchObject({
+			isPrimaryOccupant: false,
+			endedOn: null
+		});
+		expect(await flaggedNotPassed(unitId)).toEqual([created.id]);
+		const entries = await markedEntriesOf(unitId);
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({
+			actorId: superuserId,
+			targetId: created.id,
+			before: { occupancyId: holderId, residentId: holder.residentId },
+			after: { occupancyId: created.id, residentId: newcomer.residentId, unitId }
+		});
+	});
+
+	it('takes the flag off a holder whose last day has not arrived, which the partial index cannot see', async () => {
+		// `occupancies_primary_occupant_unique` covers flagged rows with no last day only. A flagged
+		// row whose last day is written but still ahead is outside it and inside ADR 0001's invariant,
+		// so only the service's move keeps the house at one flag here.
 		const superuserId = await insertSuperuser('Pengurus Celah Masa Depan');
 		const unitId = await insertUnitRow();
 		const holder = await insertResident('Warga Masih Bertanggung Jawab');
-		const challenger = await insertResident('Warga Datang Awal');
-		await insertOccupancyRow(unitId, holder.residentId, {
+		const newcomer = await insertResident('Warga Datang Awal');
+		const holderId = await insertOccupancyRow(unitId, holder.residentId, {
 			endedOn: FUTURE_END,
 			isPrimaryOccupant: true
 		});
 
-		const refusal = await rejection(
-			recordOccupancy(testDb.db, new FakeClock(START), {
-				actorId: superuserId,
-				unitId,
-				residentId: challenger.residentId,
-				role: OCCUPANCY_ROLE.tenant,
-				startedOn: MID_YEAR,
-				isPrimaryOccupant: true
-			})
-		);
+		const created = await recordOccupancy(testDb.db, TODAY_CLOCK, {
+			actorId: superuserId,
+			unitId,
+			residentId: newcomer.residentId,
+			role: OCCUPANCY_ROLE.tenant,
+			startedOn: MID_YEAR,
+			isPrimaryOccupant: true
+		});
 
-		expect(refusal).toBeInstanceOf(PrimaryOccupantConflictError);
-		expect(refusal).toMatchObject({ residentName: 'Warga Masih Bertanggung Jawab' });
-		const rows = await testDb.db
-			.select()
-			.from(occupancies)
-			.where(eq(occupancies.residentId, challenger.residentId));
-		expect(rows).toHaveLength(0);
+		expect(await readOccupancy(holderId)).toMatchObject({
+			isPrimaryOccupant: false,
+			endedOn: FUTURE_END
+		});
+		expect(await flaggedNotPassed(unitId)).toEqual([created.id]);
 	});
 
-	it('accepts the next primary occupant once the previous one’s days are over', async () => {
+	it('accepts the next primary occupant once the previous one’s days are over, and leaves that finished stay alone', async () => {
+		// A flag on a stay whose last day has passed names nobody and is not cleared: nothing reads it,
+		// and the spec leaves those flags where they are. The move therefore has no previous holder.
 		const superuserId = await insertSuperuser('Pengurus Pergantian');
 		const unitId = await insertUnitRow();
 		const leaving = await insertResident('Warga Pergi');
 		const arriving = await insertResident('Warga Datang');
-		await insertOccupancyRow(unitId, leaving.residentId, {
+		const leavingId = await insertOccupancyRow(unitId, leaving.residentId, {
 			endedOn: ENDED_ON,
 			isPrimaryOccupant: true
 		});
 
-		const created = await recordOccupancy(testDb.db, new FakeClock(START), {
+		const created = await recordOccupancy(testDb.db, TODAY_CLOCK, {
 			actorId: superuserId,
 			unitId,
 			residentId: arriving.residentId,
@@ -349,48 +511,138 @@ describe('recordOccupancy', () => {
 		});
 
 		expect(created.isPrimaryOccupant).toBe(true);
+		expect((await readOccupancy(leavingId)).isPrimaryOccupant).toBe(true);
+		expect(await markedEntriesOf(unitId)).toEqual([
+			expect.objectContaining({ before: null, after: expect.objectContaining({ unitId }) })
+		]);
 	});
 
-	it('refuses a second primary occupant written from another connection mid-flight', async () => {
-		// Two calls started together and awaited through Promise.allSettled would prove nothing:
-		// nothing makes one of them land inside the other's window. A second connection holding an
-		// open transaction does — and because the row it writes carries a future `ended_on`, the
-		// database index is not what refuses this. The service's own check is, and it only reaches
-		// the right answer because it takes the unit's row lock and reads again behind it.
+	it('hands the house over on one day: the last day of A is today, F starts today, and the invoice email goes to F', async () => {
+		const superuserId = await insertSuperuser('Pengurus Serah Terima');
+		const unitId = await insertUnitRow();
+		const a = await insertResident('Warga A Pindah Hari Ini');
+		const f = await insertResident('Warga F Masuk Hari Ini');
+		const aId = await insertOccupancyRow(unitId, a.residentId, { isPrimaryOccupant: true });
+
+		await endOccupancy(testDb.db, TODAY_CLOCK, {
+			actorId: superuserId,
+			occupancyId: aId,
+			endedOn: TODAY
+		});
+		// Ending leaves the flag where it is: A is still living here today, and still the recipient.
+		expect(await readOccupancy(aId)).toMatchObject({ endedOn: TODAY, isPrimaryOccupant: true });
+		expect(await invoiceRecipient(unitId, TODAY_CLOCK)).toBe(a.userId);
+
+		const created = await recordOccupancy(testDb.db, TODAY_CLOCK, {
+			actorId: superuserId,
+			unitId,
+			residentId: f.residentId,
+			role: OCCUPANCY_ROLE.tenant,
+			startedOn: TODAY,
+			isPrimaryOccupant: true
+		});
+
+		expect(await invoiceRecipient(unitId, TODAY_CLOCK)).toBe(f.userId);
+		const history = await listUnitOccupancies(testDb.db, TODAY_CLOCK, superuserId, unitId);
+		expect(history.find((row) => row.occupancyId === aId)).toMatchObject({
+			isRunning: true,
+			isPrimaryOccupant: false
+		});
+		expect(await markedEntriesOf(unitId)).toEqual([
+			expect.objectContaining({
+				before: { occupancyId: aId, residentId: a.residentId },
+				after: { occupancyId: created.id, residentId: f.residentId, unitId }
+			})
+		]);
+	});
+
+	it('refuses to record a stay starting tomorrow with the box ticked, naming its start date, and records nothing', async () => {
+		const superuserId = await insertSuperuser('Pengurus Centang Kecepatan');
+		const unitId = await insertUnitRow();
+		const holder = await insertResident('Warga Tetap Penanggung Jawab');
+		const early = await insertResident('Warga Belum Masuk Dicentang');
+		const holderId = await insertOccupancyRow(unitId, holder.residentId, {
+			isPrimaryOccupant: true
+		});
+
+		const refusal = await rejection(
+			recordOccupancy(testDb.db, TODAY_CLOCK, {
+				actorId: superuserId,
+				unitId,
+				residentId: early.residentId,
+				role: OCCUPANCY_ROLE.tenant,
+				startedOn: TOMORROW,
+				isPrimaryOccupant: true
+			})
+		);
+
+		expect(refusal).toBeInstanceOf(PrimaryOccupantNotStartedError);
+		expect(refusal).toMatchObject({ startedOn: TOMORROW });
+		const rows = await testDb.db
+			.select()
+			.from(occupancies)
+			.where(eq(occupancies.residentId, early.residentId));
+		expect(rows).toHaveLength(0);
+		expect(await flaggedNotPassed(unitId)).toEqual([holderId]);
+		expect(await markedEntriesOf(unitId)).toEqual([]);
+	});
+
+	it('still records a stay starting tomorrow when the box is not ticked', async () => {
+		const superuserId = await insertSuperuser('Pengurus Catat Besok');
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Masuk Besok Tanpa Centang');
+
+		const created = await recordOccupancy(testDb.db, TODAY_CLOCK, {
+			actorId: superuserId,
+			unitId,
+			residentId,
+			role: OCCUPANCY_ROLE.tenant,
+			startedOn: TOMORROW
+		});
+
+		expect(created).toMatchObject({ startedOn: TOMORROW, isPrimaryOccupant: false });
+	});
+
+	it('takes the flag off a holder another connection marked mid-flight, leaving exactly one', async () => {
+		// The second connection moves the flag to B by hand, exactly as the service would, and holds
+		// its transaction open. B's last day is written but still ahead, so the partial index cannot
+		// see B at all: if this record read the unit before B's commit, B would keep its flag beside
+		// the new one and nothing in the database would object. The test waits until PostgreSQL
+		// reports the call blocked on the unit lock before it commits, so the call provably ran its
+		// move after that commit and not before it.
 		const superuserId = await insertSuperuser('Pengurus Adu Cepat');
 		const unitId = await insertUnitRow();
-		const holder = await insertResident('Warga Menang Cepat');
-		const challenger = await insertResident('Warga Kalah Cepat');
+		const a = await insertResident('Warga Pemegang Awal');
+		const b = await insertResident('Warga Menang Cepat');
+		const c = await insertResident('Warga Dicatat Belakangan');
+		await insertOccupancyRow(unitId, a.residentId, { isPrimaryOccupant: true });
+		const bId = await insertOccupancyRow(unitId, b.residentId, { endedOn: FUTURE_END });
 
-		const other = createConnection(readDatabaseUrl('TEST_DATABASE_URL'), {
-			options: `-c search_path=${testDb.schemaName}`
-		});
-		const client = await other.pool.connect();
+		const other = await connectToSchema();
 		try {
-			await client.query('begin');
-			await client.query('select id from units where id = $1 for update', [unitId]);
-			await client.query(
-				`insert into occupancies (unit_id, resident_id, role, started_on, ended_on, is_primary_occupant, created_at)
-				 values ($1, $2, $3, $4, $5, true, $6)`,
-				[unitId, holder.residentId, OCCUPANCY_ROLE.owner, STARTED_ON, FUTURE_END, new Date(START)]
-			);
+			await moveFlagByHand(other.client, unitId, bId);
 
-			const blocked = rejection(
-				recordOccupancy(testDb.db, new FakeClock(START), {
-					actorId: superuserId,
-					unitId,
-					residentId: challenger.residentId,
-					role: OCCUPANCY_ROLE.tenant,
-					startedOn: MID_YEAR,
-					isPrimaryOccupant: true
+			const recorded = recordOccupancy(testDb.db, TODAY_CLOCK, {
+				actorId: superuserId,
+				unitId,
+				residentId: c.residentId,
+				role: OCCUPANCY_ROLE.tenant,
+				startedOn: MID_YEAR,
+				isPrimaryOccupant: true
+			});
+			await waitUntilWaitingOn(other.pid);
+			await other.client.query('commit');
+			const created = await recorded;
+
+			expect(await flaggedNotPassed(unitId)).toEqual([created.id]);
+			expect(await markedEntriesOf(unitId)).toEqual([
+				expect.objectContaining({
+					before: { occupancyId: bId, residentId: b.residentId },
+					after: { occupancyId: created.id, residentId: c.residentId, unitId }
 				})
-			);
-			await client.query('commit');
-
-			expect(await blocked).toBeInstanceOf(PrimaryOccupantConflictError);
+			]);
 		} finally {
-			client.release();
-			await other.close();
+			await other.release();
 		}
 	});
 });
@@ -469,7 +721,12 @@ describe('endOccupancy', () => {
 		expect(await auditEntriesFor(testDb.db, occupancyId)).toHaveLength(0);
 	});
 
-	it('refuses to push a primary occupant’s end date over another primary occupant’s days', async () => {
+	it('moves a finished Penanggung Jawab’s last day later without a clash check, and drops the stale flag', async () => {
+		// Under the date-clash model this was refused, because the corrected stay would overlap the
+		// next Penanggung Jawab's. ADR 0001 took that check out of ending. The corrected stay comes
+		// back among the ones that have not passed, and its dead flag must not come back with it: that
+		// would make two flags in the house, and change the invoice recipient with no move and no
+		// marked entry. The flag goes, and the audit entry says so.
 		const superuserId = await insertSuperuser('Pengurus Perpanjang');
 		const unitId = await insertUnitRow();
 		const leaving = await insertResident('Warga Pergi Lalu Kembali');
@@ -478,21 +735,49 @@ describe('endOccupancy', () => {
 			endedOn: ENDED_ON,
 			isPrimaryOccupant: true
 		});
-		await insertOccupancyRow(unitId, arriving.residentId, {
+		const arrivingId = await insertOccupancyRow(unitId, arriving.residentId, {
 			startedOn: MID_YEAR,
 			isPrimaryOccupant: true
 		});
 
-		const refusal = await rejection(
-			endOccupancy(testDb.db, new FakeClock(START), {
-				actorId: superuserId,
-				occupancyId: leavingId,
-				endedOn: FUTURE_END
-			})
-		);
+		const ended = await endOccupancy(testDb.db, TODAY_CLOCK, {
+			actorId: superuserId,
+			occupancyId: leavingId,
+			endedOn: FUTURE_END
+		});
 
-		expect(refusal).toBeInstanceOf(PrimaryOccupantConflictError);
-		expect((await readOccupancy(leavingId)).endedOn).toBe(ENDED_ON);
+		expect(ended).toMatchObject({ endedOn: FUTURE_END, isPrimaryOccupant: false });
+		expect(await flaggedNotPassed(unitId)).toEqual([arrivingId]);
+		expect(await invoiceRecipient(unitId, TODAY_CLOCK)).toBe(arriving.userId);
+		expect(await auditEntriesFor(testDb.db, leavingId)).toEqual([
+			expect.objectContaining({
+				action: OCCUPANCY_ENDED_ACTION,
+				before: { endedOn: ENDED_ON, isPrimaryOccupant: true },
+				after: { endedOn: FUTURE_END, isPrimaryOccupant: false }
+			})
+		]);
+	});
+
+	it('leaves the flag on a Penanggung Jawab whose stay it ends, living there or not', async () => {
+		const superuserId = await insertSuperuser('Pengurus Akhiri Penanggung Jawab');
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Penanggung Jawab Diakhiri');
+		const occupancyId = await insertOccupancyRow(unitId, residentId, { isPrimaryOccupant: true });
+
+		const today = await endOccupancy(testDb.db, TODAY_CLOCK, {
+			actorId: superuserId,
+			occupancyId,
+			endedOn: TODAY
+		});
+		const earlier = await endOccupancy(testDb.db, TODAY_CLOCK, {
+			actorId: superuserId,
+			occupancyId,
+			endedOn: YESTERDAY
+		});
+
+		expect(today.isPrimaryOccupant).toBe(true);
+		expect(earlier.isPrimaryOccupant).toBe(true);
+		expect(await markedEntriesOf(unitId)).toEqual([]);
 	});
 
 	it('throws OccupancyNotFoundError for an id that names no stay', async () => {
@@ -521,7 +806,7 @@ describe('endOccupancy', () => {
 		).rejects.toThrow(PermissionDeniedError);
 	});
 
-	it('leaves the unit with no primary occupant, and the admin list says so', async () => {
+	it('leaves the unit with no primary occupant once the last day has passed, and the admin list says so', async () => {
 		const superuserId = await insertSuperuser('Pengurus Tinggalkan Kosong');
 		const block = unique('KOSONG');
 		const unitId = await insertUnitRow(block);
@@ -536,13 +821,13 @@ describe('endOccupancy', () => {
 
 		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
 		const row = page.units.find((unit) => unit.id === unitId);
-		expect(row).toMatchObject({ hasPrimaryOccupant: false, activeOccupantCount: 0 });
+		expect(row).toMatchObject({ primaryOccupantNeed: { kind: 'missing' }, activeOccupantCount: 0 });
 		expect(row && needsPrimaryOccupant(row)).toBe(true);
 	});
 });
 
 describe('setPrimaryOccupant', () => {
-	it('marks a running stay and records the change', async () => {
+	it('marks a running stay and records the move, with nobody before it', async () => {
 		const superuserId = await insertSuperuser('Pengurus Tandai');
 		const unitId = await insertUnitRow();
 		const { residentId } = await insertResident('Warga Ditandai');
@@ -558,8 +843,8 @@ describe('setPrimaryOccupant', () => {
 		expect(entries).toHaveLength(1);
 		expect(entries[0]).toMatchObject({
 			action: PRIMARY_OCCUPANT_MARKED_ACTION,
-			before: { isPrimaryOccupant: false },
-			after: { isPrimaryOccupant: true, unitId }
+			before: null,
+			after: { occupancyId, residentId, unitId }
 		});
 	});
 
@@ -567,34 +852,259 @@ describe('setPrimaryOccupant', () => {
 		const superuserId = await insertSuperuser('Pengurus Tandai Ulang');
 		const unitId = await insertUnitRow();
 		const { residentId } = await insertResident('Warga Sudah Ditandai');
+		const housemate = await insertResident('Warga Serumah Tak Tersentuh');
 		const occupancyId = await insertOccupancyRow(unitId, residentId, { isPrimaryOccupant: true });
+		const housemateId = await insertOccupancyRow(unitId, housemate.residentId);
 
-		await setPrimaryOccupant(testDb.db, new FakeClock(START), {
+		const result = await setPrimaryOccupant(testDb.db, TODAY_CLOCK, {
 			actorId: superuserId,
 			occupancyId
 		});
 
+		expect(result.isPrimaryOccupant).toBe(true);
+		expect((await readOccupancy(housemateId)).isPrimaryOccupant).toBe(false);
 		expect(await auditEntriesFor(testDb.db, occupancyId)).toHaveLength(0);
+		expect(await markedEntriesOf(unitId)).toEqual([]);
 	});
 
-	it('refuses when someone else holds the slot over days this stay covers', async () => {
+	it('makes a housemate the Penanggung Jawab, and the previous holder keeps living there unflagged', async () => {
+		// The case the date-clash model made impossible: this used to be refused with
+		// PrimaryOccupantConflictError naming the husband, on any date, because the wife's stay
+		// always overlapped his past. ADR 0001 exists for it.
 		const superuserId = await insertSuperuser('Pengurus Tandai Kedua');
 		const unitId = await insertUnitRow();
-		const holder = await insertResident('Warga Suami');
-		const other = await insertResident('Warga Istri');
-		await insertOccupancyRow(unitId, holder.residentId, { isPrimaryOccupant: true });
-		const otherId = await insertOccupancyRow(unitId, other.residentId);
+		const husband = await insertResident('Warga Suami');
+		const wife = await insertResident('Warga Istri');
+		const husbandId = await insertOccupancyRow(unitId, husband.residentId, {
+			isPrimaryOccupant: true
+		});
+		const wifeId = await insertOccupancyRow(unitId, wife.residentId);
+		const before = await getUnit(testDb.db, superuserId, unitId, TODAY_CLOCK);
+
+		const marked = await setPrimaryOccupant(testDb.db, TODAY_CLOCK, {
+			actorId: superuserId,
+			occupancyId: wifeId
+		});
+
+		expect(marked.isPrimaryOccupant).toBe(true);
+		expect(await readOccupancy(husbandId)).toMatchObject({
+			isPrimaryOccupant: false,
+			endedOn: null
+		});
+		expect(await flaggedNotPassed(unitId)).toEqual([wifeId]);
+		expect(await invoiceRecipient(unitId, TODAY_CLOCK)).toBe(wife.userId);
+		const after = await getUnit(testDb.db, superuserId, unitId, TODAY_CLOCK);
+		expect(after.activeOccupantCount).toBe(before.activeOccupantCount);
+		expect(after.activeOccupants).toEqual([
+			{ residentId: wife.residentId, name: 'Warga Istri', isPrimaryOccupant: true },
+			{ residentId: husband.residentId, name: 'Warga Suami', isPrimaryOccupant: false }
+		]);
+	});
+
+	it('moves the flag back to a holder whose last day is today', async () => {
+		const superuserId = await insertSuperuser('Pengurus Kembalikan');
+		const unitId = await insertUnitRow();
+		const a = await insertResident('Warga Hari Terakhir Dikembalikan');
+		const f = await insertResident('Warga Pemegang Sementara');
+		const aId = await insertOccupancyRow(unitId, a.residentId, { endedOn: TODAY });
+		const fId = await insertOccupancyRow(unitId, f.residentId, {
+			startedOn: TODAY,
+			isPrimaryOccupant: true
+		});
+
+		await setPrimaryOccupant(testDb.db, TODAY_CLOCK, { actorId: superuserId, occupancyId: aId });
+
+		expect(await flaggedNotPassed(unitId)).toEqual([aId]);
+		expect((await readOccupancy(fId)).isPrimaryOccupant).toBe(false);
+		const unit = await getUnit(testDb.db, superuserId, unitId, TODAY_CLOCK);
+		expect(unit.primaryOccupantNeed).toEqual({
+			kind: 'leaving',
+			residentId: a.residentId,
+			name: 'Warga Hari Terakhir Dikembalikan',
+			endedOn: TODAY
+		});
+	});
+
+	it('refuses a stay that starts tomorrow, naming its start date, and moves nothing', async () => {
+		const superuserId = await insertSuperuser('Pengurus Tandai Terlalu Awal');
+		const unitId = await insertUnitRow();
+		const holder = await insertResident('Warga Pemegang Bertahan');
+		const early = await insertResident('Warga Mulai Besok');
+		const holderId = await insertOccupancyRow(unitId, holder.residentId, {
+			isPrimaryOccupant: true
+		});
+		const earlyId = await insertOccupancyRow(unitId, early.residentId, { startedOn: TOMORROW });
 
 		const refusal = await rejection(
-			setPrimaryOccupant(testDb.db, new FakeClock(START), {
-				actorId: superuserId,
-				occupancyId: otherId
-			})
+			setPrimaryOccupant(testDb.db, TODAY_CLOCK, { actorId: superuserId, occupancyId: earlyId })
 		);
 
-		expect(refusal).toBeInstanceOf(PrimaryOccupantConflictError);
-		expect(refusal).toMatchObject({ residentName: 'Warga Suami' });
-		expect((await readOccupancy(otherId)).isPrimaryOccupant).toBe(false);
+		expect(refusal).toBeInstanceOf(PrimaryOccupantNotStartedError);
+		expect(refusal).toMatchObject({ startedOn: TOMORROW });
+		expect(await flaggedNotPassed(unitId)).toEqual([holderId]);
+		expect(await markedEntriesOf(unitId)).toEqual([]);
+	});
+
+	it('refuses a stay whose last day has passed', async () => {
+		const superuserId = await insertSuperuser('Pengurus Tandai Terlambat');
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Pergi Kemarin');
+		const occupancyId = await insertOccupancyRow(unitId, residentId, { endedOn: YESTERDAY });
+
+		const refusal = await rejection(
+			setPrimaryOccupant(testDb.db, TODAY_CLOCK, { actorId: superuserId, occupancyId })
+		);
+
+		expect(refusal).toBeInstanceOf(PrimaryOccupantAlreadyEndedError);
+		expect(refusal).toMatchObject({ endedOn: YESTERDAY });
+		expect((await readOccupancy(occupancyId)).isPrimaryOccupant).toBe(false);
+	});
+
+	it('takes the flag off every stay that has not passed, one flagged ahead of time included', async () => {
+		// The date-clash model let a stay be flagged before it began, as long as the days did not
+		// overlap the current holder's. Such a row is in ADR 0001's set — its last day has not passed —
+		// so a move clears it too. The entry names the holder the invoices were going to today.
+		const superuserId = await insertSuperuser('Pengurus Bersihkan Penanda Lama');
+		const unitId = await insertUnitRow();
+		const current = await insertResident('Warga Pemegang Sampai Akhir Tahun');
+		const upcoming = await insertResident('Warga Ditandai Sebelum Masuk');
+		const housemate = await insertResident('Warga Serumah Penerima Baru');
+		const currentId = await insertOccupancyRow(unitId, current.residentId, {
+			endedOn: FUTURE_END,
+			isPrimaryOccupant: true
+		});
+		const upcomingId = await insertOccupancyRow(unitId, upcoming.residentId, {
+			startedOn: '2027-01-01',
+			isPrimaryOccupant: true
+		});
+		const housemateId = await insertOccupancyRow(unitId, housemate.residentId);
+
+		await setPrimaryOccupant(testDb.db, TODAY_CLOCK, {
+			actorId: superuserId,
+			occupancyId: housemateId
+		});
+
+		expect(await flaggedNotPassed(unitId)).toEqual([housemateId]);
+		expect((await readOccupancy(upcomingId)).isPrimaryOccupant).toBe(false);
+		expect(await markedEntriesOf(unitId)).toEqual([
+			expect.objectContaining({
+				before: { occupancyId: currentId, residentId: current.residentId },
+				after: { occupancyId: housemateId, residentId: housemate.residentId, unitId }
+			})
+		]);
+	});
+
+	it('writes exactly one marked entry per move, naming the previous and the new holder', async () => {
+		const superuserId = await insertSuperuser('Pengurus Pindah Bolak Balik');
+		const unitId = await insertUnitRow();
+		const a = await insertResident('Warga Bolak');
+		const b = await insertResident('Warga Balik');
+		const aId = await insertOccupancyRow(unitId, a.residentId, { isPrimaryOccupant: true });
+		const bId = await insertOccupancyRow(unitId, b.residentId, { endedOn: FUTURE_END });
+
+		await setPrimaryOccupant(testDb.db, TODAY_CLOCK, { actorId: superuserId, occupancyId: bId });
+		await setPrimaryOccupant(testDb.db, TODAY_CLOCK, { actorId: superuserId, occupancyId: aId });
+
+		const entries = await markedEntriesOf(unitId);
+		expect(entries).toHaveLength(2);
+		expect(entries).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					targetId: bId,
+					before: { occupancyId: aId, residentId: a.residentId },
+					after: { occupancyId: bId, residentId: b.residentId, unitId }
+				}),
+				expect.objectContaining({
+					targetId: aId,
+					before: { occupancyId: bId, residentId: b.residentId },
+					after: { occupancyId: aId, residentId: a.residentId, unitId }
+				})
+			])
+		);
+		expect(await flaggedNotPassed(unitId)).toEqual([aId]);
+	});
+
+	it('leaves exactly one flag when two moves on the same unit come from two connections', async () => {
+		// The concurrency argument in `src/lib/server/services/occupancy/index.ts`, proved. The second
+		// connection moves the flag from A to B by hand and holds its transaction open; B's last day
+		// is written but still ahead, so the partial index cannot see B. The service's move to C is
+		// then started, and the test waits until PostgreSQL reports it blocked on the unit lock the
+		// other connection holds before committing. Behind that lock, C's move reads B's committed
+		// flag and takes it off, so one flag is left and the audit entry names B, not A.
+		const superuserId = await insertSuperuser('Pengurus Dua Koneksi');
+		const unitId = await insertUnitRow();
+		const a = await insertResident('Warga Pemegang Lama Dua Koneksi');
+		const b = await insertResident('Warga Koneksi Kedua');
+		const c = await insertResident('Warga Koneksi Pertama');
+		await insertOccupancyRow(unitId, a.residentId, { isPrimaryOccupant: true });
+		const bId = await insertOccupancyRow(unitId, b.residentId, { endedOn: FUTURE_END });
+		const cId = await insertOccupancyRow(unitId, c.residentId);
+
+		const other = await connectToSchema();
+		try {
+			await moveFlagByHand(other.client, unitId, bId);
+
+			const moved = setPrimaryOccupant(testDb.db, TODAY_CLOCK, {
+				actorId: superuserId,
+				occupancyId: cId
+			});
+			await waitUntilWaitingOn(other.pid);
+			await other.client.query('commit');
+			await moved;
+
+			expect(await flaggedNotPassed(unitId)).toEqual([cId]);
+			expect(await markedEntriesOf(unitId)).toEqual([
+				expect.objectContaining({
+					before: { occupancyId: bId, residentId: b.residentId },
+					after: { occupancyId: cId, residentId: c.residentId, unitId }
+				})
+			]);
+		} finally {
+			await other.release();
+		}
+	});
+
+	it('serialises two service moves waiting on the same unit lock, one after the other', async () => {
+		// Both moves go through the service here. A third connection holds the unit lock until both
+		// are provably waiting on it, then lets go: whichever is granted the lock first moves the flag,
+		// and the other then moves it again from that holder, never from A.
+		const superuserId = await insertSuperuser('Pengurus Dua Pindahan');
+		const unitId = await insertUnitRow();
+		const a = await insertResident('Warga Pemegang Semula');
+		const b = await insertResident('Warga Calon Satu');
+		const c = await insertResident('Warga Calon Dua');
+		const aId = await insertOccupancyRow(unitId, a.residentId, { isPrimaryOccupant: true });
+		const bId = await insertOccupancyRow(unitId, b.residentId, { endedOn: FUTURE_END });
+		const cId = await insertOccupancyRow(unitId, c.residentId, { endedOn: FUTURE_END });
+
+		const other = await connectToSchema();
+		try {
+			await other.client.query('begin');
+			await other.client.query('select id from units where id = $1 for update', [unitId]);
+
+			const moves = Promise.all([
+				setPrimaryOccupant(testDb.db, TODAY_CLOCK, { actorId: superuserId, occupancyId: bId }),
+				setPrimaryOccupant(testDb.db, TODAY_CLOCK, { actorId: superuserId, occupancyId: cId })
+			]);
+			await waitUntilWaitingOn(other.pid, 2);
+			await other.client.query('commit');
+			await moves;
+
+			const flagged = await flaggedNotPassed(unitId);
+			expect(flagged).toHaveLength(1);
+			const [last] = flagged;
+			const first = last === bId ? cId : bId;
+			const entries = await markedEntriesOf(unitId);
+			expect(entries).toHaveLength(2);
+			expect(entries.find((entry) => entry.targetId === first)).toMatchObject({
+				before: { occupancyId: aId }
+			});
+			expect(entries.find((entry) => entry.targetId === last)).toMatchObject({
+				before: { occupancyId: first }
+			});
+		} finally {
+			await other.release();
+		}
 	});
 
 	it('refuses a caller who is not a superuser', async () => {
