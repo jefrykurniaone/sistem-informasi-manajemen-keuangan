@@ -1,7 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
 import * as m from '$lib/paraglide/messages';
-import { AUTH_PATHS, MINIMUM_PASSWORD_LENGTH, auth } from '$lib/server/auth';
+import { AUTH_PATHS, MINIMUM_PASSWORD_LENGTH, auth, checkPassword } from '$lib/server/auth';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -42,10 +42,15 @@ export const actions: Actions = {
 		if (token === '') {
 			return fail(400, { message: m.setPassword_linkExpired() });
 		}
-		if (password.length < MINIMUM_PASSWORD_LENGTH) {
+		// A password over the maximum is left to better-auth, as it always was.
+		const verdict = checkPassword(password);
+		if (verdict === 'tooShort') {
 			return fail(400, {
 				message: m.setPassword_passwordTooShort({ min: MINIMUM_PASSWORD_LENGTH })
 			});
+		}
+		if (verdict === 'tooCommon') {
+			return fail(400, { message: m.setPassword_passwordTooCommon() });
 		}
 		if (password !== passwordAgain) {
 			return fail(400, { message: m.setPassword_passwordMismatch() });

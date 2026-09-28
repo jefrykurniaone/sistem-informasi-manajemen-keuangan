@@ -40,10 +40,12 @@
 /**
  * The password every Data Contoh account signs in with.
  *
- * Twenty-two characters, so it clears `MINIMUM_PASSWORD_LENGTH` (12) in
- * `src/lib/server/auth.ts`. It is deliberately a sentence that reads as a placeholder: this seeder
- * refuses to run against anything but a local database (see `assertSeedAllowed`), and a password
- * that looked real would eventually be typed into something that is.
+ * Twenty characters, so it clears `MINIMUM_PASSWORD_LENGTH` (8) in `src/lib/server/auth.ts`, and not
+ * on the list of common passwords `checkPassword` there refuses, which
+ * `tests/unit/common-passwords.test.ts` holds it to. It is deliberately a sentence that reads as a
+ * placeholder: this seeder refuses to run against anything but a local database (see
+ * `assertSeedAllowed`), and a password that looked real would eventually be typed into something
+ * that is.
  */
 export const SEED_PASSWORD = 'kata-sandi-dummy-123';
 

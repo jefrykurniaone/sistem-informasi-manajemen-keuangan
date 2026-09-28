@@ -1,7 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
 import * as m from '$lib/paraglide/messages';
-import { auth, MINIMUM_PASSWORD_LENGTH } from '$lib/server/auth';
+import { auth, checkPassword, MINIMUM_PASSWORD_LENGTH } from '$lib/server/auth';
 import { database } from '$lib/server/db';
 import { systemClock } from '$lib/server/ports/clock';
 import {
@@ -59,10 +59,14 @@ export const actions: Actions = {
 		if (name === '') {
 			return fail(400, { message: m.invitationAccept_invalidName() });
 		}
-		if (password.length < MINIMUM_PASSWORD_LENGTH) {
+		const verdict = checkPassword(password);
+		if (verdict === 'tooShort') {
 			return fail(400, {
 				message: m.invitationAccept_passwordTooShort({ min: MINIMUM_PASSWORD_LENGTH })
 			});
+		}
+		if (verdict === 'tooCommon') {
+			return fail(400, { message: m.invitationAccept_passwordTooCommon() });
 		}
 		if (password !== passwordAgain) {
 			return fail(400, { message: m.invitationAccept_passwordMismatch() });
