@@ -1,7 +1,13 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
 import * as m from '$lib/paraglide/messages';
-import { AUTH_PATHS, MINIMUM_PASSWORD_LENGTH, auth, checkPassword } from '$lib/server/auth';
+import {
+	AUTH_PATHS,
+	MAXIMUM_PASSWORD_LENGTH,
+	MINIMUM_PASSWORD_LENGTH,
+	auth,
+	checkPassword
+} from '$lib/server/auth';
 import { database } from '$lib/server/db';
 import { systemClock } from '$lib/server/ports/clock';
 import { submitRegistration } from '$lib/server/services/registration';
@@ -118,13 +124,15 @@ function whatIsWrong(form: RegistrationForm): string | undefined {
 }
 
 /**
- * The password rule the person broke, from `checkPassword`, in Indonesian. A password over the
- * maximum is left to better-auth, which refuses it and lands on `register_signUpFailed`.
+ * The password rule the person broke, from `checkPassword`, in Indonesian.
  */
 function whatIsWrongWithPassword(password: string): string | undefined {
 	const verdict = checkPassword(password);
 	if (verdict === 'tooShort') {
 		return m.register_passwordTooShort({ min: MINIMUM_PASSWORD_LENGTH });
+	}
+	if (verdict === 'tooLong') {
+		return m.register_passwordTooLong({ max: MAXIMUM_PASSWORD_LENGTH });
 	}
 	if (verdict === 'tooCommon') {
 		return m.register_passwordTooCommon();
