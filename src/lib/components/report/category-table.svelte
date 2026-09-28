@@ -1,6 +1,7 @@
 <script lang="ts" module>
 	import type { Rupiah } from '$lib/money';
 	import type { ReportCategoryDetail, ReportDirection } from './category-drilldown.svelte';
+	import { oppositeDirection } from './category-drilldown.svelte';
 
 	/** One category line of a Laporan Bulanan, as the table renders it. */
 	export interface ReportCategoryLine {
@@ -76,17 +77,21 @@
 	 * `mayDrillDown`, so a link this component failed to draw would still be refused if somebody
 	 * typed its address.
 	 *
-	 * ## Why every open and close link carries `noscroll` and `keepfocus`
+	 * ## Why every open, close and other-direction link carries `noscroll` and `keepfocus`
 	 *
 	 * Opening or closing a detail is a navigation, because the address is what makes it work
-	 * without JavaScript and what a reader shares. `noscroll` keeps the screen where it was instead
-	 * of jumping to the top. `keepfocus` stops SvelteKit resetting focus: in the installed 2.70,
-	 * `reset_focus` in `@sveltejs/kit/src/runtime/client/client.js` sets the focus starting point to
-	 * the `#` with `location.replace` inside a `setTimeout` and then scrolls back, which can flicker,
-	 * and lands after the report page's own `afterNavigate` has moved focus to the heading or back to
-	 * "Lihat transaksi", undoing it. The page does the focusing; see its `afterNavigate`. Without
-	 * JavaScript neither attribute means anything and the browser jumps to the `#` row, which is
-	 * where the reader was.
+	 * without JavaScript and what a reader shares. The other-direction sentence's link is the same
+	 * kind of navigation: it opens the category's other line, in whichever table that is, which is
+	 * why `otherDirectionLinkFor` below opens the *opposite* of this table's own direction rather than
+	 * reusing `openQuery`'s default. `noscroll` keeps the screen where it was instead of jumping to
+	 * the top. `keepfocus` stops SvelteKit resetting focus: in the installed 2.70, `reset_focus` in
+	 * `@sveltejs/kit/src/runtime/client/client.js` sets the focus starting point to the `#` with
+	 * `location.replace` inside a `setTimeout` and then scrolls back, which can flicker, and lands
+	 * after the report page's own `afterNavigate` has moved focus to the heading or back to "Lihat
+	 * transaksi", undoing it. The page does the focusing; see its `afterNavigate`, which needs no
+	 * change for the other-direction link: it opens a new category line exactly as "Lihat transaksi"
+	 * does, in whichever table it belongs to. Without JavaScript neither attribute means anything and
+	 * the browser jumps to the `#` row, which is where the reader was.
 	 *
 	 * `total` is the sum of the lines rather than a figure passed in beside them, because the two
 	 * would be free to disagree; the report's own headline totals come from the same breakdown
@@ -122,6 +127,13 @@
 	/** The classes of the "Tutup" at the end of an open detail, which has no row text to align with. */
 	const END_LINK_CLASS = 'inline-flex min-h-11 items-center underline underline-offset-4';
 
+	/**
+	 * The classes of the other-direction sentence's link, at the end of its own paragraph rather than
+	 * a row or a detail's close; see the comment beside it in `category-drilldown.svelte`.
+	 */
+	const OTHER_DIRECTION_LINK_CLASS =
+		'inline-flex min-h-11 items-center underline underline-offset-4';
+
 	const total = $derived(rupiah(lines.reduce((sum, line) => sum + line.total, 0)));
 
 	/** Whether any line in this table is one the report declines to break down. */
@@ -134,12 +146,20 @@
 			: null
 	);
 
-	/** The query string that opens `categoryId` in this table's direction on the revision read. */
-	function openQuery(target: ReportDrilldownTarget, categoryId: string): string {
+	/**
+	 * The query string that opens `categoryId` on the revision read, in `direction` when given or
+	 * else this table's own direction — the opposite-direction sentence link passes the opposite
+	 * explicitly rather than this function growing a second copy of itself.
+	 */
+	function openQuery(
+		target: ReportDrilldownTarget,
+		categoryId: string,
+		direction: ReportDirection = target.direction
+	): string {
 		return new URLSearchParams({
 			revision: String(target.revision),
 			category: categoryId,
-			type: target.direction
+			type: direction
 		}).toString();
 	}
 
@@ -165,6 +185,32 @@
 		data-sveltekit-keepfocus
 	>
 		{m.reports_drilldown_closeLink()}
+	</a>
+{/snippet}
+
+<!--
+	The link out of the other-direction sentence: same address shape as "Lihat transaksi" above, but
+	pointed at the opposite direction's row, which is why `openQuery` and `categoryRowId` both take an
+	explicit direction here instead of the table's own. "Koreksi" is only said in the label when the
+	line open right now is the category's own type — see `category-drilldown.svelte`.
+-->
+{#snippet otherDirectionLinkFor(
+	target: ReportDrilldownTarget,
+	line: ReportCategoryLine,
+	isOwnDirection: boolean
+)}
+	{@const other = oppositeDirection(target.direction)}
+	<a
+		class={OTHER_DIRECTION_LINK_CLASS}
+		href={resolve(
+			`/reports/${target.period}?${openQuery(target, line.categoryId, other)}#${categoryRowId(other, line.categoryId)}`
+		)}
+		data-sveltekit-noscroll
+		data-sveltekit-keepfocus
+	>
+		{isOwnDirection
+			? m.reports_drilldown_otherDirectionCorrectionLink()
+			: m.reports_drilldown_otherDirectionTransactionsLink()}
 	</a>
 {/snippet}
 
@@ -236,6 +282,9 @@
 									>
 										{#snippet closeLink()}
 											{@render closeLinkFor(drilldown, line, END_LINK_CLASS)}
+										{/snippet}
+										{#snippet otherDirectionLink()}
+											{@render otherDirectionLinkFor(drilldown, line, openDetail.isOwnDirection)}
 										{/snippet}
 									</CategoryDrilldown>
 								</td>

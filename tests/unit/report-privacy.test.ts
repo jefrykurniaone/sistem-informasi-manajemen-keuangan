@@ -60,6 +60,9 @@ import { reportForPeriod } from '$lib/server/services/report/resident-payload';
  * - **drain**: only a Koreksi in this month, of an expense dated the month before, so its own type
  *   has no line and the other one does.
  * - **garden**: one expense before publication and one after, so its opened direction has changed.
+ * - **gazebo**: a line in each table like fence, plus a further Koreksi planted on the income line
+ *   *after* publication — the case `otherDirection`'s `published` kind is tested against: its total
+ *   must stay the frozen income line's figure and not follow the buku kas past it.
  */
 
 const testDb = testDatabase();
@@ -104,7 +107,8 @@ const IDS = {
 	fenceCategory: randomUUID(),
 	drainCategory: randomUUID(),
 	drainExpense: randomUUID(),
-	gardenCategory: randomUUID()
+	gardenCategory: randomUUID(),
+	gazeboCategory: randomUUID()
 } as const;
 
 let clock: FakeClock;
@@ -282,11 +286,36 @@ beforeAll(async () => {
 		description: 'Pemangkasan pohon taman'
 	});
 
+	// A line in each table, like fence: two expenses and a Koreksi of the second. The Koreksi gets a
+	// further, later change after publication (below), which `otherDirection`'s `published` kind must
+	// not follow.
+	await insertExpenseCategory(IDS.gazeboCategory, 'Perbaikan gazebo komplek');
+	await recordCashTransaction(testDb.db, clock, fileStore, {
+		actorId: IDS.adminUser,
+		occurredOn: `${PERIOD}-09`,
+		categoryId: IDS.gazeboCategory,
+		amount: rupiah(200_000),
+		description: 'Pengecatan atap gazebo'
+	});
+	const gazeboDoor = await recordCashTransaction(testDb.db, clock, fileStore, {
+		actorId: IDS.adminUser,
+		occurredOn: `${PERIOD}-11`,
+		categoryId: IDS.gazeboCategory,
+		amount: rupiah(150_000),
+		description: 'Penggantian pintu gazebo'
+	});
+	await recordCashCorrection(testDb.db, clock, {
+		actorId: IDS.adminUser,
+		transactionId: gazeboDoor.id,
+		reason: 'Pintu diganti pemasok tanpa biaya'
+	});
+
 	await publishReport(testDb.db, clock, { actorId: IDS.adminUser, period: PERIOD });
 
 	// After publication, the month is locked, so these are planted directly: what a superuser who
 	// reopened the month would have recorded into it. One Koreksi on the street light's other
-	// direction, and one more expense on the garden's own.
+	// direction, one more expense on the garden's own, and a further Koreksi on the gazebo's income
+	// line, already published, moving past what this revision froze for it.
 	await testDb.db.insert(cashTransactions).values({
 		occurredOn: streetLight.occurredOn,
 		type: CASH_CATEGORY_TYPE.income,
@@ -304,6 +333,16 @@ beforeAll(async () => {
 		amount: rupiah(10_000),
 		description: 'Pupuk susulan taman',
 		recordedBy: IDS.adminUser,
+		createdAt: new Date(`${AFTER_PUBLICATION_DAY}T00:00:00.000Z`)
+	});
+	await testDb.db.insert(cashTransactions).values({
+		occurredOn: AFTER_PUBLICATION_DAY,
+		type: CASH_CATEGORY_TYPE.income,
+		categoryId: IDS.gazeboCategory,
+		amount: rupiah(40_000),
+		description: 'Sebagian cat gazebo dikembalikan',
+		recordedBy: IDS.adminUser,
+		correctionOf: gazeboDoor.id,
 		createdAt: new Date(`${AFTER_PUBLICATION_DAY}T00:00:00.000Z`)
 	});
 });
@@ -403,11 +442,17 @@ describe('drilling into a category', () => {
 			isOwnDirection: true,
 			frozenTotal: 580_000,
 			liveTotal: 580_000,
-			changedSincePublication: false
+			changedSincePublication: false,
+			otherDirection: { kind: 'published', total: 180_000 }
 		});
 		expect(view?.drilldown?.frozenTotal).toBe(
 			lineFigure(view, CASH_CATEGORY_TYPE.expense, IDS.fenceCategory)
 		);
+		// The Koreksi side's own frozen line, so a reader on the expense side is told about it without
+		// the buku kas's live figure ever entering the sentence.
+		expect(view?.drilldown?.otherDirection).toMatchObject({
+			total: lineFigure(view, CASH_CATEGORY_TYPE.income, IDS.fenceCategory)
+		});
 		const entries = view?.drilldown?.entries ?? [];
 		expect(entries.map((entry) => entry.type)).toEqual([
 			CASH_CATEGORY_TYPE.expense,
@@ -429,11 +474,16 @@ describe('drilling into a category', () => {
 			isOwnDirection: false,
 			frozenTotal: 180_000,
 			liveTotal: 180_000,
-			changedSincePublication: false
+			changedSincePublication: false,
+			otherDirection: { kind: 'published', total: 580_000 }
 		});
 		expect(view?.drilldown?.frozenTotal).toBe(
 			lineFigure(view, CASH_CATEGORY_TYPE.income, IDS.fenceCategory)
 		);
+		// Opening the Koreksi side, the other direction is the category's own expense line.
+		expect(view?.drilldown?.otherDirection).toMatchObject({
+			total: lineFigure(view, CASH_CATEGORY_TYPE.expense, IDS.fenceCategory)
+		});
 		expect(view?.drilldown?.entries).toHaveLength(1);
 		expect(view?.drilldown?.entries[0]).toMatchObject({
 			type: CASH_CATEGORY_TYPE.income,
@@ -471,7 +521,9 @@ describe('drilling into a category', () => {
 			isOwnDirection: false,
 			frozenTotal: 120_000,
 			liveTotal: 120_000,
-			changedSincePublication: false
+			changedSincePublication: false,
+			// No line, and no live row either: drain has never had an expense in this month.
+			otherDirection: { kind: 'none' }
 		});
 		expect(view?.drilldown?.entries).toHaveLength(1);
 		expect(view?.drilldown?.entries[0]).toMatchObject({ isCorrection: true, amount: 120_000 });
@@ -527,7 +579,10 @@ describe('drilling into a category', () => {
 		expect(unchanged?.drilldown).toMatchObject({
 			frozenTotal: 325_000,
 			liveTotal: 325_000,
-			changedSincePublication: false
+			changedSincePublication: false,
+			// No income line was ever published for the street light, but its Koreksi planted after
+			// publication means the buku kas records one now.
+			otherDirection: { kind: 'sinceRevision', total: 325_000 }
 		});
 
 		// The garden's extra expense was recorded on the direction it is opened on.
@@ -539,9 +594,33 @@ describe('drilling into a category', () => {
 		expect(changed?.drilldown).toMatchObject({
 			frozenTotal: 90_000,
 			liveTotal: 100_000,
-			changedSincePublication: true
+			changedSincePublication: true,
+			// The garden has never had an income row, published or live.
+			otherDirection: { kind: 'none' }
 		});
 		expect(changed?.drilldown?.entries).toHaveLength(2);
+	});
+
+	it("keeps otherDirection's published total frozen even when the buku kas moves past it", async () => {
+		// The gazebo's income line published 150_000; a further Koreksi planted after publication
+		// (above) moved the live figure on, but the sentence built from `otherDirection` points at the
+		// row printed in the other table, which is the published one.
+		const view = await reportForPeriod(testDb.db, {
+			period: PERIOD,
+			categoryId: IDS.gazeboCategory,
+			direction: CASH_CATEGORY_TYPE.expense
+		});
+
+		expect(view?.drilldown).toMatchObject({
+			categoryId: IDS.gazeboCategory,
+			direction: CASH_CATEGORY_TYPE.expense,
+			isOwnDirection: true,
+			frozenTotal: 350_000,
+			otherDirection: { kind: 'published', total: 150_000 }
+		});
+		expect(view?.drilldown?.otherDirection).toMatchObject({
+			total: lineFigure(view, CASH_CATEGORY_TYPE.income, IDS.gazeboCategory)
+		});
 	});
 
 	it.each([CASH_CATEGORY_TYPE.expense, CASH_CATEGORY_TYPE.income])(

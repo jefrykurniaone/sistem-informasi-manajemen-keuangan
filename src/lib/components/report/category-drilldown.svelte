@@ -4,6 +4,11 @@
 	/** Which way money moves on a category line: the stored type of a Kategori Kas. */
 	export type ReportDirection = 'income' | 'expense';
 
+	/** The other of the two directions a category line can move in. */
+	export function oppositeDirection(direction: ReportDirection): ReportDirection {
+		return direction === 'income' ? 'expense' : 'income';
+	}
+
 	/** One Transaksi Kas inside an opened category line, as the detail renders it. */
 	export interface ReportDrilldownEntry {
 		readonly id: string;
@@ -15,12 +20,28 @@
 		readonly isCorrection: boolean;
 	}
 
+	/**
+	 * Whether the category's other direction has anything to show this month — mirrors
+	 * `ReportOtherDirection` in `src/lib/server/services/report/resident-payload.ts`, redeclared here
+	 * so this component does not import a server module into the client bundle.
+	 */
+	export type ReportOtherDirection =
+		| { readonly kind: 'published'; readonly total: Rupiah }
+		| { readonly kind: 'sinceRevision'; readonly total: Rupiah }
+		| { readonly kind: 'none' };
+
 	/** One category line opened out into its transactions, one direction only. */
 	export interface ReportCategoryDetail {
 		/** The name as the revision being read froze it. */
 		readonly name: string;
 		/** The direction every entry moves in, which is also the table this detail belongs to. */
 		readonly direction: ReportDirection;
+		/**
+		 * True when `direction` is the Kategori Kas's own type, the ordinary side. False on the side
+		 * its Koreksi land in — the only fact that decides whether the other-direction sentence below
+		 * may say "Koreksi".
+		 */
+		readonly isOwnDirection: boolean;
 		/** The figure published on the line. */
 		readonly frozenTotal: Rupiah;
 		/** The same direction in the buku kas right now. */
@@ -28,6 +49,8 @@
 		/** True when the two above disagree. */
 		readonly changedSincePublication: boolean;
 		readonly entries: readonly ReportDrilldownEntry[];
+		/** Whether the category's other direction has anything to show this month, and if so what. */
+		readonly otherDirection: ReportOtherDirection;
 	}
 </script>
 
@@ -63,9 +86,16 @@
 		 * draws the row's own "Tutup" too, so the two are one link with one address.
 		 */
 		readonly closeLink: Snippet;
+		/**
+		 * The link out of the other-direction sentence below, drawn only when `otherDirection.kind` is
+		 * `'published'` — the only case with a row on the other table to point at. A snippet from
+		 * `category-table.svelte`, for the reason `closeLink` is: only the table has `resolve()` and
+		 * the target to build it from.
+		 */
+		readonly otherDirectionLink: Snippet;
 	}
 
-	let { detail, headingId, closeLink }: Readonly<Props> = $props();
+	let { detail, headingId, closeLink, otherDirectionLink }: Readonly<Props> = $props();
 
 	/** The direction whose heading reads "kas masuk". */
 	const INCOME: ReportDirection = 'income';
@@ -75,6 +105,35 @@
 			? m.reports_drilldown_headingIncome({ category: detail.name })
 			: m.reports_drilldown_headingExpense({ category: detail.name })
 	);
+
+	/**
+	 * The other-direction sentence, or `null` when `otherDirection.kind` is `'none'` and nothing is
+	 * said. "Koreksi" is only used from `isOwnDirection`'s side, because only from the category's own
+	 * type is it certain the other direction's rows are corrections rather than ordinary transactions
+	 * — a Koreksi always opposes its Kategori Kas's type, but the reverse does not hold: the other
+	 * direction of a *Koreksi* line is the category's ordinary side, not another Koreksi.
+	 */
+	const otherDirectionSentence = $derived.by(() => {
+		const other = detail.otherDirection;
+		if (other.kind === 'none') {
+			return null;
+		}
+		const amount = formatRupiah(other.total);
+		const otherType = oppositeDirection(detail.direction);
+		if (other.kind === 'sinceRevision') {
+			return otherType === INCOME
+				? m.reports_drilldown_otherDirectionSinceRevisionIncome({ amount })
+				: m.reports_drilldown_otherDirectionSinceRevisionExpense({ amount });
+		}
+		if (detail.isOwnDirection) {
+			return otherType === INCOME
+				? m.reports_drilldown_otherDirectionCorrectionIncome({ amount })
+				: m.reports_drilldown_otherDirectionCorrectionExpense({ amount });
+		}
+		return otherType === INCOME
+			? m.reports_drilldown_otherDirectionIncome({ amount })
+			: m.reports_drilldown_otherDirectionExpense({ amount });
+	});
 
 	/** A stored `YYYY-MM-DD` as a day a person reads — `$lib/time`'s `formatDay`. */
 	function asDay(day: string): string {
@@ -95,6 +154,20 @@
 		<p class="rounded-md border border-border px-3 py-2 text-sm" role="status">
 			{m.reports_drilldown_changed()}
 		</p>
+	{/if}
+
+	{#if otherDirectionSentence}
+		<!--
+			The link sits under the sentence rather than inline inside it: `otherDirectionLink` needs a
+			44-pixel touch target, and an inline-flex box that tall would break the sentence's line
+			height at 390 pixels. A line of its own reads cleanly and keeps the target uncramped.
+		-->
+		<div class="flex flex-col items-start gap-1">
+			<p class="text-sm text-muted-foreground">{otherDirectionSentence}</p>
+			{#if detail.otherDirection.kind === 'published'}
+				{@render otherDirectionLink()}
+			{/if}
+		</div>
 	{/if}
 
 	{#if detail.entries.length === 0}
