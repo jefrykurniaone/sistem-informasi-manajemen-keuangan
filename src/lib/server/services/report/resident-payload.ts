@@ -8,7 +8,11 @@ import {
 	type CashCategoryType
 } from '../../db/schema/cash-category';
 import type { MonthlyReportCategoryLine } from '../../db/schema/monthly-report';
-import { transactionsInCategory, type CategoryTransaction } from './composition';
+import {
+	transactionsInCategory,
+	type CategoryTransaction,
+	type CategoryTransactions
+} from './composition';
 import { publishedReport, type PublishedReportRevision } from './publication';
 
 /**
@@ -179,12 +183,30 @@ export interface ReportPayload {
 }
 
 /**
+ * Whether the category being drilled into also has something on its *other* direction this month,
+ * so a reader who opened one side is told a Koreksi (or an ordinary transaction) is not hidden from
+ * them by having landed on the wrong table.
+ *
+ * - `published`: this revision froze a line for the other direction too. `total` is that frozen
+ *   figure, not the live one, for the same reason `frozenTotal` above is frozen: the sentence built
+ *   from it points at a row printed in the other table, and that row shows the published figure.
+ * - `sinceRevision`: no line for the other direction on this revision, but the buku kas records one
+ *   now. `total` is the live figure, because there is no published one to show instead.
+ * - `none`: neither of the above — the other direction has nothing to say this month.
+ */
+export type ReportOtherDirection =
+	| { readonly kind: 'published'; readonly total: Rupiah }
+	| { readonly kind: 'sinceRevision'; readonly total: Rupiah }
+	| { readonly kind: 'none' };
+
+/**
  * One category opened out into the transactions behind **one** of its lines.
  *
  * A category can have two lines on one report, because a Koreksi moves the opposite way to its
  * Kategori Kas and the breakdown groups by the transaction's direction; see `categoryLines` in
  * `./composition.ts`. The detail answers for one line at a time, so its `entries` add up to the
  * figure printed on the row it was opened from, and a Koreksi never hides inside the ordinary side.
+ * `otherDirection` is what tells the reader that other side exists at all.
  */
 export interface ReportCategoryDrilldown {
 	readonly categoryId: string;
@@ -209,6 +231,8 @@ export interface ReportCategoryDrilldown {
 	readonly changedSincePublication: boolean;
 	/** The rows moving in `direction`, oldest first. Carries no person and no file. */
 	readonly entries: readonly CategoryTransaction[];
+	/** Whether the category's other direction has anything to show this month, and if so what. */
+	readonly otherDirection: ReportOtherDirection;
 }
 
 /** Which report to read, which revision of it, and which category to open in which direction. */
@@ -339,8 +363,40 @@ async function drilldownFor(
 		frozenTotal: line.total,
 		liveTotal,
 		changedSincePublication: liveTotal !== line.total,
-		entries: live.entries.filter((entry) => entry.type === line.type)
+		entries: live.entries.filter((entry) => entry.type === line.type),
+		otherDirection: otherDirectionOf(categoryLines, line, live)
 	};
+}
+
+/** The `income`/`expense` type opposite the one given. */
+function opposite(type: CashCategoryType): CashCategoryType {
+	return type === CASH_CATEGORY_TYPE.income
+		? CASH_CATEGORY_TYPE.expense
+		: CASH_CATEGORY_TYPE.income;
+}
+
+/**
+ * What the category's other direction — the type opposite `line`'s — has to show this month: a
+ * frozen line on this same revision, a live total with no frozen line yet, or nothing at all. See
+ * `ReportOtherDirection` for why `published` carries the frozen figure and `sinceRevision` the live
+ * one.
+ */
+function otherDirectionOf(
+	categoryLines: readonly MonthlyReportCategoryLine[],
+	line: MonthlyReportCategoryLine,
+	live: CategoryTransactions
+): ReportOtherDirection {
+	const otherType = opposite(line.type);
+	const otherLine = categoryLines.find((candidate) => candidate.type === otherType);
+	if (otherLine) {
+		return { kind: 'published', total: otherLine.total };
+	}
+	const otherLiveTotal =
+		otherType === CASH_CATEGORY_TYPE.income ? live.incomeTotal : live.expenseTotal;
+	if (otherLiveTotal > 0) {
+		return { kind: 'sinceRevision', total: otherLiveTotal };
+	}
+	return { kind: 'none' };
 }
 
 /**
