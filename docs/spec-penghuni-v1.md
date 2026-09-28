@@ -6,10 +6,20 @@
 | Run | `huni-v1` |
 | Peta eksekusi | [#247](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/247) |
 | Disalin pada | 2026-09-27 |
+| Lintasan penutup | 2026-09-28, sesudah Gelombang 7 (`d6cefff`) dan skrip #242 di produksi |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
 item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
+
+Lintasan penutup menambahkan penanda *Sesudah run* di bawah garis pada setiap klaim yang dibalik
+atau diubah bentuknya oleh tiket run ini. Tidak ada teks yang dihapus. Klaim yang ditandai:
+
+- pemeriksaan undangan dan pendaftaran yang disebut pindah ke predikat "sedang menghuni" (#246);
+- daftar Masa Huni dan "Rumah saya" yang "dikembalikan dalam tiga kelompok" oleh layanan (#245);
+- mengakhiri Masa Huni Penanggung Jawab yang "tidak menyentuh penanda" (#244);
+- "keempat jalur" yang memakai aturan Masa Huni ganda (#258);
+- eksekusi skrip perbaikan data di produksi, dan hasilnya (#242).
 
 ---
 
@@ -95,6 +105,8 @@ Superuser adalah yang mengelola Unit dan Masa Huni. Dari sisi mereka, ada tiga m
 - Kontrak visibilitas keuangan tidak berubah. Rentang hari huni dengan kedua ujung inklusif sudah benar dan sudah melihat tanggal mulai.
 - *Mengapa:* akar masalah hitungan adalah dua aturan untuk satu pertanyaan. Satu predikat yang dipakai semua orang membuat keduanya tidak bisa berselisih lagi.
 
+> *Sesudah run (2026-09-28):* undangan dan pendaftaran memakai predikat ini hanya sampai #246. Sejak #246, `ensureOccupancy` di kedua layanan mengambil `lockUnit` lalu memanggil `findOverlappingOccupancy(…, today)`, yaitu aturan bersinggungan keputusan 6, bukan `stillRunningOn`.
+
 **2. Penghuni Aktif dihitung per orang.**
 - Ringkasan Unit menghitung Warga berbeda yang punya Masa Huni sedang berjalan hari ini, bukan jumlah baris.
 - Ringkasan itu juga mengembalikan nama-nama Penghuni Aktif, dengan Penanggung Jawab lebih dulu lalu urut nama, untuk halaman detail Unit.
@@ -113,6 +125,8 @@ Superuser adalah yang mengelola Unit dan Masa Huni. Dari sisi mereka, ada tiga m
   - Rumah `history` juga tanpa daftar penghuni, seperti sekarang.
 - *Mengapa:* bug label berasal dari halaman yang mengklasifikasi sendiri dengan aturan berbeda.
 
+> *Sesudah run (2026-09-28):* `listUnitOccupancies` dan `occupiedUnitsForUser` tetap mengembalikan daftar datar, karena `scripts/seed-dev.ts`, `dues/payment.ts`, dan `payments/+page.server.ts` membacanya. Tiga kelompok itu (`current`, `upcoming`, `history`, tipe `OccupancyGroups<T>`) dikembalikan oleh pembungkus di sampingnya, `listUnitOccupanciesGrouped` dan `occupiedUnitsForUserGrouped` (#245). Halaman tetap tidak memutuskan apa pun tentang tanggal.
+
 **4. Penanggung Jawab berpindah, dan berlaku sejak dipindahkan.** Keputusan ini dicatat sebagai ADR 0001.
 - Penanda adalah "penerima email tagihan sekarang", bukan atribut sejarah sebuah Masa Huni. Invariannya: **per Unit, paling banyak satu baris ber-penanda di antara baris yang hari terakhirnya belum lewat atau masih kosong.**
 - **Memindahkan.** Di bawah kunci baris Unit, yang sudah dipakai layanan ini, penanda dicabut dari setiap baris Unit itu yang ber-penanda dan hari terakhirnya belum lewat atau kosong, lalu dipasang pada baris tujuan. Keduanya dilakukan dalam satu transaksi.
@@ -124,6 +138,9 @@ Superuser adalah yang mengelola Unit dan Masa Huni. Dari sisi mereka, ada tiga m
   - Memindahkan penanda ke baris yang sudah memegangnya tidak mengubah apa pun dan tidak menulis Audit Log.
 - **Mencatat Masa Huni baru dengan centang Penanggung Jawab** berarti mencatat lalu memindahkan, dalam transaksi yang sama. Ini hanya boleh kalau tanggal mulainya hari ini atau sebelumnya.
 - **Pemeriksaan bentrok tanggal antar-Penanggung Jawab dihapus** dari mencatat, mengakhiri, dan menandai. Mengakhiri Masa Huni Penanggung Jawab tidak menyentuh penanda.
+
+  > *Sesudah run (2026-09-28):* ada satu pengecualian (#244). Kalau hari terakhir baris ber-penanda yang sudah lewat dikoreksi menjadi hari ini atau nanti, `endOccupancy` mencabut penanda basi itu dalam pernyataan yang sama dan mencatatnya di Audit Log, supaya baris itu tidak kembali menjadi penerima email tagihan tanpa perpindahan. Penanda basi lain tetap tersimpan, sesuai bullet berikut. Satu-satunya pemasang penanda adalah `movePrimaryOccupantMarker`, di bawah kunci Unit. Sejak #258, `endOccupancy` juga membandingkan hari terakhir dengan Masa Huni berikutnya milik orang yang sama di unit yang sama (keputusan 6). Itu bukan pemeriksaan bentrok Penanggung Jawab.
+
 - **Baris lama.** Penanda pada baris yang hari terakhirnya sudah lewat tetap tersimpan. Penanda itu tidak ditampilkan dan tidak dibaca apa pun, jadi tidak ada migrasi data untuknya.
 - **Audit Log.** Setiap perpindahan menulis satu entri `occupancy_primary_occupant_marked`, dengan `before` berisi Masa Huni dan Warga pemegang lama (atau kosong) dan `after` berisi Masa Huni dan Warga pemegang baru serta Unit-nya. Nama aksi lama dipertahankan karena nilai itu sudah tersimpan di `audit_log`.
 - **Penerima email tagihan** adalah baris ber-penanda yang sedang menghuni hari ini. Pencariannya tetap diurutkan secara deterministik (tanggal mulai lalu waktu dicatat, terbaru lebih dulu) sebagai pertahanan, meskipun invarian menjamin paling banyak satu.
@@ -147,6 +164,11 @@ Superuser adalah yang mengelola Unit dan Masa Huni. Dari sisi mereka, ada tiga m
 - Orang yang sama di **unit berbeda** tetap boleh bersamaan.
 - Pemeriksaan ini dilakukan di bawah kunci baris Unit yang sama, supaya dua permintaan bersamaan tidak sama-sama lolos.
 
+> *Sesudah run (2026-09-28):* aturan ini diperluas ke jalur kelima, yaitu mengubah hari terakhir (#258, PR #261). Pemilik memasukkan tiket itu ke run pada 2026-09-28.
+> - `endOccupancy` menolak hari terakhir yang sama dengan atau sesudah hari mulai Masa Huni berikutnya milik orang yang sama di unit yang sama. Galatnya `OccupancyEndOverlapError { latestEndedOn, nextStartedOn }`, dengan pesan "Hari terakhir paling lambat …".
+> - Yang dibandingkan hanya Masa Huni yang mulainya sesudah Masa Huni yang diubah, supaya pasangan ganda di data lama tetap bisa diakhiri.
+> - Pesan penolakan formulir menyebut tanggal `YYYY-MM-DD` mentah, sama seperti pesan lain di halaman Penghuni (#246).
+
 **7. Teks antarmuka.** Katalog `id` dan `en` sama-sama diperbarui.
 - Judul halaman dan tautan dari daftar Unit menjadi "Penghuni" (sebelumnya "Riwayat huni").
 - Judul bagian: "Penghuni saat ini", "Akan masuk", dan "Riwayat huni".
@@ -164,6 +186,9 @@ Superuser adalah yang mengelola Unit dan Masa Huni. Dari sisi mereka, ada tiga m
 - **Jalan kedua** tidak menemukan apa pun dan tidak menulis apa pun.
 - **Tanpa pengaman `localhost`**, berbeda dengan perintah Data Contoh, karena sasarannya justru produksi.
 - **Eksekusi di produksi.** Dijalankan oleh orchestrator di akhir run, setelah perubahan kode ter-deploy, dan hanya dengan izin eksplisit pemilik yang diberikan saat itu setelah pemilik melihat keluaran dry-run.
+
+  > *Sesudah run (2026-09-28):* dijalankan sesudah `d6cefff` ter-deploy, dengan izin pemilik yang diberikan sesudah melihat dry-run. Rencananya menghapus 2 Masa Huni, satu di tiap Unit, dan memindahkan 1 penanda. `--yes` menulis 3 entri Audit Log `system:data-fix`: 2 `occupancy_duplicate_deleted`, dan 1 `occupancy_primary_occupant_marked` untuk perpindahan penanda. Jalan ketiga tidak menemukan apa pun. Bundelnya sudah dihapus dari container dan VM.
+
 - Penghapusan ini adalah pengecualian sekali pakai terhadap aturan "Masa Huni tidak pernah dihapus", disetujui pemilik karena produksi masih uji coba. Tidak ada jalur di aplikasi yang memperoleh kemampuan menghapus.
 
 **9. Dokumen.**
@@ -211,6 +236,9 @@ Superuser adalah yang mengelola Unit dan Masa Huni. Dari sisi mereka, ada tiga m
   - tidak ada lagi pasangan Masa Huni ganda (orang yang sama, unit yang sama, rentang bersinggungan);
   - setiap Unit paling banyak punya satu Penanggung Jawab yang sedang menghuni;
   - Audit Log memuat satu entri `system:data-fix` per baris yang dihapus.
+
+  > *Sesudah run (2026-09-28):* terpenuhi. Pemeriksaan agregat read-only sesudah `--yes` menunjukkan 2 Unit, 3 Masa Huni, 0 pasangan ganda, tepat satu Penanggung Jawab yang sedang menghuni di tiap Unit, dan 2 entri `occupancy_duplicate_deleted` oleh `system:data-fix`.
+
 - Gerbang mutu repo lulus.
 
 ## Out of scope
