@@ -1,7 +1,7 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
 import * as m from '$lib/paraglide/messages';
-import { AUTH_PATHS, MINIMUM_PASSWORD_LENGTH, auth } from '$lib/server/auth';
+import { AUTH_PATHS, MINIMUM_PASSWORD_LENGTH, auth, checkPassword } from '$lib/server/auth';
 import { database } from '$lib/server/db';
 import { systemClock } from '$lib/server/ports/clock';
 import { submitRegistration } from '$lib/server/services/registration';
@@ -31,9 +31,9 @@ import type { Actions, PageServerLoad } from './$types';
  * superuser decides what it is worth — see `spec-warga-unit-v1.md`: "klaim rumah yang tidak
  * diperiksa memberi orang asing akses ke laporan keuangan dan daftar warga".
  *
- * The password is checked for length here as well as by better-auth, so that the person reads an
- * Indonesian sentence rather than an English error code. better-auth remains the authority: it
- * refuses a short password whatever this file forgets. The address is *not* checked here — one
+ * The password is checked with `checkPassword` here as well as by better-auth, so that the person
+ * reads an Indonesian sentence rather than an English error code. better-auth remains the
+ * authority: it refuses a short or a common password whatever this file forgets. The address is *not* checked here — one
  * definition of a valid email address is enough, and better-auth's is the one that decides.
  */
 
@@ -107,11 +107,27 @@ function whatIsWrong(form: RegistrationForm): string | undefined {
 	if (form.claimedBlock === '' || form.claimedNumber === '') {
 		return m.register_claimMissing();
 	}
-	if (form.password.length < MINIMUM_PASSWORD_LENGTH) {
-		return m.register_passwordTooShort({ min: MINIMUM_PASSWORD_LENGTH });
+	const passwordProblem = whatIsWrongWithPassword(form.password);
+	if (passwordProblem) {
+		return passwordProblem;
 	}
 	if (form.password !== form.passwordAgain) {
 		return m.register_passwordMismatch();
+	}
+	return undefined;
+}
+
+/**
+ * The password rule the person broke, from `checkPassword`, in Indonesian. A password over the
+ * maximum is left to better-auth, which refuses it and lands on `register_signUpFailed`.
+ */
+function whatIsWrongWithPassword(password: string): string | undefined {
+	const verdict = checkPassword(password);
+	if (verdict === 'tooShort') {
+		return m.register_passwordTooShort({ min: MINIMUM_PASSWORD_LENGTH });
+	}
+	if (verdict === 'tooCommon') {
+		return m.register_passwordTooCommon();
 	}
 	return undefined;
 }

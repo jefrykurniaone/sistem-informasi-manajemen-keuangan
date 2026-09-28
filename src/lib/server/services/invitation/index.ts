@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, gt, isNull } from 'drizzle-orm';
 import { recordAuditEntry } from '../../audit';
-import { MAXIMUM_PASSWORD_LENGTH, MINIMUM_PASSWORD_LENGTH, type Auth } from '../../auth';
+import {
+	checkPassword,
+	MAXIMUM_PASSWORD_LENGTH,
+	MINIMUM_PASSWORD_LENGTH,
+	type Auth
+} from '../../auth';
 import { ACTION, requirePermission, type Transaction } from '../../authz';
 import type { Database } from '../../db';
 import { account, user } from '../../db/schema/auth';
@@ -386,8 +391,9 @@ export interface AcceptedInvitation {
  * and their default subscriptions exist. See the module doc comment for every decision in that
  * sentence.
  *
- * @throws {TypeError} when the name is blank or the password is outside the allowed lengths — the
- *   page checks these first, so reaching this is a broken caller.
+ * @throws {TypeError} when the name is blank or `checkPassword` refuses the password (outside the
+ *   allowed lengths, or one of the most common passwords) — the page checks these first, so
+ *   reaching this is a broken caller.
  * @throws {InvitationTokenUnknownError} when the token matches nothing.
  * @throws {InvitationUsedError} when the link was already redeemed. Checked before expiry, so a
  *   link that is both spent and old is reported as spent — the truer story.
@@ -404,12 +410,12 @@ export async function acceptInvitation(
 	if (name === '') {
 		throw new TypeError('Accepting an invitation needs a non-empty name.');
 	}
-	if (
-		request.password.length < MINIMUM_PASSWORD_LENGTH ||
-		request.password.length > MAXIMUM_PASSWORD_LENGTH
-	) {
+	// The credential below is written without better-auth's endpoints, so its hook that refuses a
+	// common password never runs here: this check is the only one on this path.
+	const verdict = checkPassword(request.password);
+	if (verdict !== 'ok') {
 		throw new TypeError(
-			`A password must be between ${MINIMUM_PASSWORD_LENGTH} and ${MAXIMUM_PASSWORD_LENGTH} characters.`
+			`The password is refused as "${verdict}": it must be between ${MINIMUM_PASSWORD_LENGTH} and ${MAXIMUM_PASSWORD_LENGTH} characters and not one of the most common passwords.`
 		);
 	}
 

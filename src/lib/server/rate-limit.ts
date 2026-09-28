@@ -142,10 +142,14 @@ export interface RateLimitPolicy {
  * attack the bucket exists to stop needs.
  *
  * - **Sign-in, per email: 5 per minute.** A person retyping a password does it two or three times;
- *   an attacker working a list of common passwords needs thousands. Five a minute is 300 an hour,
- *   which against a 12-character minimum (`MINIMUM_PASSWORD_LENGTH` in `./auth.ts`) is no attack at
- *   all. It is also above better-auth's own default of 3 per 10 seconds, so a resident who is
- *   already refused by that on `/api/auth/*` would not find this page stricter.
+ *   an attacker working a list of common passwords needs thousands. Five a minute is 300 an hour.
+ *   The minimum is 8 characters (`MINIMUM_PASSWORD_LENGTH` in `./auth.ts`) and the most common
+ *   passwords are refused outright (`./common-passwords.ts`), so the guesses an attacker would try
+ *   first are nobody's password, and everything after them arrives at 300 an hour. This bucket is
+ *   one of the three things decision 2 of `docs/spec-kata-sandi-v1.md` leans on to make 8
+ *   characters enough; see the comment on `MINIMUM_PASSWORD_LENGTH`. It is also above
+ *   better-auth's own default of 3 per 10 seconds, so a resident who is already refused by that on
+ *   `/api/auth/*` would not find this page stricter.
  * - **Sign-in, per address: 30 per minute.** A household of several people signing in from one
  *   router, an office of pengurus, or a Playwright run posting every sign-in from `127.0.0.1` all
  *   stay far under it; a stranger rotating through the resident list at one guess per address is

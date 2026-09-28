@@ -1,9 +1,12 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+	checkPassword,
 	createAuth,
 	isSecureOrigin,
+	MAXIMUM_PASSWORD_LENGTH,
 	MINIMUM_PASSWORD_LENGTH,
+	PASSWORD_TOO_COMMON,
 	readAuthSecret,
 	readOrigin,
 	type Auth
@@ -54,6 +57,15 @@ const TEST_SECRET = 'a-test-secret-that-is-long-enough-to-pass';
 
 /** A password that clears the minimum length, used wherever the password itself does not matter. */
 const GOOD_PASSWORD = 'kata sandi yang panjang';
+
+/** Exactly the minimum length, and not on the list of common passwords. */
+const SHORTEST_GOOD_PASSWORD = 'kopi-teh';
+
+/**
+ * On the list of common passwords, which is why the tests use it. `tests/unit/common-passwords.test.ts`
+ * knows this one is on the list on purpose.
+ */
+const COMMON_PASSWORD = 'password123';
 
 /** The instant the queue rows in this file are stamped with. */
 const START = '2026-01-01T00:00:00.000Z';
@@ -178,6 +190,30 @@ async function refusalCode(call: Promise<unknown>): Promise<string | undefined> 
 	return undefined;
 }
 
+/**
+ * Posts straight to one of better-auth's own endpoints over HTTP, the way a script that skips every
+ * form would: through the instance's router, its origin check and its rate limiter included.
+ */
+async function postToAuthApi(path: string, body: unknown, cookie?: string): Promise<Response> {
+	const headers = new Headers({ 'content-type': 'application/json', origin: TEST_ORIGIN });
+	if (cookie !== undefined) {
+		headers.set('cookie', cookie);
+	}
+	return authentication().handler(
+		new Request(`${TEST_ORIGIN}/api/auth${path}`, {
+			method: 'POST',
+			headers,
+			body: JSON.stringify(body)
+		})
+	);
+}
+
+/** The status and error code of a response from `postToAuthApi`. */
+async function statusAndCode(response: Response): Promise<{ status: number; code?: string }> {
+	const body = (await response.json()) as { code?: string } | null;
+	return { status: response.status, code: body?.code };
+}
+
 /** Sends everything the queue holds, and hands back what the mail server was given. */
 async function emptyTheQueue(): Promise<FakeEmailSender> {
 	const sender = new FakeEmailSender();
@@ -243,7 +279,8 @@ describe('registering', () => {
 		},
 		// An empty password never reaches the length rule: it fails the endpoint's own shape check
 		// first. The registration form catches this one before better-auth does, so that the person
-		// reads an Indonesian sentence instead of either code.
+		// reads an Indonesian sentence instead of either code. The common-password hook leaves it
+		// alone too, so that order is unchanged.
 		{ name: 'empty', password: '', code: 'VALIDATION_ERROR' }
 	])('refuses a password that is $name', async ({ password, code }) => {
 		const email = `register-short-${password.length}@komplek.local`;
@@ -593,6 +630,119 @@ describe('the password itself', () => {
 		// being called would leave an empty array and a green test that proves nothing.
 		expect(lines.join('\n')).toContain('Invalid password');
 		expect(lines.join('\n')).not.toContain(password);
+	});
+});
+
+describe('the rules for a new password', () => {
+	it.each([
+		{
+			name: 'one character short of the minimum',
+			password: 'x'.repeat(MINIMUM_PASSWORD_LENGTH - 1),
+			verdict: 'tooShort'
+		},
+		{ name: 'exactly the minimum and not common', password: SHORTEST_GOOD_PASSWORD, verdict: 'ok' },
+		{ name: 'exactly the maximum', password: 'x'.repeat(MAXIMUM_PASSWORD_LENGTH), verdict: 'ok' },
+		{
+			name: 'one character over the maximum',
+			password: 'x'.repeat(MAXIMUM_PASSWORD_LENGTH + 1),
+			verdict: 'tooLong'
+		},
+		{ name: 'on the list of common passwords', password: COMMON_PASSWORD, verdict: 'tooCommon' },
+		// The match ignores letter case, so capitals do not make a common password uncommon.
+		{ name: 'on the list, in other letter case', password: 'PassWord123', verdict: 'tooCommon' }
+	])('call a password that is $name "$verdict"', ({ password, verdict }) => {
+		expect(checkPassword(password)).toBe(verdict);
+	});
+
+	it('are 8 characters and no composition rule, so a plain 8-character password registers', async () => {
+		const email = 'password-rules-eight@komplek.local';
+		expect(MINIMUM_PASSWORD_LENGTH).toBe(8);
+		expect(SHORTEST_GOOD_PASSWORD).toHaveLength(MINIMUM_PASSWORD_LENGTH);
+
+		await register(email, SHORTEST_GOOD_PASSWORD);
+
+		expect(await testDb.db.select().from(user).where(eq(user.email, email))).toHaveLength(1);
+	});
+
+	it.each([
+		{ password: COMMON_PASSWORD, label: 'lower-case' },
+		{ password: 'PassWord123', label: 'mixed-case' }
+	])(
+		'refuse $password through auth.api.signUpEmail, and create nothing',
+		async ({ password, label }) => {
+			const email = `password-rules-common-${label}@komplek.local`;
+
+			expect(await refusalCode(register(email, password))).toBe(PASSWORD_TOO_COMMON);
+			expect(await testDb.db.select().from(user).where(eq(user.email, email))).toHaveLength(0);
+			expect(await allQueued(email, VERIFY_EMAIL_KIND)).toHaveLength(0);
+		}
+	);
+});
+
+describe('a request straight to /api/auth/*, with no form in front of it', () => {
+	it('can register with a password that is not common, so the refusal below is about the password', async () => {
+		const email = 'direct-sign-up-accepted@komplek.local';
+
+		const response = await postToAuthApi('/sign-up/email', {
+			name: 'Warga Uji',
+			email,
+			password: SHORTEST_GOOD_PASSWORD
+		});
+
+		expect(response.status).toBe(200);
+		expect(await testDb.db.select().from(user).where(eq(user.email, email))).toHaveLength(1);
+	});
+
+	it('cannot register with a common password, and no account is created', async () => {
+		const email = 'direct-sign-up-common@komplek.local';
+
+		const response = await postToAuthApi('/sign-up/email', {
+			name: 'Warga Uji',
+			email,
+			password: COMMON_PASSWORD
+		});
+
+		expect(await statusAndCode(response)).toEqual({ status: 400, code: PASSWORD_TOO_COMMON });
+		expect(await testDb.db.select().from(user).where(eq(user.email, email))).toHaveLength(0);
+		expect(await allQueued(email, VERIFY_EMAIL_KIND)).toHaveLength(0);
+	});
+
+	it('cannot reset a password to a common one, and neither the link nor the old password is spent', async () => {
+		const email = 'direct-reset-common@komplek.local';
+		await registerAndVerify(email);
+		await authentication().api.requestPasswordReset({ body: { email } });
+		const token = tokenOf(linkOf(await queued(email, PASSWORD_RESET_KIND)));
+
+		const response = await postToAuthApi('/reset-password', {
+			token,
+			newPassword: COMMON_PASSWORD
+		});
+
+		expect(await statusAndCode(response)).toEqual({ status: 400, code: PASSWORD_TOO_COMMON });
+		await expect(
+			authentication().api.signInEmail({ body: { email, password: GOOD_PASSWORD } })
+		).resolves.toBeDefined();
+		// The link still works, because the refusal came before better-auth looked the token up.
+		await expect(
+			authentication().api.resetPassword({ body: { token, newPassword: SHORTEST_GOOD_PASSWORD } })
+		).resolves.toBeDefined();
+	});
+
+	it('cannot change a signed-in password to a common one, and the old password still works', async () => {
+		const email = 'direct-change-common@komplek.local';
+		await registerAndVerify(email);
+		const cookie = await signInAndKeepCookies(email);
+
+		const response = await postToAuthApi(
+			'/change-password',
+			{ currentPassword: GOOD_PASSWORD, newPassword: COMMON_PASSWORD },
+			cookie
+		);
+
+		expect(await statusAndCode(response)).toEqual({ status: 400, code: PASSWORD_TOO_COMMON });
+		await expect(
+			authentication().api.signInEmail({ body: { email, password: GOOD_PASSWORD } })
+		).resolves.toBeDefined();
 	});
 });
 

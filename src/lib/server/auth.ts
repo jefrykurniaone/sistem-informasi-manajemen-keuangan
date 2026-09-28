@@ -1,7 +1,9 @@
 import { getRequestEvent } from '$app/server';
-import { betterAuth, type BetterAuthPlugin, type Logger } from 'better-auth';
+import { APIError, betterAuth, type BetterAuthPlugin, type Logger } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { createAuthMiddleware } from 'better-auth/api';
 import { sveltekitCookies } from 'better-auth/svelte-kit';
+import { isCommonPassword } from './common-passwords';
 import { database, type Database } from './db';
 import { account, session, user, verification } from './db/schema/auth';
 import { enqueueEmail } from './email/queue';
@@ -57,6 +59,11 @@ import { systemClock, type Clock } from './ports/clock';
  * 8. **A password reset ends every session.** `revokeSessionsOnPasswordReset` is on: the usual
  *    reason to reset a password is that someone else may have it, and leaving their session alive
  *    would make the reset pointless.
+ * 9. **A common password is refused wherever a password is set**, including by a request that goes
+ *    straight to `/api/auth/*` and never sees a form. `checkPassword` is the rule and
+ *    `refuseCommonPasswords`, a better-auth `hooks.before`, is what holds better-auth's own
+ *    endpoints to it. The Undangan service writes its credential without better-auth's endpoints,
+ *    so it asks `checkPassword` itself.
  *
  * ## What the session cookie looks like, and why
  *
@@ -114,14 +121,111 @@ export const AUTH_PATHS = {
 } as const;
 
 /**
- * The shortest password this application accepts. Length is the only rule: composition rules push
- * people towards `Password1!` and towards writing it down, and a long passphrase beats a short
- * password with a symbol in it.
+ * The shortest password this application accepts. Every place that states or enforces a minimum
+ * reads it from here: better-auth's configuration below, `checkPassword`, the three form actions,
+ * the `minlength` of their inputs and the `{min}` in their hints. Decision 2 of
+ * `docs/spec-kata-sandi-v1.md` (#248) is why it is 8, and it is written out here so that it is not
+ * reopened without knowing it was decided:
+ *
+ * - **No composition rules.** NIST SP 800-63B forbids them: requiring a digit, a capital or a
+ *   symbol pushes people towards guessable patterns such as `Password1!` and towards writing the
+ *   password down. Length, and not being on the list of common passwords, are the only rules.
+ * - **8 is a usability compromise the owner chose on 2026-09-28.** The previous, longer minimum was
+ *   too long for residents, who complained, gave up halfway through registering, or wrote it on
+ *   paper; an initial proposal of 6 was refused.
+ * - **Where that sits against the standard.** 8 is the floor of the 2017 revision of NIST SP
+ *   800-63B. Revision 4 (2025) asks for 15 when a password is the only factor, and allows 8 only
+ *   alongside a second factor. This application has a single factor, so 8 is below revision 4, on
+ *   purpose.
+ * - **What holds the compromise up.** The sign-in rate limiter (5 attempts per minute per email,
+ *   `./rate-limit.ts`); scrypt, better-auth's password hash, which makes every offline guess
+ *   expensive; and the list of the most common passwords (`./common-passwords.ts`), which takes
+ *   away the guesses an attacker would try first.
  */
-export const MINIMUM_PASSWORD_LENGTH = 12;
+export const MINIMUM_PASSWORD_LENGTH = 8;
 
 /** The longest password accepted, which is a limit on how much scrypt is asked to chew, not on how safe a password may be. */
 export const MAXIMUM_PASSWORD_LENGTH = 200;
+
+/** What `checkPassword` says about a password: the first rule it breaks, or `ok`. */
+export type PasswordVerdict = 'tooShort' | 'tooLong' | 'tooCommon' | 'ok';
+
+/**
+ * Whether a password may be set, and if not, which rule it breaks first. The one place the rules
+ * for a new password live: the three form actions (registering, setting a new password, accepting
+ * an invitation) and the Undangan service ask it, and so does the better-auth hook below, so that
+ * none of them can drift from the others.
+ *
+ * Length is counted in UTF-16 code units, `String.length`, which is how better-auth counts it too.
+ * The common-password match ignores letter case and trims nothing; see `./common-passwords.ts`.
+ * Existing passwords are never asked about: the rules apply when a password is set, and signing in
+ * does not check them (decision 4 of `docs/spec-kata-sandi-v1.md`).
+ */
+export function checkPassword(password: string): PasswordVerdict {
+	if (password.length < MINIMUM_PASSWORD_LENGTH) {
+		return 'tooShort';
+	}
+	if (password.length > MAXIMUM_PASSWORD_LENGTH) {
+		return 'tooLong';
+	}
+	if (isCommonPassword(password)) {
+		return 'tooCommon';
+	}
+	return 'ok';
+}
+
+/** The error code better-auth answers with when the password being set is a common one. */
+export const PASSWORD_TOO_COMMON = 'PASSWORD_TOO_COMMON';
+
+/**
+ * better-auth's endpoints that set a password, each with the body field that carries it. With this
+ * configuration these three are all of them that are reachable at all: `/sign-up/email` and
+ * `/reset-password` are open to anyone, and `/change-password` to anyone signed in. No page of this
+ * application calls the last one yet, but `/api/auth/change-password` answers regardless.
+ * better-auth's `setPassword` has no path, is callable only from server code, and nothing here calls
+ * it; a ticket that starts to must check the password with `checkPassword` first.
+ */
+const PASSWORD_FIELD_BY_PATH: ReadonlyMap<string, string> = new Map([
+	['/sign-up/email', 'password'],
+	['/reset-password', 'newPassword'],
+	['/change-password', 'newPassword']
+]);
+
+/**
+ * Refuses a common password on every endpoint that sets one, before the endpoint runs, so nothing
+ * is created or changed. It exists because `/api/auth/*` is open: without it, a `POST` straight to
+ * `/api/auth/sign-up/email` would skip every check a form action makes.
+ *
+ * It runs for `auth().api.*` calls from server code as well, which costs the form actions nothing:
+ * they ask `checkPassword` first and answer with their own sentence, so a common password never
+ * reaches this hook from them.
+ *
+ * Only `tooCommon` is refused here. Length stays better-auth's, enforced from the same two
+ * constants through `minPasswordLength` and `maxPasswordLength`, so that its own codes and its own
+ * order of checks (an empty body fails validation before any length rule) stay as they were.
+ *
+ * The hook sees the body as sent, before better-auth has validated it, so it reads the field
+ * without trusting its type: anything that is not a string is left for the endpoint to refuse.
+ */
+const refuseCommonPasswords = createAuthMiddleware(async (context) => {
+	const password = passwordBeingSet(context.path, context.body);
+	if (password !== undefined && checkPassword(password) === 'tooCommon') {
+		throw new APIError('BAD_REQUEST', {
+			code: PASSWORD_TOO_COMMON,
+			message: 'This password is one of the most commonly used passwords. Choose another one.'
+		});
+	}
+});
+
+/** The password a request to `path` is about to set, or `undefined` when it sets none. */
+function passwordBeingSet(path: string | undefined, body: unknown): string | undefined {
+	const field = path === undefined ? undefined : PASSWORD_FIELD_BY_PATH.get(path);
+	if (field === undefined || typeof body !== 'object' || body === null) {
+		return undefined;
+	}
+	const value: unknown = (body as Record<string, unknown>)[field];
+	return typeof value === 'string' ? value : undefined;
+}
 
 /** How long a session lasts without being used: thirty days. */
 const SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
@@ -236,6 +340,8 @@ export function createAuth(settings: AuthSettings) {
 			useSecureCookies: isSecureOrigin(baseURL),
 			defaultCookieAttributes: { httpOnly: true, sameSite: 'lax' }
 		},
+		// Decision 9 above: a common password is refused on every endpoint that sets one.
+		hooks: { before: refuseCommonPasswords },
 		plugins: settings.plugins ?? []
 	});
 }
