@@ -432,6 +432,40 @@ describe('approveRegistration', () => {
 		).toHaveLength(1);
 	});
 
+	it('does not add a second stay when the registrant’s previous one in that unit ends today', async () => {
+		// The inclusive boundary of decision 6's overlap rule: a stay whose last day is today has not
+		// passed yet, so it still blocks a new one, the same as one with no last day at all.
+		const actorId = await insertSuperuser();
+		const clock = new FakeClock(START);
+		const unit = await insertUnitRow();
+		const registrant = await register('leaving-today', unit, clock);
+		const [residentRow] = await testDb.db
+			.insert(residents)
+			.values({ userId: registrant.userId, createdAt: new Date(START) })
+			.returning();
+		await testDb.db.insert(occupancies).values({
+			unitId: unit.unitId,
+			residentId: residentRow.id,
+			role: OCCUPANCY_ROLE.tenant,
+			startedOn: '2025-06-01',
+			endedOn: '2026-01-01',
+			isPrimaryOccupant: false,
+			createdAt: new Date(START)
+		});
+
+		const approved = await approveRegistration(testDb.db, clock, {
+			actorId,
+			registrationId: registrant.registrationId,
+			unitId: unit.unitId,
+			origin: TEST_ORIGIN
+		});
+
+		expect(approved).toMatchObject({ residentId: residentRow.id, createdOccupancy: false });
+		expect(
+			await testDb.db.select().from(occupancies).where(eq(occupancies.residentId, residentRow.id))
+		).toHaveLength(1);
+	});
+
 	it('still records the stay when the registrant’s previous one in that unit ended yesterday', async () => {
 		const actorId = await insertSuperuser();
 		const clock = new FakeClock(START);
