@@ -6,10 +6,18 @@
 | Run | `huni-v1` |
 | Peta eksekusi | [#247](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/247) |
 | Disalin pada | 2026-09-27 |
+| Lintasan penutup | 2026-09-28, sesudah Gelombang 7 (`d6cefff`) |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
 item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
+
+Lintasan penutup menambahkan penanda *Sesudah run* di bawah garis pada setiap klaim yang dibalik
+atau diubah bentuknya oleh tiket run ini. Tidak ada teks yang dihapus. Klaim yang ditandai:
+
+- keempat klaim README yang basi di *Problem statement*, yang diperbaiki #243.
+
+Tidak ada keputusan spec ini yang dibalik.
 
 ---
 
@@ -21,6 +29,8 @@ item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan 
 - Catatan di bawah tabel *Stack* menyebut ElysiaJS, Drizzle ORM, better-auth, dan Paraglide JS "belum terpasang". Keempatnya sudah menjadi dependensi.
 - Bagian *Konvensi* menyebut port `EmailSender`, `FileStore`, dan `Clock` "akan tinggal" di bawah lapisan server dan "tempatnya sengaja dikosongkan". Port-port itu sudah ada.
 - Bagian *Data Contoh* menyebut baris `Internal error: directory mismatch` hanya muncul di Windows. Baris itu juga muncul di Linux, dan tetap tidak berbahaya.
+
+> *Sesudah run (2026-09-28):* keempat klaim itu sudah diperbaiki di README berbahasa Inggris oleh #243 (PR #250, `0fac209`). Judul bagian Data Contoh menjadi "Seed data (Data Contoh)". Tautan tracker tidak diberi tanda "(in Indonesian)", karena berkas itu berbahasa Inggris.
 
 Kalau README diterjemahkan apa adanya, hasilnya README berbahasa Inggris yang tetap salah, dan pembaca bahasa Inggris tidak punya salinan asli untuk dijadikan pembanding.
 

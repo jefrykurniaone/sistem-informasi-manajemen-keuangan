@@ -6,16 +6,28 @@
 | Run | `huni-v1` |
 | Peta eksekusi | [#247](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/247) |
 | Disalin pada | 2026-09-28 |
+| Lintasan penutup | 2026-09-28, sesudah Gelombang 7 (`d6cefff`) |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang;
 item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
+
+Lintasan penutup menambahkan penanda *Sesudah run* di bawah garis pada setiap klaim yang dibalik
+atau diubah bentuknya oleh tiket run ini. Tidak ada teks yang dihapus. Klaim yang ditandai:
+
+- "minimal 12 karakter" di *Problem statement* (#249);
+- angka 12 yang disebut ditulis di komentar konstanta (#249);
+- sumber daftar SecLists dan cara daftar disimpan (#249);
+- endpoint yang dijaga hook better-auth (#249);
+- pesan per alur yang semula hanya "terlalu umum" (#260).
 
 ---
 
 ## Problem statement
 
 Warga, dan siapa pun yang menerima Undangan atau mengajukan Pendaftaran, harus memilih kata sandi minimal 12 karakter (per 2026-09-28). Bagi warga komplek, itu terlalu panjang: mereka mengeluh, menyerah di tengah pendaftaran, atau menuliskannya di kertas.
+
+> *Sesudah run (2026-09-28):* minimal 8 karakter sejak #249 (PR #259, `a13669b`).
 
 Di sisi lain, satu-satunya aturan saat ini adalah panjang. Kalau batasnya diturunkan tanpa pengaman lain, kata sandi yang paling sering ditebak, seperti `12345678`, `password`, dan `qwertyui`, akan diterima.
 
@@ -63,6 +75,8 @@ Di sisi lain, satu-satunya aturan saat ini adalah panjang. Kalau batasnya dituru
 - Konstanta panjang minimal yang sudah ada di modul autentikasi diubah dari 12 menjadi **8**. Maksimal tetap 200.
 - Per 2026-09-28 konstanta itu satu-satunya sumber angka. Konfigurasi better-auth, validasi server di ketiga alur, atribut `minlength` di ketiga formulir, dan teks petunjuk dengan parameter `{min}` semuanya membacanya. Karena itu tidak ada teks katalog yang perlu diubah untuk angka ini.
 
+> *Sesudah run (2026-09-28):* `MINIMUM_PASSWORD_LENGTH` di `src/lib/server/auth.ts` bernilai 8 sejak #249.
+
 **2. Alasan yang ditulis di komentar konstanta**, supaya tidak dibuka ulang tanpa sadar:
 - **Tanpa aturan komposisi.** NIST SP 800-63B melarangnya, karena aturan itu mendorong pola yang mudah ditebak (`Password1!`) dan kebiasaan menulis kata sandi.
 - **Angka 8 adalah kompromi kegunaan yang dipilih pemilik pada 2026-09-28.** 12 dianggap terlalu panjang bagi warga, dan usulan awal 6 ditolak.
@@ -76,6 +90,8 @@ Di sisi lain, satu-satunya aturan saat ini adalah panjang. Kalau batasnya dituru
   - daftar kata sandi umum di keputusan 3.
 - Dua komentar lain yang menyebut "12 karakter" (di pembatas laju login dan di Data Contoh) diperbarui.
 
+> *Sesudah run (2026-09-28):* komentar konstanta memuat semua alasan di atas kecuali angka 12. Kriteria grep #249, yaitu tidak ada angka 12 di sekitar konstanta, bertabrakan dengan kutipan "12 dianggap terlalu panjang", jadi alasan itu ditulis tanpa menyebut angkanya.
+
 **3. Daftar kata sandi umum.**
 - **Sumbernya** daftar publik 10.000 kata sandi paling umum dari SecLists (lisensi MIT). Atribusi dan lisensinya disertakan bersama daftar di repo.
 - **Isinya** hanya entri yang panjangnya 8 karakter atau lebih, karena yang lebih pendek sudah ditolak oleh aturan panjang.
@@ -85,6 +101,13 @@ Di sisi lain, satu-satunya aturan saat ini adalah panjang. Kalau batasnya dituru
   - layanan Undangan;
   - hook better-auth pada endpoint yang menetapkan kata sandi (pendaftaran email dan atur ulang kata sandi). Tanpa hook ini, pemanggilan `/api/auth/*` langsung melewati aturan, karena endpoint itu terbuka.
 - **Pesan.** Setiap alur mendapat pesan "kata sandi ini terlalu umum" di katalog `id` dan `en`, mengikuti pola pesan per alur yang sudah ada, tanpa em dash.
+
+> *Sesudah run (2026-09-28):*
+> - **Berkas SecLists.** Yang dipakai adalah `xato-net-10-million-passwords-10000.txt` pada commit `c5a0525`, bukan `10k-most-common.txt`, karena berkas itu tidak memuat `password123`. Setelah disaring ke 8 karakter atau lebih, isinya 3336 entri (#249).
+> - **Penyimpanan.** Daftar, beserta atribusi dan lisensi MIT-nya, disimpan sebagai string di `src/lib/server/common-passwords.ts`, bukan sebagai `.txt`, karena impor `?raw` gagal di `bun build`.
+> - **Pemeriksa.** `checkPassword` mengembalikan `tooShort | tooLong | tooCommon | ok`.
+> - **Hook.** `refuseCommonPasswords` juga menjaga `/change-password`, tidak hanya `/sign-up/email` dan `/reset-password`, karena endpoint itu terbuka bagi siapa pun yang sudah masuk. Hook menolak `tooCommon` dengan 400 `PASSWORD_TOO_COMMON`.
+> - **Terlalu panjang.** Sejak #260 (PR #262), ketiga formulir juga memetakan `tooLong` ke pesan per alur "Kata sandi paling panjang {max} karakter". Pemilik memasukkan tiket itu ke run pada 2026-09-28. Sebelumnya halaman undangan berakhir 500, dan dua alur lain menampilkan pesan yang salah. Input kata sandi sengaja tanpa `maxlength`, karena atribut itu memotong kata sandi yang ditempel tanpa pemberitahuan.
 
 **4. Kata sandi yang sudah ada tidak disentuh.** Aturan hanya berlaku saat kata sandi ditetapkan. Login tidak memeriksanya.
 
