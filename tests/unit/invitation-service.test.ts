@@ -3,7 +3,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { PermissionDeniedError } from '$lib/errors';
 import { auditEntriesFor } from '$lib/server/audit';
-import { createAuth, type Auth } from '$lib/server/auth';
+import { createAuth, MINIMUM_PASSWORD_LENGTH, type Auth } from '$lib/server/auth';
 import { account, user } from '$lib/server/db/schema/auth';
 import { ROLE, userRoles } from '$lib/server/db/schema/authz';
 import { emailQueue } from '$lib/server/db/schema/email';
@@ -363,6 +363,49 @@ describe('acceptInvitation and the seven days', () => {
 		);
 
 		expect(refused).toBeInstanceOf(InvitationTokenUnknownError);
+	});
+});
+
+describe('acceptInvitation and the password', () => {
+	it.each([
+		{
+			name: 'one character short of the minimum',
+			password: 'x'.repeat(MINIMUM_PASSWORD_LENGTH - 1)
+		},
+		// On the list of common passwords on purpose; `common-passwords.test.ts` knows these two.
+		{ name: 'on the list of common passwords', password: 'password123' },
+		{ name: 'on the list, in other letter case', password: 'PassWord123' }
+	])('refuses a password that is $name, and spends nothing', async ({ password }) => {
+		const actorId = await insertSuperuser();
+		const unitId = await insertUnitRow();
+		const clock = new FakeClock(START);
+		const email = anAddress('refused-password');
+		const { row, token } = await sendOne(actorId, email, unitId, clock);
+
+		const refused = await rejection(
+			acceptInvitation(testDb.db, clock, acceptance(token, { password }))
+		);
+
+		expect(refused).toBeInstanceOf(TypeError);
+		const [after] = await testDb.db.select().from(invitations).where(eq(invitations.id, row.id));
+		expect(after.usedAt).toBeNull();
+		expect(await testDb.db.select().from(user).where(eq(user.email, email))).toHaveLength(0);
+	});
+
+	it('accepts a password of exactly the minimum length that is not common, and it signs in', async () => {
+		const actorId = await insertSuperuser();
+		const unitId = await insertUnitRow();
+		const clock = new FakeClock(START);
+		const email = anAddress('eight');
+		const { token } = await sendOne(actorId, email, unitId, clock);
+		const password = 'kopi-teh';
+		expect(password).toHaveLength(MINIMUM_PASSWORD_LENGTH);
+
+		await acceptInvitation(testDb.db, clock, acceptance(token, { password }));
+
+		await expect(
+			authentication().api.signInEmail({ body: { email, password } })
+		).resolves.toBeDefined();
 	});
 });
 
