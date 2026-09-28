@@ -4,7 +4,9 @@
 |---|---|
 | Item spesifikasi | [#266](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/266) |
 | Run | `telusur-v1` |
-| Peta eksekusi | belum dibuat |
+| Peta eksekusi | [#270](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/270) |
+| Tiket | #267, #268, #269 |
+| Branch integrasi | `feat/telusur-kategori` (lokal; satu PR ke `main` di akhir run) |
 | Disalin pada | 2026-09-29 |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
