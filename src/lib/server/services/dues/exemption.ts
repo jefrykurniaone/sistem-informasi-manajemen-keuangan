@@ -27,7 +27,7 @@ import { UnitNotFoundError } from '../unit';
  * database-wide while the test harness migrates one schema per file in parallel. `grantExemption`
  * therefore takes the unit's row lock before reading its exemptions and deciding whether the new one
  * overlaps, the same shape `src/lib/server/services/occupancy/index.ts`'s `lockUnit` and
- * `assertPrimarySlotFree` already establish for the same reason: the row that must be locked to
+ * `movePrimaryOccupantMarker` already establish for the same reason: the row that must be locked to
  * serialise two concurrent grants is the *unit's*, because a unit with no exemption yet has no
  * exemption row a lock could land on. `tests/unit/exemption-service.test.ts` proves this with a
  * second connection holding an open transaction, the same technique
