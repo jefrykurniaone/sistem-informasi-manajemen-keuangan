@@ -22,14 +22,37 @@
 	 */
 	const primaryOccupantNeed = $derived(data.unit.primaryOccupantNeed);
 
-	/** The stay's stretch of days, read as one line. */
-	function period(startedOn: string, endedOn: string | null): string {
-		if (endedOn === null) {
-			return m.adminOccupancies_periodRunning({ startedOn });
-		}
-		return m.adminOccupancies_periodEnded({ startedOn, endedOn });
-	}
+	/**
+	 * `listUnitOccupanciesGrouped` already splits this unit's Masa Huni into the three groups
+	 * `docs/spec-penghuni-v1.md` decision 3 defines. This page only renders them; it makes no date
+	 * comparison and no `endedOn === null` check of its own.
+	 */
+	const groups = $derived(data.occupancies);
+	const hasAnyOccupancy = $derived(
+		groups.current.length > 0 || groups.upcoming.length > 0 || groups.history.length > 0
+	);
 </script>
+
+{#snippet endForm(occupancyId: string)}
+	<form method="POST" action="?/end" class="flex flex-1 flex-col gap-3 sm:flex-row">
+		<input type="hidden" name="occupancyId" value={occupancyId} />
+		<div class="flex flex-1 flex-col gap-1.5">
+			<label class="text-sm font-medium" for="occupancy-end-{occupancyId}-{uid}">
+				{m.adminOccupancies_endedOnLabel()}
+			</label>
+			<input
+				id="occupancy-end-{occupancyId}-{uid}"
+				name="endedOn"
+				type="date"
+				required
+				class="h-11 rounded-md border border-border bg-background px-3 text-sm"
+			/>
+		</div>
+		<Button type="submit" variant="outline" class="h-11 self-end">
+			{m.adminOccupancies_endSubmit()}
+		</Button>
+	</form>
+{/snippet}
 
 <svelte:head>
 	<title>{pageTitle(m.adminOccupancies_pageTitle())}</title>
@@ -68,55 +91,41 @@
 
 	<OccupancyForm residents={data.residents} roles={data.roles} formMessage={form?.message} />
 
-	<section class="flex flex-col gap-3">
-		<h2 class="text-lg font-semibold">{m.adminOccupancies_historyHeading()}</h2>
+	{#if !hasAnyOccupancy}
+		<p class="text-sm text-muted-foreground">{m.adminOccupancies_empty()}</p>
+	{:else}
+		<section class="flex flex-col gap-3">
+			<h2 class="text-lg font-semibold">{m.adminOccupancies_currentHeading()}</h2>
 
-		{#each data.occupancies as occupancy (occupancy.occupancyId)}
-			<article class="flex flex-col gap-3 rounded-lg border border-border p-4">
-				<div class="flex flex-wrap items-center justify-between gap-2">
-					<span class="font-medium">{occupancy.residentName}</span>
-					<span class="text-sm text-muted-foreground">
-						{ROLE_LABEL[occupancy.role]?.() ?? occupancy.role}
-					</span>
-				</div>
+			{#each groups.current as occupancy (occupancy.occupancyId)}
+				<article class="flex flex-col gap-3 rounded-lg border border-border p-4">
+					<div class="flex flex-wrap items-center justify-between gap-2">
+						<span class="font-medium">{occupancy.residentName}</span>
+						<span class="text-sm text-muted-foreground">
+							{ROLE_LABEL[occupancy.role]?.() ?? occupancy.role}
+						</span>
+					</div>
 
-				<p class="text-sm text-muted-foreground">
-					{period(occupancy.startedOn, occupancy.endedOn)}
-				</p>
+					<p class="text-sm text-muted-foreground">
+						{#if occupancy.endedOn}
+							{m.adminOccupancies_currentSinceWithEnd({
+								startedOn: occupancy.startedOn,
+								endedOn: occupancy.endedOn
+							})}
+						{:else}
+							{m.adminOccupancies_currentSince({ startedOn: occupancy.startedOn })}
+						{/if}
+					</p>
 
-				<!--
-					A flag on a stay that is not running today names nobody (ADR 0001), so only a running
-					stay wears the badge.
-				-->
-				{#if occupancy.isRunning && occupancy.isPrimaryOccupant}
-					<p class="text-sm font-medium">{m.adminOccupancies_primaryBadge()}</p>
-				{/if}
+					<!-- Only a running stay can hold the flag, so every row here may show the badge. -->
+					{#if occupancy.isPrimaryOccupant}
+						<p class="text-sm font-medium">{m.adminOccupancies_primaryBadge()}</p>
+					{/if}
 
-				{#if occupancy.isRunning}
 					<div class="flex flex-col gap-3 sm:flex-row sm:items-end">
-						<form method="POST" action="?/end" class="flex flex-1 flex-col gap-3 sm:flex-row">
-							<input type="hidden" name="occupancyId" value={occupancy.occupancyId} />
-							<div class="flex flex-1 flex-col gap-1.5">
-								<label
-									class="text-sm font-medium"
-									for="occupancy-end-{occupancy.occupancyId}-{uid}"
-								>
-									{m.adminOccupancies_endedOnLabel()}
-								</label>
-								<input
-									id="occupancy-end-{occupancy.occupancyId}-{uid}"
-									name="endedOn"
-									type="date"
-									required
-									class="h-11 rounded-md border border-border bg-background px-3 text-sm"
-								/>
-							</div>
-							<Button type="submit" variant="outline" class="h-11 self-end">
-								{m.adminOccupancies_endSubmit()}
-							</Button>
-						</form>
+						{@render endForm(occupancy.occupancyId)}
 
-						<!-- Offered only on a stay running today that does not hold the flag already. -->
+						<!-- Offered only on a stay that does not hold the flag already. -->
 						{#if !occupancy.isPrimaryOccupant}
 							<form method="POST" action="?/setPrimary">
 								<input type="hidden" name="occupancyId" value={occupancy.occupancyId} />
@@ -126,12 +135,62 @@
 							</form>
 						{/if}
 					</div>
-				{/if}
-			</article>
-		{/each}
+				</article>
+			{/each}
+		</section>
 
-		{#if data.occupancies.length === 0}
-			<p class="text-sm text-muted-foreground">{m.adminOccupancies_empty()}</p>
+		{#if groups.upcoming.length > 0}
+			<section class="flex flex-col gap-3">
+				<h2 class="text-lg font-semibold">{m.adminOccupancies_upcomingHeading()}</h2>
+
+				{#each groups.upcoming as occupancy (occupancy.occupancyId)}
+					<article class="flex flex-col gap-3 rounded-lg border border-border p-4">
+						<div class="flex flex-wrap items-center justify-between gap-2">
+							<span class="font-medium">{occupancy.residentName}</span>
+							<span class="text-sm text-muted-foreground">
+								{ROLE_LABEL[occupancy.role]?.() ?? occupancy.role}
+							</span>
+						</div>
+
+						<p class="text-sm text-muted-foreground">
+							{m.adminOccupancies_upcomingStarts({ startedOn: occupancy.startedOn })}
+						</p>
+
+						<!--
+							No "Jadikan penanggung jawab" here: the service refuses the flag on a stay that has
+							not started, so the button is never offered on one.
+						-->
+						<div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+							{@render endForm(occupancy.occupancyId)}
+						</div>
+					</article>
+				{/each}
+			</section>
 		{/if}
-	</section>
+
+		<details class="rounded-lg border border-border">
+			<summary class="cursor-pointer px-4 py-3 text-lg font-semibold select-none">
+				{m.adminOccupancies_historySummary({ count: groups.history.length })}
+			</summary>
+			<div class="flex flex-col gap-3 border-t border-border p-4">
+				{#each groups.history as occupancy (occupancy.occupancyId)}
+					<article class="flex flex-col gap-2 rounded-lg border border-border p-4">
+						<div class="flex flex-wrap items-center justify-between gap-2">
+							<span class="font-medium">{occupancy.residentName}</span>
+							<span class="text-sm text-muted-foreground">
+								{ROLE_LABEL[occupancy.role]?.() ?? occupancy.role}
+							</span>
+						</div>
+
+						<p class="text-sm text-muted-foreground">
+							{m.adminOccupancies_periodEnded({
+								startedOn: occupancy.startedOn,
+								endedOn: occupancy.endedOn
+							})}
+						</p>
+					</article>
+				{/each}
+			</div>
+		</details>
+	{/if}
 </main>

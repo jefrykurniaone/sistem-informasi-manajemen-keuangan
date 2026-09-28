@@ -21,7 +21,9 @@ import {
 	endOccupancy,
 	listAssignableResidents,
 	listUnitOccupancies,
+	listUnitOccupanciesGrouped,
 	occupiedUnitsForUser,
+	occupiedUnitsForUserGrouped,
 	OccupancyDateOrderError,
 	OccupancyNotFoundError,
 	OCCUPANCY_ENDED_ACTION,
@@ -1180,6 +1182,117 @@ describe('listUnitOccupancies', () => {
 	});
 });
 
+describe('listUnitOccupanciesGrouped', () => {
+	it('refuses a caller who is not a superuser', async () => {
+		const unitId = await insertUnitRow();
+
+		await expect(
+			listUnitOccupanciesGrouped(testDb.db, READ_CLOCK, await insertUser('Warga Pengintip'), unitId)
+		).rejects.toThrow(PermissionDeniedError);
+	});
+
+	it('splits one unit into current, upcoming and history, with each occupant named', async () => {
+		const superuserId = await insertSuperuser('Pengurus Riwayat Kelompok');
+		const unitId = await insertUnitRow();
+		const otherUnitId = await insertUnitRow();
+		const running = await insertResident('Warga Baru Kelompok');
+		const ended = await insertResident('Warga Lama Kelompok');
+		const stranger = await insertResident('Warga Rumah Lain Kelompok');
+		await insertOccupancyRow(unitId, ended.residentId, { endedOn: ENDED_ON });
+		await insertOccupancyRow(unitId, running.residentId, { startedOn: MID_YEAR });
+		await insertOccupancyRow(otherUnitId, stranger.residentId);
+
+		const groups = await listUnitOccupanciesGrouped(testDb.db, READ_CLOCK, superuserId, unitId);
+
+		expect(groups.current.map((row) => row.residentName)).toEqual(['Warga Baru Kelompok']);
+		expect(groups.upcoming).toEqual([]);
+		expect(groups.history.map((row) => row.residentName)).toEqual(['Warga Lama Kelompok']);
+		expect(groups.current[0]).toMatchObject({ unitId, startedOn: MID_YEAR, endedOn: null });
+	});
+
+	it('sorts every start-date boundary into current or upcoming, and every end-date boundary into current or history', async () => {
+		// Batas wajib per acceptance criteria #245: tanggal mulai kemarin/hari ini/besok, dan hari
+		// terakhir kemarin/hari ini/besok.
+		const superuserId = await insertSuperuser('Pengurus Batas Tanggal');
+		const unitId = await insertUnitRow();
+		const startedYesterday = await insertResident('Warga Mulai Kemarin');
+		const startedToday = await insertResident('Warga Mulai Hari Ini');
+		const startedTomorrow = await insertResident('Warga Mulai Besok');
+		const endedYesterday = await insertResident('Warga Selesai Kemarin');
+		const endedToday = await insertResident('Warga Selesai Hari Ini');
+		const endedTomorrow = await insertResident('Warga Selesai Besok');
+		await insertOccupancyRow(unitId, startedYesterday.residentId, { startedOn: YESTERDAY });
+		await insertOccupancyRow(unitId, startedToday.residentId, { startedOn: TODAY });
+		await insertOccupancyRow(unitId, startedTomorrow.residentId, { startedOn: TOMORROW });
+		await insertOccupancyRow(unitId, endedYesterday.residentId, { endedOn: YESTERDAY });
+		await insertOccupancyRow(unitId, endedToday.residentId, { endedOn: TODAY });
+		await insertOccupancyRow(unitId, endedTomorrow.residentId, { endedOn: TOMORROW });
+
+		const groups = await listUnitOccupanciesGrouped(testDb.db, TODAY_CLOCK, superuserId, unitId);
+
+		expect(new Set(groups.current.map((row) => row.residentName))).toEqual(
+			new Set([
+				'Warga Mulai Kemarin',
+				'Warga Mulai Hari Ini',
+				'Warga Selesai Hari Ini',
+				'Warga Selesai Besok'
+			])
+		);
+		expect(groups.upcoming.map((row) => row.residentName)).toEqual(['Warga Mulai Besok']);
+		expect(groups.history.map((row) => row.residentName)).toEqual(['Warga Selesai Kemarin']);
+		expect(groups.history.every((row) => row.endedOn !== null)).toBe(true);
+	});
+
+	it('orders current with the Penanggung Jawab first, then by start date', async () => {
+		const superuserId = await insertSuperuser('Pengurus Urutan Saat Ini');
+		const unitId = await insertUnitRow();
+		const early = await insertResident('Warga Lebih Dulu Mulai');
+		const late = await insertResident('Warga Belakangan Mulai');
+		const holder = await insertResident('Warga Penanggung Jawab Urutan');
+		await insertOccupancyRow(unitId, late.residentId, { startedOn: MID_YEAR });
+		await insertOccupancyRow(unitId, early.residentId, { startedOn: STARTED_ON });
+		await insertOccupancyRow(unitId, holder.residentId, {
+			startedOn: MID_YEAR,
+			isPrimaryOccupant: true
+		});
+
+		const groups = await listUnitOccupanciesGrouped(testDb.db, READ_CLOCK, superuserId, unitId);
+
+		expect(groups.current.map((row) => row.residentName)).toEqual([
+			'Warga Penanggung Jawab Urutan',
+			'Warga Lebih Dulu Mulai',
+			'Warga Belakangan Mulai'
+		]);
+	});
+
+	it('orders upcoming by start date, and history by last day, most recent first', async () => {
+		const superuserId = await insertSuperuser('Pengurus Urutan Lain');
+		const unitId = await insertUnitRow();
+		const soonest = await insertResident('Warga Masuk Duluan');
+		const later = await insertResident('Warga Masuk Belakangan');
+		const recentlyGone = await insertResident('Warga Baru Pergi');
+		const longGone = await insertResident('Warga Lama Pergi');
+		await insertOccupancyRow(unitId, later.residentId, { startedOn: '2027-02-01' });
+		await insertOccupancyRow(unitId, soonest.residentId, { startedOn: '2027-01-01' });
+		await insertOccupancyRow(unitId, longGone.residentId, {
+			startedOn: '2025-01-01',
+			endedOn: '2025-06-01'
+		});
+		await insertOccupancyRow(unitId, recentlyGone.residentId, { endedOn: ENDED_ON });
+
+		const groups = await listUnitOccupanciesGrouped(testDb.db, READ_CLOCK, superuserId, unitId);
+
+		expect(groups.upcoming.map((row) => row.residentName)).toEqual([
+			'Warga Masuk Duluan',
+			'Warga Masuk Belakangan'
+		]);
+		expect(groups.history.map((row) => row.residentName)).toEqual([
+			'Warga Baru Pergi',
+			'Warga Lama Pergi'
+		]);
+	});
+});
+
 describe('listAssignableResidents', () => {
 	it('refuses a caller who is not a superuser', async () => {
 		await expect(
@@ -1317,5 +1430,67 @@ describe('occupiedUnitsForUser', () => {
 		const [mine] = await occupiedUnitsForUser(testDb.db, READ_CLOCK, me.userId);
 
 		expect(mine.occupants.map((occupant) => occupant.name)).toEqual(['Warga Penghuni Lama']);
+	});
+});
+
+describe('occupiedUnitsForUserGrouped', () => {
+	it('returns an empty split for a signed-in account with no residents row yet', async () => {
+		const userId = await insertUser('Warga Belum Tercatat Kelompok');
+
+		expect(await occupiedUnitsForUserGrouped(testDb.db, READ_CLOCK, userId)).toEqual({
+			current: [],
+			upcoming: [],
+			history: []
+		});
+	});
+
+	it('sorts every start-date and end-date boundary the same way listUnitOccupancies does', async () => {
+		// Batas wajib per acceptance criteria #245, ditegakkan lagi untuk "Rumah saya": tanggal mulai
+		// kemarin/hari ini/besok, dan hari terakhir kemarin/hari ini/besok.
+		const me = await insertResident('Warga Rumah Saya Batas');
+		const blockYesterday = await insertUnitRow(unique('KEMARIN'));
+		const blockToday = await insertUnitRow(unique('HARIINI'));
+		const blockTomorrow = await insertUnitRow(unique('BESOK'));
+		const blockEndedYesterday = await insertUnitRow(unique('SELESAI-KEMARIN'));
+		const blockEndedToday = await insertUnitRow(unique('SELESAI-HARIINI'));
+		const blockEndedTomorrow = await insertUnitRow(unique('SELESAI-BESOK'));
+		await insertOccupancyRow(blockYesterday, me.residentId, { startedOn: YESTERDAY });
+		await insertOccupancyRow(blockToday, me.residentId, { startedOn: TODAY });
+		await insertOccupancyRow(blockTomorrow, me.residentId, { startedOn: TOMORROW });
+		await insertOccupancyRow(blockEndedYesterday, me.residentId, { endedOn: YESTERDAY });
+		await insertOccupancyRow(blockEndedToday, me.residentId, { endedOn: TODAY });
+		await insertOccupancyRow(blockEndedTomorrow, me.residentId, { endedOn: TOMORROW });
+
+		const groups = await occupiedUnitsForUserGrouped(testDb.db, TODAY_CLOCK, me.userId);
+
+		expect(groups.current.map((row) => row.unitId).sort()).toEqual(
+			[blockYesterday, blockToday, blockEndedToday, blockEndedTomorrow].sort()
+		);
+		expect(groups.upcoming.map((row) => row.unitId)).toEqual([blockTomorrow]);
+		expect(groups.history.map((row) => row.unitId)).toEqual([blockEndedYesterday]);
+	});
+
+	it('includes the household only for a house in current, not for one upcoming or in history', async () => {
+		const me = await insertResident('Warga Rumah Saya Daftar Penghuni');
+		const housemate = await insertResident('Warga Serumah Rumah Saya');
+		const currentUnit = await insertUnitRow(unique('SAAT-INI'));
+		const upcomingUnit = await insertUnitRow(unique('AKAN-MASUK'));
+		const historyUnit = await insertUnitRow(unique('RIWAYAT'));
+		await insertOccupancyRow(currentUnit, me.residentId);
+		await insertOccupancyRow(currentUnit, housemate.residentId);
+		await insertOccupancyRow(upcomingUnit, me.residentId, { startedOn: TOMORROW });
+		await insertOccupancyRow(historyUnit, me.residentId, { endedOn: ENDED_ON });
+
+		const groups = await occupiedUnitsForUserGrouped(testDb.db, READ_CLOCK, me.userId);
+
+		expect(groups.current).toHaveLength(1);
+		expect(groups.current[0].occupants.map((occupant) => occupant.name)).toEqual([
+			'Warga Rumah Saya Daftar Penghuni',
+			'Warga Serumah Rumah Saya'
+		]);
+		expect(groups.upcoming).toHaveLength(1);
+		expect(groups.upcoming[0].occupants).toEqual([]);
+		expect(groups.history).toHaveLength(1);
+		expect(groups.history[0].occupants).toEqual([]);
 	});
 });

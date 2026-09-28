@@ -2,20 +2,30 @@ import { redirect } from '@sveltejs/kit';
 import { AUTH_PATHS } from '$lib/server/auth';
 import { database } from '$lib/server/db';
 import { systemClock } from '$lib/server/ports/clock';
-import { occupiedUnitsForUser, type OwnOccupancy } from '$lib/server/services/occupancy';
+import {
+	occupiedUnitsForUserGrouped,
+	type OwnOccupancyGroups
+} from '$lib/server/services/occupancy';
 import { residentProfileForUser } from '$lib/server/services/resident/profile';
 import type { PageServerLoad } from './$types';
+
+/** An empty `current`/`upcoming`/`history` split, for an account with no `residents` row yet. */
+const NO_OCCUPANCIES: OwnOccupancyGroups = { current: [], upcoming: [], history: [] };
 
 /**
  * A resident's own house: the stays recorded in their name, and who else is recorded as living
  * there — `spec-warga-unit-v1.md`'s "Sebagai warga, saya ingin melihat rumah saya beserta siapa saja
  * yang tercatat menghuninya, supaya saya bisa melapor kalau datanya salah".
  *
- * **There is nothing to guard beyond the session.** The only key `occupiedUnitsForUser` takes is the
- * signed-in account's own id, so there is no id in a URL or a form that a caller could swap for
- * someone else's — the same reason `src/lib/server/services/resident/profile.ts` gives for guarding
- * by row ownership instead of by a `PERMISSIONS` action. This load reads and never writes, so it has
- * no action and no `PermissionDeniedError` to translate.
+ * **There is nothing to guard beyond the session.** The only key `occupiedUnitsForUserGrouped` takes
+ * is the signed-in account's own id, so there is no id in a URL or a form that a caller could swap
+ * for someone else's — the same reason `src/lib/server/services/resident/profile.ts` gives for
+ * guarding by row ownership instead of by a `PERMISSIONS` action. This load reads and never writes,
+ * so it has no action and no `PermissionDeniedError` to translate.
+ *
+ * **`occupancies` arrives already split into `current`, `upcoming` and `history`** —
+ * `docs/spec-penghuni-v1.md` decision 3 — so the page renders those three groups rather than
+ * classifying Masa Huni by date itself.
  *
  * **A signed-in account with no `residents` row is expected, not an error.** It is the normal state
  * of someone who has signed up and is waiting to be admitted, and it stays normal until #20
@@ -31,9 +41,9 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 	const db = database();
 	const profile = await residentProfileForUser(db, locals.user.id);
-	const occupancies: readonly OwnOccupancy[] = profile
-		? await occupiedUnitsForUser(db, systemClock, locals.user.id)
-		: [];
+	const occupancies: OwnOccupancyGroups = profile
+		? await occupiedUnitsForUserGrouped(db, systemClock, locals.user.id)
+		: NO_OCCUPANCIES;
 
 	return { hasResidentRecord: profile !== undefined, occupancies };
 };
