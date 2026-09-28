@@ -20,6 +20,9 @@
 # XDG_RUNTIME_DIR exists) and removed right after the push or on any exit, so it never lands in
 # ~/.docker/config.json. The script never reads the VM's .env back: the one edit it makes there,
 # APP_TAG, happens on the VM under umask 077.
+#
+# That DOCKER_CONFIG directory also hides the docker context store, so login and push are given the
+# active context's endpoint as DOCKER_HOST, read once before the first step (#263).
 
 if [ -z "${BASH_VERSION:-}" ]; then
 	echo 'Jalankan dengan bash, bukan sh: bash scripts/deploy.sh' >&2
@@ -36,6 +39,7 @@ readonly SOURCE_URL=https://github.com/jefrykurniaone/sistem-informasi-manajemen
 readonly REMOTE_DIR=/opt/komplek
 readonly COMPOSE='docker compose -f docker-compose.prod.yml'
 readonly -a SYNCED_FILES=(docker-compose.prod.yml Caddyfile)
+readonly -a CONTEXT_HOST_CMD=(docker context inspect --format '{{.Endpoints.docker.Host}}')
 readonly HEALTH_SECONDS=90
 readonly HEALTH_INTERVAL=5
 
@@ -55,6 +59,7 @@ ssh_cmd=()
 scp_opts=()
 git_cmd=()
 docker_config=''
+docker_host=''
 caddyfile_changed=0
 step_number=0
 current_step=''
@@ -271,6 +276,11 @@ print_plan() {
 	say "  nama komplek  $PUBLIC_COMPLEX_NAME (build arg PUBLIC_COMPLEX_NAME)"
 	say "  VM            $target:$REMOTE_DIR"
 	say "  alamat        https://$VM_STATIC_IP.sslip.io"
+	if [[ -n $docker_host ]]; then
+		say "  daemon docker $docker_host"
+	else
+		say "  daemon docker $(shown_docker_host) (dry-run: dibaca dengan $(format_cmd "${CONTEXT_HOST_CMD[@]}"))"
+	fi
 	if ((dry_run)); then
 		say '  mode          dry-run: setiap perintah dicetak, tidak satu pun dijalankan'
 	fi
@@ -357,6 +367,30 @@ shown_docker_config() {
 	printf '%s' "${docker_config:-<direktori-sementara>}"
 }
 
+# Build runs under the user's own docker configuration and reaches the daemon through the active
+# context. Login and push run under a DOCKER_CONFIG made for this run, which hides the context store
+# along with config.json, so on their own they fall back to unix:///var/run/docker.sock, where
+# Docker Desktop on Linux has no daemon (#263). The active context's endpoint is therefore read once
+# and handed to both as DOCKER_HOST, which the docker CLI takes over any context. A DOCKER_HOST
+# already set is kept, since build uses it too. Only the address carries over: a context that needs
+# TLS material from the context store would not connect this way.
+resolve_docker_host() {
+	if [[ -n ${DOCKER_HOST:-} ]]; then
+		docker_host=$DOCKER_HOST
+		return 0
+	fi
+	if ((dry_run)); then
+		return 0
+	fi
+	docker_host=$("${CONTEXT_HOST_CMD[@]}" </dev/null) ||
+		die "endpoint konteks docker aktif tidak terbaca: $(format_cmd "${CONTEXT_HOST_CMD[@]}") gagal."
+	[[ -n $docker_host ]] || die 'konteks docker aktif tidak menyebut endpoint docker.'
+}
+
+shown_docker_host() {
+	printf '%s' "${docker_host:-<endpoint-konteks-docker>}"
+}
+
 login_ghcr() {
 	local base=${XDG_RUNTIME_DIR:-}
 	if [[ -z $base || ! -d $base || ! -w $base ]]; then
@@ -367,16 +401,32 @@ login_ghcr() {
 		docker_config=$(mktemp -d "$base/komplek-ghcr.XXXXXX")
 	fi
 	printf '+ gh auth token --hostname github.com | %s\n' \
-		"$(format_cmd env "DOCKER_CONFIG=$(shown_docker_config)" docker login "$REGISTRY" --username "$REGISTRY_USER" --password-stdin)"
+		"$(format_cmd env "DOCKER_CONFIG=$(shown_docker_config)" "DOCKER_HOST=$(shown_docker_host)" docker login "$REGISTRY" --username "$REGISTRY_USER" --password-stdin)"
 	if ((dry_run)); then
 		return 0
 	fi
 	gh auth token --hostname github.com |
-		env "DOCKER_CONFIG=$docker_config" docker login "$REGISTRY" --username "$REGISTRY_USER" --password-stdin
+		env "DOCKER_CONFIG=$docker_config" "DOCKER_HOST=$docker_host" docker login "$REGISTRY" --username "$REGISTRY_USER" --password-stdin
 }
 
+# A failed push is either the daemon not answering or GHCR refusing, and the two need different
+# fixes. docker login cannot tell them apart beforehand: when the daemon does not answer it logs in
+# client side and still succeeds, which is how #263 got as far as the push. So once a push fails
+# the daemon is asked for its version under the same DOCKER_CONFIG and DOCKER_HOST, and the hint
+# follows the answer.
 push_image() {
-	run env "DOCKER_CONFIG=$(shown_docker_config)" docker push "$1"
+	local -a probe
+	if run env "DOCKER_CONFIG=$(shown_docker_config)" "DOCKER_HOST=$(shown_docker_host)" docker push "$1"; then
+		return 0
+	fi
+	probe=(env "DOCKER_CONFIG=$docker_config" "DOCKER_HOST=$docker_host" docker version --format '{{.Server.Version}}')
+	print_cmd "${probe[@]}"
+	if "${probe[@]}" </dev/null >/dev/null 2>&1; then
+		step_hint="Daemon Docker di $docker_host menjawab, jadi push gagal di GHCR atau di jaringan menuju ke sana. Bila galat di atas menyebut denied atau unauthorized, token gh butuh cakupan write:packages: gh auth refresh --scopes write:packages, lalu ulangi."
+	else
+		step_hint="Daemon Docker di $docker_host tidak menjawab, jadi push tidak pernah sampai ke GHCR dan token gh bukan penyebabnya. Nyalakan daemon yang membangun image (Docker Desktop di Linux: systemctl --user start docker-desktop), atau setel DOCKER_HOST ke soketnya, lalu ulangi."
+	fi
+	return 1
 }
 
 remove_docker_config() {
@@ -458,6 +508,7 @@ main() {
 	resolve_tag
 	check_clean_tree
 	check_ssh_key
+	resolve_docker_host
 	print_plan
 	logs_hint="Log di VM: $(format_cmd "${ssh_cmd[@]}" "cd $REMOTE_DIR && $COMPOSE logs migrate app caddy")"
 
@@ -476,9 +527,10 @@ main() {
 	step 'login GHCR' 'gh harus terpasang di WSL dan sudah masuk: gh auth login.'
 	login_ghcr
 
-	step "push $IMAGE:$tag" 'Token gh butuh cakupan write:packages: gh auth refresh --scopes write:packages, lalu ulangi.'
+	# push_image sets the hint when a push fails, from whether the daemon still answers.
+	step "push $IMAGE:$tag" ''
 	push_image "$IMAGE:$tag"
-	step "push $IMAGE:latest" 'Token gh butuh cakupan write:packages: gh auth refresh --scopes write:packages, lalu ulangi.'
+	step "push $IMAGE:latest" ''
 	push_image "$IMAGE:latest"
 	if ((dry_run)); then
 		print_cmd rm -rf -- "$(shown_docker_config)"

@@ -1,9 +1,20 @@
 # Runbook deploy fase uji
 
-Panduan ini cukup untuk mengulang seluruh pemasangan fase uji tanpa membaca tiket. Diasumsikan
-daemon Docker berjalan di WSL Ubuntu di mesin pengembang, bukan Docker Desktop. `gh` harus terpasang
-dan masuk **di dalam WSL** dengan cakupan `write:packages` (langkah 0 di bagian 2): `gh` di Windows
-tidak dipakai oleh `scripts/deploy.sh`, dan token `gh` di Windows biasanya tidak punya cakupan itu.
+Panduan ini cukup untuk mengulang seluruh pemasangan fase uji tanpa membaca tiket. Skrip dijalankan
+dari mesin pengembang dengan salah satu dari dua pengaturan yang didukung:
+
+- **WSL Ubuntu di Windows.** Daemon Docker berjalan di WSL, bukan Docker Desktop untuk Windows. `gh`
+  harus terpasang dan masuk **di dalam WSL** dengan cakupan `write:packages` (langkah 0 di bagian
+  2): `gh` di Windows tidak dipakai oleh `scripts/deploy.sh`, dan token `gh` di Windows biasanya
+  tidak punya cakupan itu.
+- **Linux dengan Docker Desktop**, misalnya Nobara. Docker Desktop harus menyala
+  (`systemctl --user start docker-desktop`), dan `gh` terpasang di Linux itu dan masuk dengan
+  cakupan yang sama. Konteks docker aktifnya `desktop-linux`, dengan soket di
+  `~/.docker/desktop/docker.sock`, bukan `/var/run/docker.sock`. `scripts/deploy.sh` membaca
+  endpoint konteks aktif itu sendiri (bagian 3), jadi `DOCKER_HOST` tidak perlu disetel.
+
+Langkah di bawah menyebut WSL. Di Linux dengan Docker Desktop, jalankan perintah yang sama dari
+shell biasa di akar repositori, dan simpan kunci `.pem` di `~/.ssh` Linux itu.
 
 ## 1. Topologi
 
@@ -45,6 +56,9 @@ harus ada sebagai berkas `certs/supabase-ca.crt` di server, di sebelah `docker-c
    sudo apt update && sudo apt install gh -y
    gh auth login --hostname github.com --git-protocol https --web --scopes write:packages
    ```
+
+   Di Linux dengan Docker Desktop, pasang `gh` dari paket distribusinya (di Fedora dan Nobara:
+   `sudo dnf install gh`), lalu jalankan perintah `gh auth login` yang sama.
 
    `gh auth status` harus menyebut `write:packages` di antara `Token scopes`. Tanpa cakupan itu
    langkah push di `scripts/deploy.sh` ditolak; tambahkan dengan
@@ -129,9 +143,9 @@ harus ada sebagai berkas `certs/supabase-ca.crt` di server, di sebelah `docker-c
 
 ## 3. Deploy dan deploy ulang
 
-Dari WSL di akar repositori, dengan pohon kerja bersih (deploy sungguhan berhenti bila ada
-perubahan yang belum di-commit, karena image bertag commit harus dibangun dari commit itu apa
-adanya):
+Dari WSL, atau dari shell Linux dengan Docker Desktop, di akar repositori, dengan pohon kerja
+bersih (deploy sungguhan berhenti bila ada perubahan yang belum di-commit, karena image bertag
+commit harus dibangun dari commit itu apa adanya):
 
 ```bash
 bash scripts/deploy.sh
@@ -148,6 +162,32 @@ jalankan `docker compose up -d --remove-orphans`, tunggu `migrate` keluar dengan
 ulang `caddy` bila `Caddyfile` berubah, lalu periksa `https://<ip-statis>.sslip.io/api/health`
 berulang tiap 5 detik sampai 90 detik. Setiap langkah bernomor dan menyebut namanya sendiri bila
 gagal.
+
+**Daemon Docker untuk login dan push.** Build memakai konteks docker aktif apa adanya. Login dan
+push berjalan dengan `DOCKER_CONFIG` sementara supaya token GHCR tidak tersimpan di
+`~/.docker/config.json`, dan direktori itu juga menyembunyikan penyimpanan konteks docker. Karena
+itu, sebelum langkah pertama, skrip membaca endpoint konteks aktif dengan
+`docker context inspect --format '{{.Endpoints.docker.Host}}'` dan meneruskannya sebagai
+`DOCKER_HOST` ke login dan push, sehingga build, login, dan push memakai daemon yang sama.
+Endpoint itu tercetak di baris `daemon docker` pada ringkasan di awal keluaran. `DOCKER_HOST` yang
+sudah disetel dipakai apa adanya. Hanya alamatnya yang diteruskan: konteks yang butuh sertifikat TLS
+dari penyimpanan konteks tidak tersambung dengan cara ini, tetapi WSL dan Docker Desktop di Linux
+sama-sama memakai soket unix. Sebelum #263, push di Docker Desktop Linux jatuh ke
+`/var/run/docker.sock`, yang tidak ada di sana, dan deploy harus dijalankan sebagai
+`DOCKER_HOST=unix://$HOME/.docker/desktop/docker.sock bash scripts/deploy.sh`. Awalan itu tidak
+diperlukan lagi.
+
+**Push gagal.** Kegagalan di langkah 4 dan 5 punya dua kemungkinan penyebab dengan perbaikan yang
+berbeda. Sesudah push gagal, skrip menanyakan versi daemon dengan `DOCKER_CONFIG` dan `DOCKER_HOST`
+yang sama, lalu memilih petunjuk dari jawabannya:
+
+- **Daemon tidak menjawab.** Push tidak pernah sampai ke GHCR, dan token `gh` bukan penyebabnya.
+  Nyalakan daemon yang membangun image, atau setel `DOCKER_HOST` ke soketnya. Login di langkah 3
+  tidak menangkap keadaan ini, karena `docker login` yang tidak mendapat jawaban daemon masuk dari
+  sisi klien saja dan tetap berhasil.
+- **Daemon menjawab.** Push gagal di GHCR atau di jaringan menuju ke sana. Bila galatnya menyebut
+  `denied` atau `unauthorized`, token `gh` belum punya cakupan `write:packages`; tambahkan dengan
+  `gh auth refresh --scopes write:packages`.
 
 Yang teramati pada deploy pertama (23 September 2026, commit `c5d84c37a8b5`):
 
