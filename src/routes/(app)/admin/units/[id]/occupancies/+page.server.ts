@@ -11,6 +11,7 @@ import {
 	listAssignableResidents,
 	listUnitOccupanciesGrouped,
 	OccupancyDateOrderError,
+	OccupancyEndOverlapError,
 	OccupancyNotFoundError,
 	OccupancyOverlapError,
 	PrimaryOccupantAlreadyEndedError,
@@ -32,9 +33,10 @@ import type { Actions, PageServerLoad } from './$types';
  * for a unit or an occupancy that does not exist gets a 404, because both ids come straight from the
  * URL or from a hidden field this screen rendered; and a rule the complex refuses — a Penanggung
  * Jawab on a stay that has not started or is already over, an end date before the start date, a
- * resident who has since been removed, or a second Masa Huni that would overlap one the resident
- * already has in this unit — is `fail(400, …)`, because the superuser did nothing outside their rights
- * and only this particular change is refused.
+ * resident who has since been removed, a second Masa Huni that would overlap one the resident already
+ * has in this unit, or a last day moved to where it would reach a later Masa Huni of theirs in the same
+ * unit — is `fail(400, …)`, because the superuser did nothing outside their rights and only this
+ * particular change is refused.
  *
  * The load hands the screen the unit's `primaryOccupantNeed` as the Unit service decided it, so the
  * red and yellow warnings are never a date comparison made in the template. `occupancies` is likewise
@@ -186,6 +188,14 @@ function refusalOrThrow(caught: unknown) {
 			message: caught.mustEndFirst
 				? m.adminOccupancies_overlapMustEnd()
 				: m.adminOccupancies_overlap({ earliestStartedOn: caught.earliestStartedOn ?? '' })
+		});
+	}
+	if (caught instanceof OccupancyEndOverlapError) {
+		return fail(400, {
+			message: m.adminOccupancies_endOverlap({
+				latestEndedOn: caught.latestEndedOn,
+				nextStartedOn: caught.nextStartedOn
+			})
 		});
 	}
 	throwAsRouteError(caught);

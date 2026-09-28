@@ -142,6 +142,7 @@
 	"adminOccupancies_residentNotFound": "The chosen resident was not found.",
 	"adminOccupancies_overlap": "This resident already has another occupancy in this unit that overlaps this one. The new occupancy can start no earlier than {earliestStartedOn}.",
 	"adminOccupancies_overlapMustEnd": "This resident is still recorded as living in this unit, with no last day set yet. End that occupancy first, then record the new one.",
+	"adminOccupancies_endOverlap": "The last day can be no later than {latestEndedOn}, because this resident is already recorded as living in this unit again from {nextStartedOn}.",
 	"adminOccupancies_notFound": "Occupancy not found.",
 	"adminOccupancies_forbidden": "You are not allowed to manage occupancies.",
 	"myUnit_pageTitle": "My House",

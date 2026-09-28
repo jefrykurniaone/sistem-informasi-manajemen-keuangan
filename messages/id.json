@@ -142,6 +142,7 @@
 	"adminOccupancies_residentNotFound": "Warga yang dipilih tidak ditemukan.",
 	"adminOccupancies_overlap": "Warga ini sudah punya masa huni lain di unit ini yang bersinggungan dengan ini. Masa huni baru paling cepat bisa dimulai pada {earliestStartedOn}.",
 	"adminOccupancies_overlapMustEnd": "Warga ini masih tercatat menghuni unit ini, dan belum punya hari terakhir. Akhiri masa huni itu lebih dahulu, baru catat yang baru.",
+	"adminOccupancies_endOverlap": "Hari terakhir paling lambat {latestEndedOn}, karena warga ini sudah tercatat menghuni unit ini lagi mulai {nextStartedOn}.",
 	"adminOccupancies_notFound": "Masa huni tidak ditemukan.",
 	"adminOccupancies_forbidden": "Anda tidak berhak mengelola masa huni.",
 	"myUnit_pageTitle": "Rumah Saya",

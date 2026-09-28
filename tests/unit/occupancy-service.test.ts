@@ -25,6 +25,7 @@ import {
 	occupiedUnitsForUser,
 	occupiedUnitsForUserGrouped,
 	OccupancyDateOrderError,
+	OccupancyEndOverlapError,
 	OccupancyNotFoundError,
 	OccupancyOverlapError,
 	OCCUPANCY_ENDED_ACTION,
@@ -947,6 +948,133 @@ describe('endOccupancy', () => {
 		const row = page.units.find((unit) => unit.id === unitId);
 		expect(row).toMatchObject({ primaryOccupantNeed: { kind: 'missing' }, activeOccupantCount: 0 });
 		expect(row && needsPrimaryOccupant(row)).toBe(true);
+	});
+
+	// #258: the fifth path decision 6 was extended to. The story from the ticket's own "Temuan": a
+	// stay is ended, the same resident is recorded again in the same unit starting the day after, and
+	// then the first stay's last day is pushed forward until it reaches the second — which must be
+	// refused the same way a fresh, overlapping recording would have been.
+	it('refuses a last day that reaches a later stay of the same resident in the same unit, naming the day before it', async () => {
+		const superuserId = await insertSuperuser('Pengurus Hari Terakhir Bersinggungan');
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Budi Santoso');
+		const firstId = await insertOccupancyRow(unitId, residentId, {
+			startedOn: STARTED_ON,
+			endedOn: '2026-10-31'
+		});
+		await insertOccupancyRow(unitId, residentId, { startedOn: '2026-11-01', endedOn: null });
+
+		const refusal = await rejection(
+			endOccupancy(testDb.db, new FakeClock(START), {
+				actorId: superuserId,
+				occupancyId: firstId,
+				endedOn: '2026-12-31'
+			})
+		);
+
+		expect(refusal).toBeInstanceOf(OccupancyEndOverlapError);
+		expect(refusal).toMatchObject({ latestEndedOn: '2026-10-31', nextStartedOn: '2026-11-01' });
+		expect((await readOccupancy(firstId)).endedOn).toBe('2026-10-31');
+		expect(await auditEntriesFor(testDb.db, firstId)).toHaveLength(0);
+	});
+
+	it('refuses a last day landing exactly on the later stay’s first day, the boundary being inclusive', async () => {
+		const superuserId = await insertSuperuser('Pengurus Batas Inklusif');
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Batas Sehari');
+		const firstId = await insertOccupancyRow(unitId, residentId, {
+			startedOn: STARTED_ON,
+			endedOn: '2026-10-31'
+		});
+		await insertOccupancyRow(unitId, residentId, { startedOn: '2026-11-01', endedOn: null });
+
+		const refusal = await rejection(
+			endOccupancy(testDb.db, new FakeClock(START), {
+				actorId: superuserId,
+				occupancyId: firstId,
+				endedOn: '2026-11-01'
+			})
+		);
+
+		expect(refusal).toBeInstanceOf(OccupancyEndOverlapError);
+		expect(refusal).toMatchObject({ latestEndedOn: '2026-10-31', nextStartedOn: '2026-11-01' });
+	});
+
+	it('accepts a last day the day before the later stay begins', async () => {
+		const superuserId = await insertSuperuser('Pengurus Sehari Sebelum');
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Sehari Sebelum Lanjut');
+		const firstId = await insertOccupancyRow(unitId, residentId, {
+			startedOn: STARTED_ON,
+			endedOn: '2026-09-30'
+		});
+		await insertOccupancyRow(unitId, residentId, { startedOn: '2026-11-01', endedOn: null });
+
+		const ended = await endOccupancy(testDb.db, new FakeClock(START), {
+			actorId: superuserId,
+			occupancyId: firstId,
+			endedOn: '2026-10-31'
+		});
+
+		expect(ended.endedOn).toBe('2026-10-31');
+		const entries = await auditEntriesFor(testDb.db, firstId);
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({
+			action: OCCUPANCY_ENDED_ACTION,
+			before: { endedOn: '2026-09-30' },
+			after: { endedOn: '2026-10-31' }
+		});
+	});
+
+	it('is not blocked by the same resident’s stay in a different unit, or another resident’s stay in the same unit', async () => {
+		const superuserId = await insertSuperuser('Pengurus Tak Terhalang');
+		const unitId = await insertUnitRow();
+		const otherUnitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Dua Unit Tak Terhalang');
+		const { residentId: otherResidentId } = await insertResident('Warga Lain Serumah');
+
+		const firstId = await insertOccupancyRow(unitId, residentId, {
+			startedOn: STARTED_ON,
+			endedOn: '2026-09-30'
+		});
+		// A later stay of the same resident, but in a different unit — must not block.
+		await insertOccupancyRow(otherUnitId, residentId, { startedOn: '2026-11-01', endedOn: null });
+		// A later stay in the same unit, but of a different resident — must not block either.
+		await insertOccupancyRow(unitId, otherResidentId, { startedOn: '2026-11-01', endedOn: null });
+
+		const ended = await endOccupancy(testDb.db, new FakeClock(START), {
+			actorId: superuserId,
+			occupancyId: firstId,
+			endedOn: '2026-12-31'
+		});
+
+		expect(ended.endedOn).toBe('2026-12-31');
+	});
+
+	it('names the earliest of two later stays when both would be reached', async () => {
+		const superuserId = await insertSuperuser('Pengurus Dua Masa Huni Berikutnya');
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Dua Kali Kembali');
+		const firstId = await insertOccupancyRow(unitId, residentId, {
+			startedOn: STARTED_ON,
+			endedOn: '2026-10-31'
+		});
+		await insertOccupancyRow(unitId, residentId, {
+			startedOn: '2026-11-01',
+			endedOn: '2026-11-30'
+		});
+		await insertOccupancyRow(unitId, residentId, { startedOn: '2026-12-01', endedOn: null });
+
+		const refusal = await rejection(
+			endOccupancy(testDb.db, new FakeClock(START), {
+				actorId: superuserId,
+				occupancyId: firstId,
+				endedOn: '2026-12-15'
+			})
+		);
+
+		expect(refusal).toBeInstanceOf(OccupancyEndOverlapError);
+		expect(refusal).toMatchObject({ latestEndedOn: '2026-10-31', nextStartedOn: '2026-11-01' });
 	});
 });
 
