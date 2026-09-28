@@ -35,10 +35,11 @@
 	 * pixels without a horizontal scroll: a category has a name and a number, and anything else
 	 * belongs in the drill-down.
 	 *
-	 * A line that may not be opened says so rather than silently rendering nothing, and the page
-	 * prints the reason underneath. The rule itself is not here: what may be opened is decided in
-	 * `src/lib/server/services/report/resident-payload.ts` and arrives as `mayDrillDown`, so a link
-	 * this component failed to draw would still be refused if somebody typed its address.
+	 * A line that may not be opened says so rather than silently rendering nothing, and the
+	 * component prints the reason underneath. The rule itself is not here: what may be opened is
+	 * decided in `src/lib/server/services/report/resident-payload.ts` and arrives as
+	 * `mayDrillDown`, so a link this component failed to draw would still be refused if somebody
+	 * typed its address.
 	 *
 	 * `total` is the sum of the lines rather than a figure passed in beside them, because the two
 	 * would be free to disagree; the report's own headline totals come from the same breakdown
@@ -97,7 +98,7 @@
 							{m.reports_categories_columnTotal()}
 						</th>
 						<th scope="col" class="px-2 py-2 font-medium">
-							{m.reports_categories_columnDetail()}
+							{m.reports_categories_columnTransactions()}
 						</th>
 					</tr>
 				</thead>
@@ -109,19 +110,23 @@
 							<td class="px-2 py-2">
 								{#if !line.mayDrillDown}
 									<span class="text-muted-foreground">
-										{m.reports_categories_drilldownClosed()}
+										{m.reports_categories_drilldownNotShown()}
 									</span>
 								{:else if line.categoryId === openCategoryId}
 									<span class="font-medium">{m.reports_categories_drilldownOpen()}</span>
 								{:else if drilldown}
 									<a
-										class="inline-flex min-h-11 items-center underline underline-offset-4"
+										class="-mt-3 inline-flex min-h-11 items-center underline underline-offset-4"
 										href={resolve(
 											`/reports/${drilldown.period}?${drilldownQuery(drilldown, line.categoryId)}`
 										)}
 									>
 										{m.reports_categories_drilldownLink()}
 									</a>
+								{:else}
+									<span class="text-muted-foreground">
+										{m.reports_categories_previewAvailableAfterPublish()}
+									</span>
 								{/if}
 							</td>
 						</tr>
