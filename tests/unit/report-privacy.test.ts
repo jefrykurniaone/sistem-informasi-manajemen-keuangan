@@ -8,7 +8,8 @@ import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
 import {
 	CASH_CATEGORY_TYPE,
 	SYSTEM_CATEGORY_KEY,
-	cashCategories
+	cashCategories,
+	type CashCategoryType
 } from '$lib/server/db/schema/cash-category';
 import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
 import { invoices } from '$lib/server/db/schema/invoice';
@@ -17,6 +18,7 @@ import { residents } from '$lib/server/db/schema/resident';
 import { units } from '$lib/server/db/schema/unit';
 import { testDatabase } from '$lib/server/db/test-helpers';
 import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
+import { recordCashCorrection } from '$lib/server/services/cash/correction';
 import { recordCashTransaction } from '$lib/server/services/cash/transaction';
 import { publishReport } from '$lib/server/services/report/publication';
 import { reportForPeriod } from '$lib/server/services/report/resident-payload';
@@ -46,6 +48,18 @@ import { reportForPeriod } from '$lib/server/services/report/resident-payload';
  * The complex below is deliberately full of things that *could* leak: two houses with memorable
  * blocks and numbers, two named residents, Tagihan in both states, verified Pembayaran with their
  * Alokasi, and a kas masuk row in the "Iuran warga" category.
+ *
+ * ## The categories the drill-down is opened on
+ *
+ * Four ordinary expense categories, each there for one rule of `drilldownFor`:
+ *
+ * - **street light**: one expense, and a Koreksi of it recorded *after* publication, so its income
+ *   direction has live rows and no line, and its expense direction has not changed.
+ * - **fence**: two expenses and a Koreksi of one of them, all before publication, so it has a line
+ *   in each table, the way "Perbaikan" does in Data Contoh.
+ * - **drain**: only a Koreksi in this month, of an expense dated the month before, so its own type
+ *   has no line and the other one does.
+ * - **garden**: one expense before publication and one after, so its opened direction has changed.
  */
 
 const testDb = testDatabase();
@@ -86,11 +100,28 @@ const IDS = {
 	paidInvoice: randomUUID(),
 	unpaidInvoice: randomUUID(),
 	payment: randomUUID(),
-	expenseCategory: randomUUID()
+	expenseCategory: randomUUID(),
+	fenceCategory: randomUUID(),
+	drainCategory: randomUUID(),
+	drainExpense: randomUUID(),
+	gardenCategory: randomUUID()
 } as const;
 
 let clock: FakeClock;
 let duesCategoryId: string;
+
+/** The day after publication a superuser has reopened the month to record into, in `PERIOD`. */
+const AFTER_PUBLICATION_DAY = `${PERIOD}-25`;
+
+/** An ordinary expense Kategori Kas, written straight into the table for the reason `IDS` gives. */
+async function insertExpenseCategory(id: string, name: string): Promise<void> {
+	await testDb.db.insert(cashCategories).values({
+		id,
+		name,
+		type: CASH_CATEGORY_TYPE.expense,
+		createdAt: new Date(START)
+	});
+}
 
 /** Inserts a bare `user` row, picking up the trigger's default `resident` role. */
 async function insertUser(id: string, name: string, role?: Role): Promise<void> {
@@ -185,13 +216,8 @@ beforeAll(async () => {
 
 	// Written straight into the table rather than through `createCashCategory`, for the reason the
 	// `IDS` comment gives: the sweep needs this id before any insert has run.
-	await testDb.db.insert(cashCategories).values({
-		id: IDS.expenseCategory,
-		name: 'Perbaikan lampu jalan komplek',
-		type: CASH_CATEGORY_TYPE.expense,
-		createdAt: new Date(START)
-	});
-	await recordCashTransaction(testDb.db, clock, fileStore, {
+	await insertExpenseCategory(IDS.expenseCategory, 'Perbaikan lampu jalan komplek');
+	const streetLight = await recordCashTransaction(testDb.db, clock, fileStore, {
 		actorId: IDS.adminUser,
 		occurredOn: `${PERIOD}-12`,
 		categoryId: IDS.expenseCategory,
@@ -199,7 +225,87 @@ beforeAll(async () => {
 		description: 'Penggantian delapan lampu jalan'
 	});
 
+	// A line in each table: two expenses, and a Koreksi of the second, which moves money in.
+	await insertExpenseCategory(IDS.fenceCategory, 'Perbaikan pagar komplek');
+	await recordCashTransaction(testDb.db, clock, fileStore, {
+		actorId: IDS.adminUser,
+		occurredOn: `${PERIOD}-08`,
+		categoryId: IDS.fenceCategory,
+		amount: rupiah(400_000),
+		description: 'Pengecatan ulang pagar depan'
+	});
+	const hinge = await recordCashTransaction(testDb.db, clock, fileStore, {
+		actorId: IDS.adminUser,
+		occurredOn: `${PERIOD}-15`,
+		categoryId: IDS.fenceCategory,
+		amount: rupiah(180_000),
+		description: 'Perbaikan engsel gerbang belakang'
+	});
+	await recordCashCorrection(testDb.db, clock, {
+		actorId: IDS.adminUser,
+		transactionId: hinge.id,
+		reason: 'Engsel ternyata masih bergaransi'
+	});
+
+	// A Koreksi in this month of an expense dated in the month before, so the category's own type has
+	// no line here. `recordCashCorrection` dates a Koreksi on its original's day and would not write
+	// this, so both rows are planted directly: the fallback has to hold for whatever lines a frozen
+	// breakdown carries, not only for the ones today's services produce.
+	await insertExpenseCategory(IDS.drainCategory, 'Kebersihan saluran air');
+	await testDb.db.insert(cashTransactions).values({
+		id: IDS.drainExpense,
+		occurredOn: '2026-04-20',
+		type: CASH_CATEGORY_TYPE.expense,
+		categoryId: IDS.drainCategory,
+		amount: rupiah(120_000),
+		description: 'Pengurasan saluran air',
+		recordedBy: IDS.adminUser,
+		createdAt: new Date('2026-04-20T00:00:00.000Z')
+	});
+	await testDb.db.insert(cashTransactions).values({
+		occurredOn: `${PERIOD}-06`,
+		type: CASH_CATEGORY_TYPE.income,
+		categoryId: IDS.drainCategory,
+		amount: rupiah(120_000),
+		description: 'Pengurasan dibayar pengembang',
+		recordedBy: IDS.adminUser,
+		correctionOf: IDS.drainExpense,
+		createdAt: new Date(`${PERIOD}-06T00:00:00.000Z`)
+	});
+
+	await insertExpenseCategory(IDS.gardenCategory, 'Perawatan taman komplek');
+	await recordCashTransaction(testDb.db, clock, fileStore, {
+		actorId: IDS.adminUser,
+		occurredOn: `${PERIOD}-10`,
+		categoryId: IDS.gardenCategory,
+		amount: rupiah(90_000),
+		description: 'Pemangkasan pohon taman'
+	});
+
 	await publishReport(testDb.db, clock, { actorId: IDS.adminUser, period: PERIOD });
+
+	// After publication, the month is locked, so these are planted directly: what a superuser who
+	// reopened the month would have recorded into it. One Koreksi on the street light's other
+	// direction, and one more expense on the garden's own.
+	await testDb.db.insert(cashTransactions).values({
+		occurredOn: streetLight.occurredOn,
+		type: CASH_CATEGORY_TYPE.income,
+		categoryId: IDS.expenseCategory,
+		amount: rupiah(325_000),
+		description: 'Lampu dikembalikan ke toko',
+		recordedBy: IDS.adminUser,
+		correctionOf: streetLight.id,
+		createdAt: new Date(`${AFTER_PUBLICATION_DAY}T00:00:00.000Z`)
+	});
+	await testDb.db.insert(cashTransactions).values({
+		occurredOn: AFTER_PUBLICATION_DAY,
+		type: CASH_CATEGORY_TYPE.expense,
+		categoryId: IDS.gardenCategory,
+		amount: rupiah(10_000),
+		description: 'Pupuk susulan taman',
+		recordedBy: IDS.adminUser,
+		createdAt: new Date(`${AFTER_PUBLICATION_DAY}T00:00:00.000Z`)
+	});
 });
 
 /** Every role a viewer of a report could hold, including holding none beyond the default. */
@@ -273,7 +379,122 @@ describe('the report payload a warga receives', () => {
 	});
 });
 
+/** The published figure on one category's line in one direction, as the report's own row prints it. */
+function lineFigure(
+	view: Awaited<ReturnType<typeof reportForPeriod>>,
+	direction: CashCategoryType,
+	categoryId: string
+): number | undefined {
+	return view?.report[direction].find((line) => line.categoryId === categoryId)?.total;
+}
+
 describe('drilling into a category', () => {
+	it('opens the expense side of an expense category with only its expense rows', async () => {
+		const view = await reportForPeriod(testDb.db, {
+			period: PERIOD,
+			categoryId: IDS.fenceCategory,
+			direction: CASH_CATEGORY_TYPE.expense
+		});
+
+		expect(view?.drilldown).toMatchObject({
+			categoryId: IDS.fenceCategory,
+			name: 'Perbaikan pagar komplek',
+			direction: CASH_CATEGORY_TYPE.expense,
+			isOwnDirection: true,
+			frozenTotal: 580_000,
+			liveTotal: 580_000,
+			changedSincePublication: false
+		});
+		expect(view?.drilldown?.frozenTotal).toBe(
+			lineFigure(view, CASH_CATEGORY_TYPE.expense, IDS.fenceCategory)
+		);
+		const entries = view?.drilldown?.entries ?? [];
+		expect(entries.map((entry) => entry.type)).toEqual([
+			CASH_CATEGORY_TYPE.expense,
+			CASH_CATEGORY_TYPE.expense
+		]);
+		expect(entries.reduce((sum, entry) => sum + entry.amount, 0)).toBe(580_000);
+	});
+
+	it('opens the income side of the same category with only its Koreksi', async () => {
+		const view = await reportForPeriod(testDb.db, {
+			period: PERIOD,
+			categoryId: IDS.fenceCategory,
+			direction: CASH_CATEGORY_TYPE.income
+		});
+
+		expect(view?.drilldown).toMatchObject({
+			categoryId: IDS.fenceCategory,
+			direction: CASH_CATEGORY_TYPE.income,
+			isOwnDirection: false,
+			frozenTotal: 180_000,
+			liveTotal: 180_000,
+			changedSincePublication: false
+		});
+		expect(view?.drilldown?.frozenTotal).toBe(
+			lineFigure(view, CASH_CATEGORY_TYPE.income, IDS.fenceCategory)
+		);
+		expect(view?.drilldown?.entries).toHaveLength(1);
+		expect(view?.drilldown?.entries[0]).toMatchObject({
+			type: CASH_CATEGORY_TYPE.income,
+			occurredOn: `${PERIOD}-15`,
+			description: 'Engsel ternyata masih bergaransi',
+			amount: 180_000,
+			isCorrection: true
+		});
+	});
+
+	it("opens the category's own type when no direction is asked for", async () => {
+		// An old link, or an address typed by hand, lands on the ordinary side and not on the Koreksi.
+		const view = await reportForPeriod(testDb.db, {
+			period: PERIOD,
+			categoryId: IDS.fenceCategory
+		});
+
+		expect(view?.drilldown).toMatchObject({
+			direction: CASH_CATEGORY_TYPE.expense,
+			isOwnDirection: true,
+			frozenTotal: 580_000
+		});
+	});
+
+	it('falls to the direction that has a line when its own type has none', async () => {
+		const view = await reportForPeriod(testDb.db, {
+			period: PERIOD,
+			categoryId: IDS.drainCategory
+		});
+
+		expect(view?.report.expense.some((line) => line.categoryId === IDS.drainCategory)).toBe(false);
+		expect(view?.drilldown).toMatchObject({
+			categoryId: IDS.drainCategory,
+			direction: CASH_CATEGORY_TYPE.income,
+			isOwnDirection: false,
+			frozenTotal: 120_000,
+			liveTotal: 120_000,
+			changedSincePublication: false
+		});
+		expect(view?.drilldown?.entries).toHaveLength(1);
+		expect(view?.drilldown?.entries[0]).toMatchObject({ isCorrection: true, amount: 120_000 });
+	});
+
+	it.each([
+		{ case: 'its own type', categoryId: IDS.drainCategory, direction: CASH_CATEGORY_TYPE.expense },
+		{
+			case: 'rows recorded only after publication',
+			categoryId: IDS.expenseCategory,
+			direction: CASH_CATEGORY_TYPE.income
+		}
+	])(
+		'answers nothing for a direction with no line on this revision, even with $case',
+		async ({ categoryId, direction }) => {
+			// The same answer as a category that is not on the report: telling the two apart would say
+			// which categories exist, which the report did not publish.
+			const view = await reportForPeriod(testDb.db, { period: PERIOD, categoryId, direction });
+
+			expect(view?.drilldown).toBeNull();
+		}
+	);
+
 	it('opens an ordinary category and shows the rows behind its line', async () => {
 		const view = await reportForPeriod(testDb.db, {
 			period: PERIOD,
@@ -283,9 +504,9 @@ describe('drilling into a category', () => {
 		expect(view?.drilldown).toMatchObject({
 			categoryId: IDS.expenseCategory,
 			name: 'Perbaikan lampu jalan komplek',
-			frozenExpenseTotal: 325_000,
-			liveExpenseTotal: 325_000,
-			changedSincePublication: false
+			direction: CASH_CATEGORY_TYPE.expense,
+			isOwnDirection: true,
+			frozenTotal: 325_000
 		});
 		expect(view?.drilldown?.entries).toHaveLength(1);
 		expect(view?.drilldown?.entries[0]).toMatchObject({
@@ -295,35 +516,78 @@ describe('drilling into a category', () => {
 		});
 	});
 
-	it('carries no recorder and no receipt on a drilled-into row', async () => {
-		// `CashBookEntry` has both; the shape a warga is handed deliberately does not. A nota is a
-		// photograph of a piece of paper, and who typed a row is an account.
-		const view = await reportForPeriod(testDb.db, {
+	it('counts only the opened direction as changed since publication', async () => {
+		// The street light's Koreksi was recorded after publication on its *income* side; the expense
+		// line it is opened on has not moved, so nothing on that line needs explaining.
+		const unchanged = await reportForPeriod(testDb.db, {
 			period: PERIOD,
-			categoryId: IDS.expenseCategory
+			categoryId: IDS.expenseCategory,
+			direction: CASH_CATEGORY_TYPE.expense
+		});
+		expect(unchanged?.drilldown).toMatchObject({
+			frozenTotal: 325_000,
+			liveTotal: 325_000,
+			changedSincePublication: false
 		});
 
-		const entry = view?.drilldown?.entries[0] ?? {};
-		expect(Object.keys(entry).sort()).toEqual([
-			'amount',
-			'description',
-			'id',
-			'isCorrection',
-			'occurredOn',
-			'type'
-		]);
+		// The garden's extra expense was recorded on the direction it is opened on.
+		const changed = await reportForPeriod(testDb.db, {
+			period: PERIOD,
+			categoryId: IDS.gardenCategory,
+			direction: CASH_CATEGORY_TYPE.expense
+		});
+		expect(changed?.drilldown).toMatchObject({
+			frozenTotal: 90_000,
+			liveTotal: 100_000,
+			changedSincePublication: true
+		});
+		expect(changed?.drilldown?.entries).toHaveLength(2);
 	});
 
-	it('refuses to open the iuran category, and says so on the line itself', async () => {
-		// One row of "Iuran warga" is one house's payment on one day, so the list of them read against
-		// the count of houses that have not paid is the daftar penunggak arrived at by subtraction —
-		// the screen `docs/spec-kas-laporan-v1.md` puts behind admin alone.
-		const view = await reportForPeriod(testDb.db, { period: PERIOD, categoryId: duesCategoryId });
+	it.each([CASH_CATEGORY_TYPE.expense, CASH_CATEGORY_TYPE.income])(
+		'carries no recorder and no receipt on a drilled-into %s row',
+		async (direction) => {
+			// `CashBookEntry` has both; the shape a warga is handed deliberately does not. A nota is a
+			// photograph of a piece of paper, and who typed a row is an account.
+			const view = await reportForPeriod(testDb.db, {
+				period: PERIOD,
+				categoryId: IDS.fenceCategory,
+				direction
+			});
 
-		expect(view?.drilldown).toBeNull();
-		const duesLine = view?.report.income.find((line) => line.categoryId === duesCategoryId);
-		expect(duesLine).toMatchObject({ total: 150_000, mayDrillDown: false });
-	});
+			const entry = view?.drilldown?.entries[0] ?? {};
+			expect(Object.keys(entry).sort()).toEqual([
+				'amount',
+				'description',
+				'id',
+				'isCorrection',
+				'occurredOn',
+				'type'
+			]);
+		}
+	);
+
+	it.each([
+		{ asked: 'no direction', direction: undefined },
+		{ asked: 'income', direction: CASH_CATEGORY_TYPE.income },
+		{ asked: 'expense', direction: CASH_CATEGORY_TYPE.expense }
+	])(
+		'refuses to open the iuran category when asked for $asked, and says so on the line itself',
+		async ({ direction }) => {
+			// One row of "Iuran warga" is one house's payment on one day, so the list of them read
+			// against the count of houses that have not paid is the daftar penunggak arrived at by
+			// subtraction — the screen `docs/spec-kas-laporan-v1.md` puts behind admin alone.
+			const view = await reportForPeriod(testDb.db, {
+				period: PERIOD,
+				categoryId: duesCategoryId,
+				direction
+			});
+
+			expect(view?.drilldown).toBeNull();
+			const duesLine = view?.report.income.find((line) => line.categoryId === duesCategoryId);
+			expect(duesLine).toMatchObject({ total: 150_000, mayDrillDown: false });
+		}
+	);
 
 	it('offers every other line, so a big number can still be checked', async () => {
 		const view = await reportForPeriod(testDb.db, { period: PERIOD });

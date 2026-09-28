@@ -59,10 +59,11 @@ import { publishedReport, type PublishedReportRevision } from './publication';
  *
  * ## What the drill-down is allowed to reach at all
  *
- * Only a category that appears in *this revision's frozen breakdown*, and only inside the month that
- * revision publishes. A `categoryId` that is not on the report answers with no drill-down, which
- * keeps a report page from becoming a general reader of the buku kas that happens to need no
- * permission.
+ * Only a category line that appears in *this revision's frozen breakdown*, and only inside the month
+ * that revision publishes. A `categoryId` that is not on the report, or a direction it has no line
+ * in, answers with no drill-down, which keeps a report page from becoming a general reader of the
+ * buku kas that happens to need no permission. What opens is one line, one direction: the rows
+ * behind the figure the reader clicked, and not the category's other direction mixed in.
  *
  * ## The frozen total and the live rows, shown side by side
  *
@@ -177,24 +178,40 @@ export interface ReportPayload {
 	readonly revisions: readonly PublishedReportRevision[];
 }
 
-/** One category opened out into the transactions behind its line. */
+/**
+ * One category opened out into the transactions behind **one** of its lines.
+ *
+ * A category can have two lines on one report, because a Koreksi moves the opposite way to its
+ * Kategori Kas and the breakdown groups by the transaction's direction; see `categoryLines` in
+ * `./composition.ts`. The detail answers for one line at a time, so its `entries` add up to the
+ * figure printed on the row it was opened from, and a Koreksi never hides inside the ordinary side.
+ */
 export interface ReportCategoryDrilldown {
 	readonly categoryId: string;
 	/** The name as this revision froze it. */
 	readonly name: string;
-	/** The line totals this revision published, one per direction and zero where it has no line. */
-	readonly frozenIncomeTotal: Rupiah;
-	readonly frozenExpenseTotal: Rupiah;
-	/** What the same rows add up to right now. */
-	readonly liveIncomeTotal: Rupiah;
-	readonly liveExpenseTotal: Rupiah;
-	/** True when the two disagree, which means this month changed after this revision went out. */
+	/** Which of the category's lines this is: the direction every entry below moves in. */
+	readonly direction: CashCategoryType;
+	/**
+	 * True when `direction` is the Kategori Kas's own type, the ordinary side. False on the side its
+	 * Koreksi land in. Read from `cash_categories`, because a frozen line carries its direction but not
+	 * the category's.
+	 */
+	readonly isOwnDirection: boolean;
+	/** The figure this revision published on that line. */
+	readonly frozenTotal: Rupiah;
+	/** What the same direction's rows add up to in the buku kas right now. */
+	readonly liveTotal: Rupiah;
+	/**
+	 * True when the two disagree, which means this direction changed after this revision went out.
+	 * A change on the category's other direction does not count: it is not on this line.
+	 */
 	readonly changedSincePublication: boolean;
-	/** The rows themselves, oldest first. Carries no person and no file. */
+	/** The rows moving in `direction`, oldest first. Carries no person and no file. */
 	readonly entries: readonly CategoryTransaction[];
 }
 
-/** Which report to read, which revision of it, and which category to open. */
+/** Which report to read, which revision of it, and which category to open in which direction. */
 export interface ReportViewRequest {
 	/** The Periode, as `YYYY-MM`. */
 	readonly period: string;
@@ -202,6 +219,11 @@ export interface ReportViewRequest {
 	readonly revision?: number;
 	/** Which category to drill into, or absent for none. */
 	readonly categoryId?: string;
+	/**
+	 * Which of that category's lines to open. Absent means the category's own type, falling back to
+	 * the direction that has a line when its own type has none on this revision.
+	 */
+	readonly direction?: CashCategoryType;
 }
 
 /** A report page's whole answer. */
@@ -265,48 +287,98 @@ export async function reportForPeriod(
 
 	return {
 		report,
-		drilldown: await drilldownFor(db, published.period, lines, duesCategoryId, request.categoryId)
+		drilldown: await drilldownFor(db, published.period, lines, duesCategoryId, request)
 	};
 }
 
 /**
- * The opened category, or null when there is nothing to open.
+ * The opened line of a category, or null when there is nothing to open.
  *
- * Null for three different reasons, all of which a page renders the same way — no category asked
- * for, a category that is not on this revision, and the `dues` category the report never opens. They
- * are one answer on purpose: distinguishing "that category is not on this report" from "you may not
- * see that one" would tell a reader which category ids exist, which is a fact the report did not
- * publish.
+ * Null for four different reasons, all of which a page renders the same way: no category asked
+ * for, a category that is not on this revision, the `dues` category the report never opens (in
+ * either direction), and a direction the category has no line for on this revision. They are one
+ * answer on purpose. Distinguishing "that category is not on this report" from "you may not see that
+ * one" would tell a reader which category ids exist, which is a fact the report did not publish. A
+ * direction with no line is the same case: that line is not on this revision, and answering it
+ * differently from an unknown category would say which categories exist all the same.
  */
 async function drilldownFor(
 	db: Database,
 	period: string,
 	lines: readonly MonthlyReportCategoryLine[],
 	duesCategoryId: string,
-	categoryId: string | undefined
+	request: ReportViewRequest
 ): Promise<ReportCategoryDrilldown | null> {
+	const { categoryId } = request;
 	if (categoryId === undefined || categoryId === duesCategoryId) {
 		return null;
 	}
-	const line = lines.find((candidate) => candidate.categoryId === categoryId);
+	const categoryLines = lines.filter((candidate) => candidate.categoryId === categoryId);
+	if (categoryLines.length === 0) {
+		return null;
+	}
+
+	// Only after the id has been found on the frozen report, so an arbitrary string from the address
+	// bar never reaches a query.
+	const ownType = await categoryType(db, categoryId);
+	if (ownType === undefined) {
+		return null;
+	}
+	const line = openedLine(categoryLines, ownType, request.direction);
 	if (!line) {
 		return null;
 	}
 
-	const frozenIncomeTotal = frozenTotalOf(lines, categoryId, CASH_CATEGORY_TYPE.income);
-	const frozenExpenseTotal = frozenTotalOf(lines, categoryId, CASH_CATEGORY_TYPE.expense);
 	const live = await transactionsInCategory(db, period, categoryId);
+	const liveTotal = line.type === CASH_CATEGORY_TYPE.income ? live.incomeTotal : live.expenseTotal;
 	return {
 		categoryId,
 		name: line.name,
-		frozenIncomeTotal,
-		frozenExpenseTotal,
-		liveIncomeTotal: live.incomeTotal,
-		liveExpenseTotal: live.expenseTotal,
-		changedSincePublication:
-			live.incomeTotal !== frozenIncomeTotal || live.expenseTotal !== frozenExpenseTotal,
-		entries: live.entries
+		direction: line.type,
+		isOwnDirection: line.type === ownType,
+		frozenTotal: line.total,
+		liveTotal,
+		changedSincePublication: liveTotal !== line.total,
+		entries: live.entries.filter((entry) => entry.type === line.type)
 	};
+}
+
+/**
+ * Which of one category's frozen lines to open.
+ *
+ * An asked-for direction is taken as asked, and answers nothing when it has no line. With none asked
+ * for, which is an old link or a hand-typed address, the category's own type is opened, so the
+ * reader lands on the ordinary side and not on the Koreksi side. Only when that side has no line on
+ * this revision does it fall to the one that does.
+ */
+function openedLine(
+	categoryLines: readonly MonthlyReportCategoryLine[],
+	ownType: CashCategoryType,
+	requested: CashCategoryType | undefined
+): MonthlyReportCategoryLine | undefined {
+	if (requested !== undefined) {
+		return categoryLines.find((candidate) => candidate.type === requested);
+	}
+	return categoryLines.find((candidate) => candidate.type === ownType) ?? categoryLines[0];
+}
+
+/**
+ * The stored type of one Kategori Kas, or `undefined` when no row carries that id.
+ *
+ * A frozen line names a category that existed at publication, and nothing deletes a category that
+ * has transactions, so `undefined` is not expected. It opens nothing rather than throwing, because
+ * the one thing a missing row must not do is take the whole report page down with it.
+ */
+async function categoryType(
+	db: Database,
+	categoryId: string
+): Promise<CashCategoryType | undefined> {
+	const [row] = await db
+		.select({ type: cashCategories.type })
+		.from(cashCategories)
+		.where(eq(cashCategories.id, categoryId))
+		.limit(1);
+	return row?.type;
 }
 
 /** The frozen lines going one direction, in reading order, each told whether it opens. */
