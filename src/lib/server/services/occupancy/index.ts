@@ -433,7 +433,7 @@ export interface OccupancyGroups<T extends OccupancyDays> {
 
 /**
  * Splits any list of Masa Huni-shaped rows into `current`, `upcoming` and `history` —
- * `docs/spec-penghuni-v1.md` decision 3. Shared by `listUnitOccupancies` and
+ * `docs/spec-penghuni-v1.md` decision 3. Shared by `listUnitOccupanciesGrouped` and
  * `occupiedUnitsForUserGrouped` so the two screens can never disagree about where one stay belongs.
  *
  * A row is `current` when `isRunning` is `true` — the same `isStillRunningOn` every other reader of

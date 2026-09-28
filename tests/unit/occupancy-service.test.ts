@@ -1470,6 +1470,36 @@ describe('occupiedUnitsForUserGrouped', () => {
 		expect(groups.history.map((row) => row.unitId)).toEqual([blockEndedYesterday]);
 	});
 
+	it('orders current with the Penanggung Jawab house first, upcoming by start date, and history by last day, most recent first', async () => {
+		const me = await insertResident('Warga Rumah Saya Urutan');
+		const holderUnit = await insertUnitRow(unique('SAYA-PENANGGUNG-JAWAB'));
+		const earlyUnit = await insertUnitRow(unique('SAYA-MULAI-LEBIH-DULU'));
+		const soonestUnit = await insertUnitRow(unique('SAYA-AKAN-MASUK-DULUAN'));
+		const laterUnit = await insertUnitRow(unique('SAYA-AKAN-MASUK-BELAKANGAN'));
+		const recentlyGoneUnit = await insertUnitRow(unique('SAYA-BARU-PERGI'));
+		const longGoneUnit = await insertUnitRow(unique('SAYA-LAMA-PERGI'));
+		// The Penanggung Jawab house starts later than the other current house, so its place at the
+		// front of `current` can only come from the flag, never from the start date.
+		await insertOccupancyRow(holderUnit, me.residentId, {
+			startedOn: MID_YEAR,
+			isPrimaryOccupant: true
+		});
+		await insertOccupancyRow(earlyUnit, me.residentId, { startedOn: STARTED_ON });
+		await insertOccupancyRow(laterUnit, me.residentId, { startedOn: '2027-02-01' });
+		await insertOccupancyRow(soonestUnit, me.residentId, { startedOn: '2027-01-01' });
+		await insertOccupancyRow(longGoneUnit, me.residentId, {
+			startedOn: '2025-01-01',
+			endedOn: '2025-06-01'
+		});
+		await insertOccupancyRow(recentlyGoneUnit, me.residentId, { endedOn: ENDED_ON });
+
+		const groups = await occupiedUnitsForUserGrouped(testDb.db, READ_CLOCK, me.userId);
+
+		expect(groups.current.map((row) => row.unitId)).toEqual([holderUnit, earlyUnit]);
+		expect(groups.upcoming.map((row) => row.unitId)).toEqual([soonestUnit, laterUnit]);
+		expect(groups.history.map((row) => row.unitId)).toEqual([recentlyGoneUnit, longGoneUnit]);
+	});
+
 	it('includes the household only for a house in current, not for one upcoming or in history', async () => {
 		const me = await insertResident('Warga Rumah Saya Daftar Penghuni');
 		const housemate = await insertResident('Warga Serumah Rumah Saya');
