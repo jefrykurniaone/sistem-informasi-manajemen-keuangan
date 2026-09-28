@@ -460,11 +460,12 @@ describe('what accepting creates', () => {
 		).toHaveLength(1);
 	});
 
-	it('does not treat a stay on that unit that starts tomorrow as running', async () => {
-		// `stillRunningOn` reads the start date too, so a Masa Huni recorded to begin tomorrow is not
-		// one the resident already has running, and acceptance records the stay it promises. Which
-		// existing stays should make acceptance skip that write is the overlap rule's question, and the
-		// ticket that brings that rule in is the one that changes this answer.
+	it('does not add a second stay when the resident already has one starting tomorrow', async () => {
+		// Decision 6 of docs/spec-penghuni-v1.md: a stay that has not started yet also makes acceptance
+		// skip, because it will overlap [today, open) as soon as it starts. Before this ticket the
+		// check was `stillRunningOn`, which reads the start date too and let this stay through as "not
+		// running yet" — acceptance inserted a second row. The overlap rule replaces that check with one
+		// that reads the last day alone, so an upcoming stay blocks a new one exactly like a current one.
 		const actorId = await insertSuperuser();
 		const unitId = await insertUnitRow();
 		const email = anAddress('arriving');
@@ -487,6 +488,35 @@ describe('what accepting creates', () => {
 
 		const accepted = await acceptInvitation(testDb.db, clock, acceptance(token));
 
+		expect(accepted).toMatchObject({ residentId: residentRow.id, createdOccupancy: false });
+		expect(
+			await testDb.db.select().from(occupancies).where(eq(occupancies.residentId, residentRow.id))
+		).toHaveLength(1);
+	});
+
+	it('still records the stay when the resident’s previous one in that unit ended yesterday', async () => {
+		const actorId = await insertSuperuser();
+		const unitId = await insertUnitRow();
+		const email = anAddress('returning');
+		const userId = await insertUser('Warga Kembali', email);
+		const [residentRow] = await testDb.db
+			.insert(residents)
+			.values({ userId, createdAt: new Date(START) })
+			.returning();
+		await testDb.db.insert(occupancies).values({
+			unitId,
+			residentId: residentRow.id,
+			role: OCCUPANCY_ROLE.tenant,
+			startedOn: '2025-06-01',
+			endedOn: '2025-12-31',
+			isPrimaryOccupant: false,
+			createdAt: new Date(START)
+		});
+		const clock = new FakeClock(START);
+		const { token } = await sendOne(actorId, email, unitId, clock);
+
+		const accepted = await acceptInvitation(testDb.db, clock, acceptance(token));
+
 		expect(accepted).toMatchObject({ residentId: residentRow.id, createdOccupancy: true });
 		expect(
 			await testDb.db
@@ -494,7 +524,7 @@ describe('what accepting creates', () => {
 				.from(occupancies)
 				.where(eq(occupancies.residentId, residentRow.id))
 				.orderBy(occupancies.startedOn)
-		).toEqual([{ startedOn: '2026-01-01' }, { startedOn: '2026-01-02' }]);
+		).toEqual([{ startedOn: '2025-06-01' }, { startedOn: '2026-01-01' }]);
 	});
 
 	it('refuses an address that gained a working credential after the invitation was sent', async () => {

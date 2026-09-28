@@ -26,6 +26,7 @@ import {
 	occupiedUnitsForUserGrouped,
 	OccupancyDateOrderError,
 	OccupancyNotFoundError,
+	OccupancyOverlapError,
 	OCCUPANCY_ENDED_ACTION,
 	OCCUPANCY_RECORDED_ACTION,
 	PRIMARY_OCCUPANT_MARKED_ACTION,
@@ -643,6 +644,127 @@ describe('recordOccupancy', () => {
 					after: { occupancyId: created.id, residentId: c.residentId, unitId }
 				})
 			]);
+		} finally {
+			await other.release();
+		}
+	});
+
+	it('refuses a second stay that overlaps the first only at the boundary day, naming the day after', async () => {
+		const superuserId = await insertSuperuser('Pengurus Tumpang Tindih');
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Bersinggungan');
+		await insertOccupancyRow(unitId, residentId, { startedOn: STARTED_ON, endedOn: ENDED_ON });
+
+		const refusal = await rejection(
+			recordOccupancy(testDb.db, new FakeClock(START), {
+				actorId: superuserId,
+				unitId,
+				residentId,
+				role: OCCUPANCY_ROLE.tenant,
+				startedOn: ENDED_ON
+			})
+		);
+
+		expect(refusal).toBeInstanceOf(OccupancyOverlapError);
+		expect(refusal).toMatchObject({ earliestStartedOn: '2026-04-01', mustEndFirst: false });
+		expect(
+			await testDb.db.select().from(occupancies).where(eq(occupancies.residentId, residentId))
+		).toHaveLength(1);
+	});
+
+	it('accepts a stay starting the day after the conflicting stay’s last day', async () => {
+		const superuserId = await insertSuperuser('Pengurus Sambung Hari');
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Lanjut');
+		await insertOccupancyRow(unitId, residentId, { startedOn: STARTED_ON, endedOn: ENDED_ON });
+
+		const created = await recordOccupancy(testDb.db, new FakeClock(START), {
+			actorId: superuserId,
+			unitId,
+			residentId,
+			role: OCCUPANCY_ROLE.tenant,
+			startedOn: '2026-04-01'
+		});
+
+		expect(created.startedOn).toBe('2026-04-01');
+	});
+
+	it('refuses to overlap a stay with no last day yet, naming that it must be ended first', async () => {
+		const superuserId = await insertSuperuser('Pengurus Belum Berakhir');
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Belum Diakhiri');
+		await insertOccupancyRow(unitId, residentId, { startedOn: STARTED_ON, endedOn: null });
+
+		const refusal = await rejection(
+			recordOccupancy(testDb.db, new FakeClock(START), {
+				actorId: superuserId,
+				unitId,
+				residentId,
+				role: OCCUPANCY_ROLE.tenant,
+				startedOn: MID_YEAR
+			})
+		);
+
+		expect(refusal).toBeInstanceOf(OccupancyOverlapError);
+		expect(refusal).toMatchObject({ earliestStartedOn: undefined, mustEndFirst: true });
+	});
+
+	it('accepts the same resident recorded again in a different unit', async () => {
+		const superuserId = await insertSuperuser('Pengurus Dua Unit');
+		const unitOne = await insertUnitRow();
+		const unitTwo = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Dua Rumah');
+		await insertOccupancyRow(unitOne, residentId, { startedOn: STARTED_ON, endedOn: null });
+
+		const created = await recordOccupancy(testDb.db, new FakeClock(START), {
+			actorId: superuserId,
+			unitId: unitTwo,
+			residentId,
+			role: OCCUPANCY_ROLE.owner,
+			startedOn: STARTED_ON
+		});
+
+		expect(created.unitId).toBe(unitTwo);
+	});
+
+	it('refuses a recording that would overlap a row another connection committed while it waited on the lock', async () => {
+		// Two real requests to record the same resident and unit must not both succeed. The other
+		// connection takes the unit's row lock `for update` — the same mode `lockUnit` itself takes —
+		// and inserts a stay for the resident while the service call waits behind it, then commits.
+		// Read committed gives the service call's own overlap check a snapshot taken after the lock was
+		// granted, so it is provably reading the committed row and not a stale "no conflict" answer.
+		const superuserId = await insertSuperuser('Pengurus Kunci Rebutan');
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Direbutkan');
+
+		const other = await connectToSchema();
+		try {
+			await other.client.query('begin');
+			await other.client.query('select id from units where id = $1 for update', [unitId]);
+
+			const recorded = recordOccupancy(testDb.db, new FakeClock(START), {
+				actorId: superuserId,
+				unitId,
+				residentId,
+				role: OCCUPANCY_ROLE.owner,
+				startedOn: STARTED_ON
+			});
+			await waitUntilWaitingOn(other.pid);
+
+			await other.client.query(
+				`insert into occupancies (unit_id, resident_id, role, started_on, ended_on, is_primary_occupant, created_at)
+				 values ($1, $2, 'owner', $3, null, false, $4)`,
+				[unitId, residentId, STARTED_ON, START]
+			);
+			await other.client.query('commit');
+
+			const refusal = await rejection(recorded);
+
+			expect(refusal).toBeInstanceOf(OccupancyOverlapError);
+			expect(refusal).toMatchObject({ mustEndFirst: true });
+			expect(
+				await testDb.db.select().from(occupancies).where(eq(occupancies.residentId, residentId))
+			).toHaveLength(1);
 		} finally {
 			await other.release();
 		}
