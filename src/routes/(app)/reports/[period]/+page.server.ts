@@ -2,6 +2,7 @@ import { error, redirect } from '@sveltejs/kit';
 import * as m from '$lib/paraglide/messages';
 import { AUTH_PATHS } from '$lib/server/auth';
 import { database } from '$lib/server/db';
+import { CASH_CATEGORY_TYPES, type CashCategoryType } from '$lib/server/db/schema/cash-category';
 import { CASH_BOOK_MONTH_PATTERN } from '$lib/server/services/cash/balance';
 import { reportForPeriod } from '$lib/server/services/report/resident-payload';
 import type { PageServerLoad } from './$types';
@@ -14,10 +15,14 @@ import type { PageServerLoad } from './$types';
  * every signed-in Warga may read a published report, so there is no action to check, and the
  * criterion "pengunjung tanpa akun ditolak" is about a session rather than about roles.
  *
- * ## Why the revision and the category are query parameters
+ * ## Why the revision, the category and its direction are query parameters
  *
- * `?revision=2&category=<id>`, read here and written by the links in
- * `src/lib/components/report/category-table.svelte`. A revision is a *view* of one month's report
+ * `?revision=2&category=<id>&type=expense`, read here and written by the links in
+ * `src/lib/components/report/category-table.svelte`, which also add a `#` to the row they open.
+ * `type` is which of the category's lines to open, named and valued like the stored type of a
+ * Kategori Kas: a category with a Koreksi in the month has a line in each table, and each opens only
+ * its own direction. Which direction an absent `type` opens is the service's rule, not this route's;
+ * see `drilldownFor` in `src/lib/server/services/report/resident-payload.ts`. A revision is a *view* of one month's report
  * rather than a resource of its own — the address of the January report is `/reports/2026-01`
  * whichever revision is newest, so a link shared in a WhatsApp group keeps meaning "January's
  * report" instead of freezing on the revision that happened to be newest the day it was sent. A
@@ -25,7 +30,7 @@ import type { PageServerLoad } from './$types';
  * *that* too. The same reasoning `(app)/admin/cash/+page.server.ts` gives for keeping its filters in
  * the query string.
  *
- * An unrecognisable `revision` or `category` is dropped rather than refused: both can only arrive
+ * An unrecognisable `revision`, `category` or `type` is dropped rather than refused: both can only arrive
  * from a hand-edited address bar, and showing the newest revision with nothing opened is friendlier
  * than a 400 and gives away nothing. A `period` that is not a month, a month with no published
  * report, and a revision number that was never published are all a 404 — to a reader they are the
@@ -39,6 +44,9 @@ const REVISION_PARAMETER = 'revision';
 /** The query parameter naming which category to open. */
 const CATEGORY_PARAMETER = 'category';
 
+/** The query parameter naming which of that category's lines to open: `income` or `expense`. */
+const DIRECTION_PARAMETER = 'type';
+
 export const load: PageServerLoad = async ({ locals, params, url }) => {
 	if (!locals.user) {
 		redirect(303, AUTH_PATHS.login);
@@ -50,7 +58,8 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 	const view = await reportForPeriod(database(), {
 		period: params.period,
 		revision: revisionFrom(url),
-		categoryId: categoryFrom(url)
+		categoryId: categoryFrom(url),
+		direction: directionFrom(url)
 	});
 	if (!view) {
 		error(404, m.reports_notFound());
@@ -74,4 +83,10 @@ function revisionFrom(url: URL): number | undefined {
 function categoryFrom(url: URL): string | undefined {
 	const raw = url.searchParams.get(CATEGORY_PARAMETER)?.trim() ?? '';
 	return raw === '' ? undefined : raw;
+}
+
+/** The direction this request asks to open, or `undefined` for the service to choose. */
+function directionFrom(url: URL): CashCategoryType | undefined {
+	const raw = url.searchParams.get(DIRECTION_PARAMETER);
+	return CASH_CATEGORY_TYPES.find((type) => type === raw);
 }

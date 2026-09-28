@@ -74,6 +74,16 @@ const ARCHIVE_YEARS = 100;
 /** How many months a year has, written down so the walk below reads as a calendar. */
 const MONTHS_IN_A_YEAR = 12;
 
+/**
+ * The phone-sized viewport the drill-down is driven at: the width the spec requires the report to
+ * fit without a horizontal scroll, and tall enough that the expense row starts below the fold, so
+ * scrolling it to the middle of the screen really moves the page.
+ */
+const PHONE_VIEWPORT = { width: 390, height: 844 };
+
+/** How far `scrollY` may drift across an open before it counts as the screen having moved. */
+const SCROLL_TOLERANCE_PIXELS = 1;
+
 /** The day of the month this spec dates its Transaksi Kas on. Any day inside the month will do. */
 const A_DAY_IN_THE_MONTH = '15';
 
@@ -292,7 +302,7 @@ test('an admin publishes a report, and a warga opens it and drills into a catego
 
 	const adminId = await signUp(page, adminEmail, 'Pengurus Laporan E2E');
 	await grant(adminId, 'admin');
-	await recordExpense(adminId, categoryName, day, 750_000, description);
+	const categoryId = await recordExpense(adminId, categoryName, day, 750_000, description);
 	await signIn(page, adminEmail);
 
 	// The publication itself: the preview shows that month's figures, and the button freezes them.
@@ -339,18 +349,47 @@ test('an admin publishes a report, and a warga opens it and drills into a catego
 		residentPage.getByRole('region', { name: period }).getByText('Revisi 1,')
 	).toBeVisible();
 
-	// The breakdown, and then the drill-down user story 20 asks for.
+	// The breakdown, and then the drill-down user story 20 asks for, at phone width.
+	await residentPage.setViewportSize(PHONE_VIEWPORT);
 	await expect(
 		residentPage.getByRole('heading', { name: 'Rincian pengeluaran per kategori' })
 	).toBeVisible();
-	const expenseRow = residentPage.getByRole('row').filter({ hasText: categoryName });
+	// By the row's own anchor id, `categoryRowId` in `src/lib/components/report/category-table.svelte`,
+	// rather than by text: once the detail is open, the row under it carries the category's name too.
+	const expenseRow = residentPage.locator(`[id="transaksi-expense-${categoryId}"]`);
 	await expect(expenseRow).toContainText('Rp 750.000');
-	await expenseRow.getByRole('link', { name: 'Lihat transaksi' }).click();
 
-	await expect(
-		residentPage.getByRole('heading', { name: `Transaksi kategori ${categoryName}` })
-	).toBeVisible();
+	// The row in the middle of the screen, so a jump to the top, or to the `#`, would show up.
+	await expenseRow.evaluate((row) => row.scrollIntoView({ block: 'center' }));
+	await expect.poll(() => residentPage.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+	const scrollBeforeOpening = await residentPage.evaluate(() => window.scrollY);
+
+	const openLink = expenseRow.getByRole('link', { name: 'Lihat transaksi' });
+	await openLink.click();
+
+	const detailHeading = residentPage.getByRole('heading', {
+		level: 3,
+		name: `Kas keluar kategori ${categoryName}`
+	});
+	await expect(detailHeading).toBeVisible();
+	// Focus moves to the heading, which is what `afterNavigate` on the report page does.
+	await expect(detailHeading).toBeFocused();
+	// Drawn directly under the row that opened it, inside the expense table.
+	expect(
+		await expenseRow.evaluate(
+			(row) => row.nextElementSibling?.querySelector('h3')?.textContent?.trim() ?? null
+		)
+	).toBe(`Kas keluar kategori ${categoryName}`);
+	const scrollAfterOpening = await residentPage.evaluate(() => window.scrollY);
+	expect(Math.abs(scrollAfterOpening - scrollBeforeOpening)).toBeLessThanOrEqual(
+		SCROLL_TOLERANCE_PIXELS
+	);
 	await expect(residentPage.getByText(description)).toBeVisible();
+
+	// "Tutup" in the row closes it, and focus goes back to where the reader started.
+	await expenseRow.getByRole('link', { name: `Tutup transaksi ${categoryName}` }).click();
+	await expect(detailHeading).toHaveCount(0);
+	await expect(openLink).toBeFocused();
 
 	// The iuran summary is three numbers and a sentence saying so — no name, no house.
 	await expect(residentPage.getByText('Rumah lunas')).toBeVisible();
