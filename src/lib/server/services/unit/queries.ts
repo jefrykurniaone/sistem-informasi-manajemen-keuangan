@@ -1,10 +1,10 @@
-import { and, asc, count, desc, eq, ilike, inArray, isNull, or } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, inArray, or } from 'drizzle-orm';
 import type { Database } from '../../db';
 import { user } from '../../db/schema/auth';
 import { occupancies } from '../../db/schema/occupancy';
 import { residents } from '../../db/schema/resident';
 import { units, type Unit } from '../../db/schema/unit';
-import { isStillRunningOn, stillRunningOn } from '../occupancy/visibility';
+import { stillRunningOn } from '../occupancy/visibility';
 
 /**
  * Raw reads against `units` and `occupancies`, with no permission decision in them. The service
@@ -68,9 +68,29 @@ export interface ActiveOccupant {
 	readonly residentId: string;
 	/** Read off `user` — `residents` deliberately does not copy it. */
 	readonly name: string;
-	/** Whether any of this person's running Masa Huni in the house carries the Penanggung Jawab flag. */
+	/** Whether this person is the unit's Penanggung Jawab today — see `summarizeActiveOccupancies`. */
 	readonly isPrimaryOccupant: boolean;
 }
+
+/**
+ * Why a unit needs someone to name its Penanggung Jawab — the two states
+ * `docs/spec-penghuni-v1.md` decision 5 asks the admin screens to tell apart.
+ *
+ * - `missing`: no flagged Masa Huni is running today, so an invoice issued now would have nobody to
+ *   be emailed to.
+ * - `leaving`: the Penanggung Jawab living there today already has a last day written. Their
+ *   invoices still reach them until that day has passed; the flag has to be moved to whoever comes
+ *   next before then. Carries who they are and that day.
+ */
+export type PrimaryOccupantNeed =
+	| { readonly kind: 'missing' }
+	| {
+			readonly kind: 'leaving';
+			readonly residentId: string;
+			readonly name: string;
+			/** Their last day, as `YYYY-MM-DD` — today or later. */
+			readonly endedOn: string;
+	  };
 
 /** What the admin screens need to know about one unit's occupancies. */
 export interface OccupancySummary {
@@ -81,37 +101,39 @@ export interface OccupancySummary {
 	readonly activeOccupantCount: number;
 	/** Those people, the Penanggung Jawab first and then by name. */
 	readonly activeOccupants: readonly ActiveOccupant[];
-	/** Whether the primary-occupant slot the database guards is currently filled. */
-	readonly hasPrimaryOccupant: boolean;
+	/**
+	 * `null` while a Penanggung Jawab lives there with no last day written; otherwise why the unit
+	 * needs one named. See `PrimaryOccupantNeed`.
+	 */
+	readonly primaryOccupantNeed: PrimaryOccupantNeed | null;
 }
+
+/** The need a unit with no Penanggung Jawab living there has. Shared, because it carries nothing. */
+export const PRIMARY_OCCUPANT_MISSING: PrimaryOccupantNeed = Object.freeze({ kind: 'missing' });
 
 /**
  * Each unit in `unitIds` summarised as of `today` — "jumlah penghuni aktifnya", who they are, and
- * whether anyone holds the Penanggung Jawab slot. A unit with no running and no open-ended Masa Huni
- * is absent from the result rather than present with zeroes; the caller defaults a missing entry to
- * none.
+ * whether it needs a Penanggung Jawab named. A unit with no running Masa Huni is absent from the
+ * result rather than present with zeroes; the caller defaults a missing entry to none.
+ *
+ * **One predicate for both halves.** Both queries read `stillRunningOn` from
+ * `../occupancy/visibility.ts`, both days included: a stay whose last day is written but has not
+ * arrived is still lived in, and one whose start day is still ahead is not yet. The Penanggung Jawab
+ * half used to read `ended_on is null` instead, the partial index's own predicate, and that is gone
+ * with the date-clash model.
  *
  * **The Penghuni Aktif are counted per person, not per Masa Huni.** The schema deliberately has no
  * unique pair on unit and resident, so one person can hold two running stays in one house, an owner
  * row beside a tenant row or a plain duplicate. Counting rows put that person on the screen twice.
- * The rows come back ordered Penanggung Jawab first and then by name, so keeping each person's first
- * row keeps them where the order puts them.
  *
- * **The two halves deliberately ask two different questions, with two different predicates.** They
- * used to share one, and sharing it put a false sentence on the screen.
- *
- * - `activeOccupants` holds a stay that is **running on `today`**: `isStillRunningOn`, which reads
- *   both the start date and the last day. An end date written before it arrives — someone announcing
- *   in March that they leave next year — does not stop them living there in the meantime, and a
- *   start date still ahead means they have not moved in yet.
- * - `hasPrimaryOccupant` stays on `ended_on is null`, the predicate
- *   `occupancies_primary_occupant_unique` itself uses, so it means exactly "the slot the database
- *   guards is filled". A primary occupant with a future end date therefore reads as gone *here*, and
- *   that is the conservative direction on purpose: the unit surfaces on the admin list as needing a
- *   successor while there is still time to name one, rather than on the day the invoices go out with
- *   nobody to address them to. It is the one reading of occupancies in `src/` that looks at the end
- *   date alone, and the ticket that lets the Penanggung Jawab move between stays is the one that
- *   changes it. The query reads the rows either half needs, and each half then keeps its own.
+ * **The Penanggung Jawab is the flagged stay running today**, as ADR 0001
+ * (`docs/adr/0001-penanggung-jawab-berpindah.md`) defines it. A flag on a stay that has not begun or
+ * has passed is nobody's today. The Occupancy service keeps at most one flagged row among the stays
+ * that have not passed, but rows written under the old date-clash model can hold two, so it is
+ * picked in SQL with the same order `notifyInvoiceIssued` in `../dues/notification.ts` picks the
+ * invoice email's recipient: the latest start day, then the latest recorded, then the id. The name
+ * the admin screens show and the address the email goes to are therefore the same person, and only
+ * that person carries `ActiveOccupant.isPrimaryOccupant`.
  */
 export async function summarizeActiveOccupancies(
 	db: Database,
@@ -122,57 +144,94 @@ export async function summarizeActiveOccupancies(
 		return new Map();
 	}
 
-	const rows = await db
-		.select({
-			unitId: occupancies.unitId,
-			residentId: residents.id,
-			name: user.name,
-			startedOn: occupancies.startedOn,
-			endedOn: occupancies.endedOn,
-			isPrimaryOccupant: occupancies.isPrimaryOccupant
-		})
-		.from(occupancies)
-		.innerJoin(residents, eq(residents.id, occupancies.residentId))
-		.innerJoin(user, eq(user.id, residents.userId))
-		.where(
-			and(
-				inArray(occupancies.unitId, unitIds),
-				or(stillRunningOn(occupancies, today), isNull(occupancies.endedOn))
+	const [rows, primaryOccupants] = await Promise.all([
+		db
+			.select({
+				unitId: occupancies.unitId,
+				residentId: residents.id,
+				name: user.name
+			})
+			.from(occupancies)
+			.innerJoin(residents, eq(residents.id, occupancies.residentId))
+			.innerJoin(user, eq(user.id, residents.userId))
+			.where(and(inArray(occupancies.unitId, unitIds), stillRunningOn(occupancies, today)))
+			.orderBy(asc(user.name), asc(residents.id)),
+		db
+			.selectDistinctOn([occupancies.unitId], {
+				unitId: occupancies.unitId,
+				residentId: residents.id,
+				name: user.name,
+				endedOn: occupancies.endedOn
+			})
+			.from(occupancies)
+			.innerJoin(residents, eq(residents.id, occupancies.residentId))
+			.innerJoin(user, eq(user.id, residents.userId))
+			.where(
+				and(
+					inArray(occupancies.unitId, unitIds),
+					eq(occupancies.isPrimaryOccupant, true),
+					stillRunningOn(occupancies, today)
+				)
 			)
-		)
-		.orderBy(desc(occupancies.isPrimaryOccupant), asc(user.name), asc(residents.id));
+			.orderBy(
+				occupancies.unitId,
+				desc(occupancies.startedOn),
+				desc(occupancies.createdAt),
+				desc(occupancies.id)
+			)
+	]);
 
-	const byUnit = new Map<
-		string,
-		{ occupants: Map<string, ActiveOccupant>; hasPrimaryOccupant: boolean }
-	>();
+	const primaryByUnit = new Map(primaryOccupants.map((row) => [row.unitId, row]));
+	const occupantsByUnit = new Map<string, Map<string, ActiveOccupant>>();
 	for (const row of rows) {
-		let unit = byUnit.get(row.unitId);
-		if (!unit) {
-			unit = { occupants: new Map(), hasPrimaryOccupant: false };
-			byUnit.set(row.unitId, unit);
+		let occupants = occupantsByUnit.get(row.unitId);
+		if (!occupants) {
+			occupants = new Map();
+			occupantsByUnit.set(row.unitId, occupants);
 		}
-		if (row.isPrimaryOccupant && row.endedOn === null) {
-			unit.hasPrimaryOccupant = true;
-		}
-		if (isStillRunningOn(row, today) && !unit.occupants.has(row.residentId)) {
-			unit.occupants.set(row.residentId, {
+		if (!occupants.has(row.residentId)) {
+			occupants.set(row.residentId, {
 				residentId: row.residentId,
 				name: row.name,
-				isPrimaryOccupant: row.isPrimaryOccupant
+				isPrimaryOccupant: primaryByUnit.get(row.unitId)?.residentId === row.residentId
 			});
 		}
 	}
 
 	return new Map(
-		[...byUnit].map(([unitId, { occupants, hasPrimaryOccupant }]) => {
-			const activeOccupants = [...occupants.values()];
+		[...occupantsByUnit].map(([unitId, occupants]) => {
+			// Already by name; moving the Penanggung Jawab to the front keeps the rest in that order.
+			const activeOccupants = [...occupants.values()].sort(
+				(left, right) => Number(right.isPrimaryOccupant) - Number(left.isPrimaryOccupant)
+			);
 			return [
 				unitId,
-				{ activeOccupantCount: activeOccupants.length, activeOccupants, hasPrimaryOccupant }
+				{
+					activeOccupantCount: activeOccupants.length,
+					activeOccupants,
+					primaryOccupantNeed: needOf(primaryByUnit.get(unitId))
+				}
 			];
 		})
 	);
+}
+
+/** The `PrimaryOccupantNeed` of a unit whose Penanggung Jawab today is `primary`, if it has one. */
+function needOf(
+	primary: { residentId: string; name: string; endedOn: string | null } | undefined
+): PrimaryOccupantNeed | null {
+	if (!primary) {
+		return PRIMARY_OCCUPANT_MISSING;
+	}
+	if (primary.endedOn === null) {
+		return null;
+	}
+	return {
+		kind: 'leaving',
+		residentId: primary.residentId,
+		name: primary.name,
+		endedOn: primary.endedOn
+	};
 }
 
 /**

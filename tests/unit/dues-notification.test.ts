@@ -95,7 +95,13 @@ async function insertResident(name: string): Promise<{ residentId: string; email
 async function insertOccupancy(
 	unitId: string,
 	residentId: string,
-	options: { isPrimaryOccupant: boolean; startedOn: string; endedOn: string | null }
+	options: {
+		isPrimaryOccupant: boolean;
+		startedOn: string;
+		endedOn: string | null;
+		/** When the row was recorded. Defaults to `START`. */
+		createdAt?: string;
+	}
 ): Promise<void> {
 	await testDb.db.insert(occupancies).values({
 		unitId,
@@ -104,7 +110,19 @@ async function insertOccupancy(
 		startedOn: options.startedOn,
 		endedOn: options.endedOn,
 		isPrimaryOccupant: options.isPrimaryOccupant,
-		createdAt: new Date(START)
+		createdAt: new Date(options.createdAt ?? START)
+	});
+}
+
+/** Queues `invoice-issued` for `unitId` on `START`'s day, with a payload nothing here asserts on. */
+async function notifyUnit(unitId: string): Promise<boolean> {
+	return notifyInvoiceIssued(testDb.db, new FakeClock(START), {
+		unitId,
+		block: 'G',
+		number: '1',
+		period: '2026-04',
+		amount: rupiah(150_000),
+		dueDate: '2026-04-05'
 	});
 }
 
@@ -292,6 +310,99 @@ describe('notifyInvoiceIssued', () => {
 
 		expect(notified).toBe(false);
 		expect(await emailsTo(occupant.email, INVOICE_ISSUED_KIND)).toEqual([]);
+	});
+
+	it('picks the flagged stay that started last when two are running, whichever was written first', async () => {
+		// The Occupancy service keeps one flag per unit among the stays that have not passed, but rows
+		// written under the old date-clash model can hold two running at once. The recipient must not
+		// then depend on which row PostgreSQL reaches first: the older stay is inserted first here, so
+		// a lookup with no order would pick it.
+		const unit = await insertUnit();
+		const older = await insertResident('Warga Penanda Lama Urutan');
+		const newer = await insertResident('Warga Penanda Baru Urutan');
+		await insertOccupancy(unit, older.residentId, {
+			isPrimaryOccupant: true,
+			startedOn: '2025-01-01',
+			endedOn: '2099-01-01'
+		});
+		await insertOccupancy(unit, newer.residentId, {
+			isPrimaryOccupant: true,
+			startedOn: '2026-02-01',
+			endedOn: null
+		});
+
+		expect(await notifyUnit(unit)).toBe(true);
+
+		expect(await emailsTo(newer.email, INVOICE_ISSUED_KIND)).toHaveLength(1);
+		expect(await emailsTo(older.email, INVOICE_ISSUED_KIND)).toEqual([]);
+	});
+
+	it('breaks a tie on the start day by the stay recorded last', async () => {
+		const unit = await insertUnit();
+		const earlier = await insertResident('Warga Dicatat Duluan Notifikasi');
+		const later = await insertResident('Warga Dicatat Belakangan Notifikasi');
+		await insertOccupancy(unit, earlier.residentId, {
+			isPrimaryOccupant: true,
+			startedOn: '2026-01-01',
+			endedOn: null,
+			createdAt: '2026-01-01T01:00:00.000Z'
+		});
+		await insertOccupancy(unit, later.residentId, {
+			isPrimaryOccupant: true,
+			startedOn: '2026-01-01',
+			endedOn: '2099-01-01',
+			createdAt: '2026-01-01T02:00:00.000Z'
+		});
+
+		expect(await notifyUnit(unit)).toBe(true);
+
+		expect(await emailsTo(later.email, INVOICE_ISSUED_KIND)).toHaveLength(1);
+		expect(await emailsTo(earlier.email, INVOICE_ISSUED_KIND)).toEqual([]);
+	});
+
+	it('never picks a flagged stay that has not started, even one that would sort first', async () => {
+		// A stay flagged ahead of time starts later than the running holder's, so it would win the
+		// order above if the lookup did not read the start date. It is inserted first as well.
+		const unit = await insertUnit();
+		const arriving = await insertResident('Warga Penanda Belum Masuk');
+		const living = await insertResident('Warga Penanda Sedang Menghuni');
+		await insertOccupancy(unit, arriving.residentId, {
+			isPrimaryOccupant: true,
+			startedOn: '2026-04-11',
+			endedOn: '2099-01-01'
+		});
+		await insertOccupancy(unit, living.residentId, {
+			isPrimaryOccupant: true,
+			startedOn: '2025-01-01',
+			endedOn: null
+		});
+		expect(TODAY < '2026-04-11').toBe(true);
+
+		expect(await notifyUnit(unit)).toBe(true);
+
+		expect(await emailsTo(living.email, INVOICE_ISSUED_KIND)).toHaveLength(1);
+		expect(await emailsTo(arriving.email, INVOICE_ISSUED_KIND)).toEqual([]);
+	});
+
+	it('reaches a Penanggung Jawab whose last day is today, and not the unflagged housemate', async () => {
+		const unit = await insertUnit();
+		const leaving = await insertResident('Warga Penanggung Jawab Hari Terakhir');
+		const housemate = await insertResident('Warga Serumah Tanpa Penanda');
+		await insertOccupancy(unit, leaving.residentId, {
+			isPrimaryOccupant: true,
+			startedOn: '2025-01-01',
+			endedOn: TODAY
+		});
+		await insertOccupancy(unit, housemate.residentId, {
+			isPrimaryOccupant: false,
+			startedOn: '2025-06-01',
+			endedOn: null
+		});
+
+		expect(await notifyUnit(unit)).toBe(true);
+
+		expect(await emailsTo(leaving.email, INVOICE_ISSUED_KIND)).toHaveLength(1);
+		expect(await emailsTo(housemate.email, INVOICE_ISSUED_KIND)).toEqual([]);
 	});
 });
 

@@ -12,7 +12,8 @@ import {
 	listUnitOccupancies,
 	OccupancyDateOrderError,
 	OccupancyNotFoundError,
-	PrimaryOccupantConflictError,
+	PrimaryOccupantAlreadyEndedError,
+	PrimaryOccupantNotStartedError,
 	recordOccupancy,
 	ResidentNotFoundError,
 	setPrimaryOccupant
@@ -22,16 +23,19 @@ import type { Actions, PageServerLoad } from './$types';
 
 /**
  * The superuser screen for one unit's Masa Huni: the whole history of who lived there, the form that
- * records a new stay, and the two buttons that end one or make it the Penanggung Jawab.
+ * records a new stay, and the two buttons that end one or move the Penanggung Jawab flag onto it.
  *
  * It follows the translation rule the rest of the admin screens follow, and that
  * `spec-fondasi-v1.md` asks for: the service refuses, and this file — never the service — decides
  * what that refusal is over HTTP. A caller who may not be here at all gets `error(403, …)`; a request
  * for a unit or an occupancy that does not exist gets a 404, because both ids come straight from the
- * URL or from a hidden field this screen rendered; and a rule the complex refuses — a second primary
- * occupant, an end date before the start date, a resident who has since been removed — is
- * `fail(400, …)`, because the superuser did nothing outside their rights and only this particular
- * change is refused.
+ * URL or from a hidden field this screen rendered; and a rule the complex refuses — a Penanggung
+ * Jawab on a stay that has not started or is already over, an end date before the start date, a
+ * resident who has since been removed — is `fail(400, …)`, because the superuser did nothing outside
+ * their rights and only this particular change is refused.
+ *
+ * The load hands the screen the unit's `primaryOccupantNeed` as the Unit service decided it, so the
+ * red and yellow warnings are never a date comparison made in the template.
  */
 
 /** A calendar day as an `<input type="date">` posts it. */
@@ -142,17 +146,21 @@ function isOccupancyRole(value: string): value is OccupancyRole {
 /**
  * Turns a refused change into `fail(400, …)`, or hands anything else to `throwAsRouteError`.
  *
- * The three errors below are all "you may do this, but not this particular one", which is what
- * separates them from a permission refusal — see `src/lib/errors.ts` on `LastSuperuserError` for the
- * same distinction drawn the first time.
+ * The errors below are all "you may do this, but not this particular one", which is what separates
+ * them from a permission refusal — see `src/lib/errors.ts` on `LastSuperuserError` for the same
+ * distinction drawn the first time. `PrimaryOccupantNotStartedError` answers both "Jadikan
+ * penanggung jawab" on a stay that starts later and "Catat masa huni" with the box ticked for a start
+ * day after today, and its message names that start day.
  */
 function refusalOrThrow(caught: unknown) {
-	if (caught instanceof PrimaryOccupantConflictError) {
+	if (caught instanceof PrimaryOccupantNotStartedError) {
 		return fail(400, {
-			message: m.adminOccupancies_conflict({
-				resident: caught.residentName,
-				startedOn: caught.startedOn
-			})
+			message: m.adminOccupancies_primaryNotStarted({ startedOn: caught.startedOn })
+		});
+	}
+	if (caught instanceof PrimaryOccupantAlreadyEndedError) {
+		return fail(400, {
+			message: m.adminOccupancies_primaryAlreadyEnded({ endedOn: caught.endedOn })
 		});
 	}
 	if (caught instanceof OccupancyDateOrderError) {

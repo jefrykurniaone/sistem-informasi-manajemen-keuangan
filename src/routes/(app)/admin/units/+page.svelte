@@ -88,7 +88,7 @@
 				</p>
 				{#if unit.needsPrimaryOccupant}
 					<p class="text-sm font-medium text-destructive" role="alert">
-						{m.adminOccupancies_needsPrimaryOccupant()}
+						{m.adminOccupancies_unitNeedsPrimaryOccupant()}
 					</p>
 				{/if}
 				<div class="flex flex-wrap gap-4">

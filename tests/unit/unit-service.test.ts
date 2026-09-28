@@ -28,7 +28,8 @@ import { splitAtLetterToDigitBoundary } from '$lib/server/services/unit/queries'
  * The Unit service: the admin list with search and pagination, creating a house, and switching one
  * off or back on. `tests/unit/schema-resident-unit.test.ts` already proves the database rules
  * (`units_block_number_unique`, the primary-occupant index); this file proves what the service adds
- * on top — permission, the audit trail, and the conflict message a superuser reads.
+ * on top — permission, the audit trail, the conflict message a superuser reads, and the occupancy
+ * summary, including the two "perlu penanggung jawab" states.
  */
 
 const testDb = testDatabase();
@@ -115,7 +116,12 @@ async function insertUnitRow(
 async function insertOccupancy(
 	unitId: string,
 	residentId: string,
-	overrides: Partial<{ startedOn: string; endedOn: string; isPrimaryOccupant: boolean }> = {}
+	overrides: Partial<{
+		startedOn: string;
+		endedOn: string;
+		isPrimaryOccupant: boolean;
+		createdAt: string;
+	}> = {}
 ): Promise<void> {
 	await testDb.db.insert(occupancies).values({
 		unitId,
@@ -124,7 +130,7 @@ async function insertOccupancy(
 		startedOn: overrides.startedOn ?? STARTED_ON,
 		endedOn: overrides.endedOn ?? null,
 		isPrimaryOccupant: overrides.isPrimaryOccupant ?? false,
-		createdAt: new Date(START)
+		createdAt: new Date(overrides.createdAt ?? START)
 	});
 }
 
@@ -331,7 +337,7 @@ describe('listUnits', () => {
 		expect(page.units.find((row) => row.id === unitId)?.activeOccupantCount).toBe(1);
 	});
 
-	it('says a unit has a primary occupant while that occupancy is still running', async () => {
+	it('needs nothing while a Penanggung Jawab lives there with no last day written', async () => {
 		const superuserId = await insertSuperuser('Pengurus Penanggung Jawab Ada');
 		const block = unique('PJ');
 		const unitId = await insertUnitRow({ block, number: '1' });
@@ -342,7 +348,7 @@ describe('listUnits', () => {
 		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
 
 		const row = page.units.find((unit) => unit.id === unitId);
-		expect(row).toMatchObject({ hasPrimaryOccupant: true });
+		expect(row).toMatchObject({ primaryOccupantNeed: null });
 		expect(row && needsPrimaryOccupant(row)).toBe(false);
 	});
 
@@ -355,7 +361,10 @@ describe('listUnits', () => {
 		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
 
 		const row = page.units.find((unit) => unit.id === unitId);
-		expect(row).toMatchObject({ activeOccupantCount: 1, hasPrimaryOccupant: false });
+		expect(row).toMatchObject({
+			activeOccupantCount: 1,
+			primaryOccupantNeed: { kind: 'missing' }
+		});
 		expect(row && needsPrimaryOccupant(row)).toBe(true);
 	});
 
@@ -372,7 +381,7 @@ describe('listUnits', () => {
 
 		expect(page.units.find((unit) => unit.id === unitId)).toMatchObject({
 			activeOccupantCount: 0,
-			hasPrimaryOccupant: false
+			primaryOccupantNeed: { kind: 'missing' }
 		});
 	});
 
@@ -407,24 +416,116 @@ describe('listUnits', () => {
 		expect(afterTheyLeft.units.find((unit) => unit.id === unitId)?.activeOccupantCount).toBe(0);
 	});
 
-	it('counts a primary occupant with a future end date while reporting the slot as free', async () => {
-		// The two halves answer differently here on purpose, and this is the case that separates
-		// them: the person is still living there, so they are counted; the partial index has already
-		// released the slot, so the unit is flagged as needing a successor while there is time to
-		// name one.
+	it('counts a Penanggung Jawab with a last day written, and flags the unit as leaving, naming them and that day', async () => {
+		// The second "perlu penanggung jawab" state. The person still lives there and still receives
+		// the invoices, so they are counted and they are the Penanggung Jawab; the unit is flagged all
+		// the same, so the flag gets moved to whoever comes next while there is time to do it.
 		const superuserId = await insertSuperuser('Pengurus Dua Jawaban');
 		const block = unique('DUA');
 		const unitId = await insertUnitRow({ block, number: '1' });
-		await insertOccupancy(unitId, await insertResident('Warga Penanggung Jawab Pamit'), {
-			endedOn: FUTURE_END,
-			isPrimaryOccupant: true
-		});
+		const leaving = await insertResident('Warga Penanggung Jawab Pamit');
+		await insertOccupancy(unitId, leaving, { endedOn: FUTURE_END, isPrimaryOccupant: true });
 
 		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
 
 		const row = page.units.find((unit) => unit.id === unitId);
-		expect(row).toMatchObject({ activeOccupantCount: 1, hasPrimaryOccupant: false });
+		expect(row).toMatchObject({
+			activeOccupantCount: 1,
+			activeOccupants: [
+				{ residentId: leaving, name: 'Warga Penanggung Jawab Pamit', isPrimaryOccupant: true }
+			],
+			primaryOccupantNeed: {
+				kind: 'leaving',
+				residentId: leaving,
+				name: 'Warga Penanggung Jawab Pamit',
+				endedOn: FUTURE_END
+			}
+		});
 		expect(row && needsPrimaryOccupant(row)).toBe(true);
+	});
+
+	it('flags a Penanggung Jawab whose last day is today as leaving, with today as that day', async () => {
+		const superuserId = await insertSuperuser('Pengurus Pamit Hari Ini');
+		const block = unique('PAMIT');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		const leaving = await insertResident('Warga Pamit Hari Ini');
+		await insertOccupancy(unitId, leaving, { endedOn: READ_DAY, isPrimaryOccupant: true });
+
+		const detail = await getUnit(testDb.db, superuserId, unitId, READ_CLOCK);
+
+		expect(detail.primaryOccupantNeed).toEqual({
+			kind: 'leaving',
+			residentId: leaving,
+			name: 'Warga Pamit Hari Ini',
+			endedOn: READ_DAY
+		});
+	});
+
+	it('reads the flag on a stay whose last day was yesterday as nobody, and the unit as missing one', async () => {
+		const superuserId = await insertSuperuser('Pengurus Pamit Kemarin');
+		const block = unique('PAMITKMR');
+		const unitId = await insertUnitRow({ block, number: '1' });
+		await insertOccupancy(unitId, await insertResident('Warga Pamit Kemarin'), {
+			endedOn: DAY_BEFORE_READ,
+			isPrimaryOccupant: true
+		});
+		await insertOccupancy(unitId, await insertResident('Warga Masih Tinggal'));
+
+		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
+
+		const row = page.units.find((unit) => unit.id === unitId);
+		expect(row).toMatchObject({
+			activeOccupantCount: 1,
+			activeOccupants: [{ name: 'Warga Masih Tinggal', isPrimaryOccupant: false }],
+			primaryOccupantNeed: { kind: 'missing' }
+		});
+		expect(row && needsPrimaryOccupant(row)).toBe(true);
+	});
+
+	it('takes the newest of two flagged running stays for the Penanggung Jawab, as the invoice email does', async () => {
+		// Rows written under the date-clash model can leave two flagged stays running at once. The
+		// summary picks one the way `notifyInvoiceIssued` picks its recipient — latest start day, then
+		// latest recorded — so the screen and the email name the same person, and only that person
+		// wears the badge. The older one is inserted first, so a query with no order would find it.
+		const superuserId = await insertSuperuser('Pengurus Dua Penanda');
+		const unitId = await insertUnitRow();
+		const older = await insertResident('Anton Penanda Lama');
+		const newer = await insertResident('Budi Penanda Baru');
+		await insertOccupancy(unitId, older, { endedOn: FUTURE_END, isPrimaryOccupant: true });
+		await insertOccupancy(unitId, newer, { startedOn: '2026-02-01', isPrimaryOccupant: true });
+
+		const detail = await getUnit(testDb.db, superuserId, unitId, READ_CLOCK);
+
+		expect(detail.activeOccupants).toEqual([
+			{ residentId: newer, name: 'Budi Penanda Baru', isPrimaryOccupant: true },
+			{ residentId: older, name: 'Anton Penanda Lama', isPrimaryOccupant: false }
+		]);
+		expect(detail.primaryOccupantNeed).toBeNull();
+	});
+
+	it('breaks a tie on the start day by the later recorded of two flagged stays', async () => {
+		const superuserId = await insertSuperuser('Pengurus Seri Tanggal');
+		const unitId = await insertUnitRow();
+		const earlier = await insertResident('Warga Dicatat Duluan');
+		const later = await insertResident('Warga Dicatat Belakangan');
+		await insertOccupancy(unitId, earlier, {
+			isPrimaryOccupant: true,
+			createdAt: '2026-01-01T01:00:00.000Z'
+		});
+		await insertOccupancy(unitId, later, {
+			endedOn: FUTURE_END,
+			isPrimaryOccupant: true,
+			createdAt: '2026-01-01T02:00:00.000Z'
+		});
+
+		const detail = await getUnit(testDb.db, superuserId, unitId, READ_CLOCK);
+
+		expect(detail.primaryOccupantNeed).toEqual({
+			kind: 'leaving',
+			residentId: later,
+			name: 'Warga Dicatat Belakangan',
+			endedOn: FUTURE_END
+		});
 	});
 
 	it('counts one person with two running stays in the same house once', async () => {
@@ -491,10 +592,10 @@ describe('listUnits', () => {
 		});
 	});
 
-	it('still reports the slot as filled by a primary occupant who has not moved in yet', async () => {
-		// The Penanggung Jawab half keeps reading `ended_on is null`, the partial index's own
-		// predicate, until the ticket that lets the flag move between stays changes it. Only the
-		// Penghuni Aktif half moved to the predicate that reads the start date too.
+	it('does not take a flagged stay that has not started for the Penanggung Jawab', async () => {
+		// Under the date-clash model the Penanggung Jawab half read `ended_on is null`, so a stay
+		// flagged ahead of time filled the slot before anyone lived there. ADR 0001 reads the
+		// Penanggung Jawab as the flagged stay running today, so the unit is missing one until then.
 		const superuserId = await insertSuperuser('Pengurus Penanggung Jawab Besok');
 		const block = unique('PJBESOK');
 		const unitId = await insertUnitRow({ block, number: '1' });
@@ -505,11 +606,13 @@ describe('listUnits', () => {
 
 		const page = await listUnits(testDb.db, READ_CLOCK, { actorId: superuserId, search: block });
 
-		expect(page.units.find((unit) => unit.id === unitId)).toMatchObject({
+		const row = page.units.find((unit) => unit.id === unitId);
+		expect(row).toMatchObject({
 			activeOccupantCount: 0,
 			activeOccupants: [],
-			hasPrimaryOccupant: true
+			primaryOccupantNeed: { kind: 'missing' }
 		});
+		expect(row && needsPrimaryOccupant(row)).toBe(true);
 	});
 
 	it('leaves a deactivated unit with no primary occupant unflagged, because it is not in service', async () => {
@@ -524,7 +627,7 @@ describe('listUnits', () => {
 		});
 
 		const row = page.units.find((unit) => unit.id === unitId);
-		expect(row).toMatchObject({ hasPrimaryOccupant: false });
+		expect(row).toMatchObject({ primaryOccupantNeed: { kind: 'missing' } });
 		expect(row && needsPrimaryOccupant(row)).toBe(false);
 	});
 });
@@ -559,7 +662,7 @@ describe('getUnit', () => {
 			id: unitId,
 			activeOccupantCount: 1,
 			activeOccupants: [{ residentId, name: 'Warga Detail', isPrimaryOccupant: true }],
-			hasPrimaryOccupant: true
+			primaryOccupantNeed: null
 		});
 	});
 
@@ -596,7 +699,7 @@ describe('getUnit', () => {
 		expect(await getUnit(testDb.db, superuserId, unitId, READ_CLOCK)).toMatchObject({
 			activeOccupantCount: 0,
 			activeOccupants: [],
-			hasPrimaryOccupant: false
+			primaryOccupantNeed: { kind: 'missing' }
 		});
 	});
 });

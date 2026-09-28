@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, or, type SQL } from 'drizzle-orm';
 import { ACTION, requirePermission, type DatabaseWriter, type Transaction } from '../../authz';
 import { recordAuditEntry } from '../../audit';
 import type { Database } from '../../db';
@@ -8,7 +8,7 @@ import { residents } from '../../db/schema/resident';
 import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
 import { UnitNotFoundError } from '../unit';
-import { currentDay, isStillRunningOn, stillRunningOn, type DateRange } from './visibility';
+import { currentDay, isStillRunningOn, stillRunningOn, type OccupancyDays } from './visibility';
 
 /**
  * Masa Huni: who lives in which house, for which stretch of time, and which one of them the house's
@@ -21,46 +21,77 @@ import { currentDay, isStillRunningOn, stillRunningOn, type DateRange } from './
  * ownership, exactly as `src/lib/server/services/resident/profile.ts` settled: a resident reading
  * their own house is not a right some residents have and others do not.
  *
- * ## The future-dated `ended_on` gap, and how it is closed here
+ * ## The Penanggung Jawab moves
  *
- * `occupancies_primary_occupant_unique` reads "still running" as `ended_on is null`. Writing an end
- * date that has not arrived yet therefore frees the primary-occupant slot early, and the database
- * would accept a second primary occupant for days the first one still covers. The schema records
- * why the exclusion constraint that would close it is refused — it needs `btree_gist`, which is
- * database-wide while the test harness migrates one schema per file in parallel — and says the
- * service layer owns the case. This is that service layer.
+ * `docs/adr/0001-penanggung-jawab-berpindah.md` settles what the `isPrimaryOccupant` flag means: the
+ * Masa Huni the house's invoice emails go to **now**. It is not an attribute of a stay's whole
+ * stretch of days, and nothing here compares two stays' dates to decide who may hold it. Marking a
+ * stay *moves* the flag onto it, effective at once; whoever held it before keeps living in the house
+ * for as long as their own stay runs. Who held it when is the audit log's to answer — every move
+ * writes one `PRIMARY_OCCUPANT_MARKED_ACTION` entry naming the previous holder and the new one — and
+ * a flag left on a stay whose last day has passed is not history: nothing reads it.
  *
- * It is closed with **a row lock, not a read**. Every write that can change who holds the slot takes
- * `select … from units where id = … for update` on the unit first, and only then looks for an
- * overlapping primary occupancy. The lock is what makes the look-then-write safe: two requests
- * arriving together are serialised on the unit row, so the second one reads the first one's
- * committed row instead of the empty result it would have read a moment earlier.
- * `tests/unit/occupancy-service.test.ts` proves exactly that, with a second connection holding an
- * open transaction — a pair of overlapping calls through `Promise.allSettled` would prove nothing,
- * because nothing makes one of them land inside the other's window.
+ * The flag only lands on a stay that is running today, `isStillRunningOn` in `./visibility.ts`. A
+ * stay that has not begun would leave the house with nobody to send its invoices to until that day
+ * came, so it is refused with `PrimaryOccupantNotStartedError`, and a stay that is over with
+ * `PrimaryOccupantAlreadyEndedError`.
  *
- * The database index stays the rule for the ordinary `ended_on is null` case, and nothing here
- * replaces it; this only covers what it cannot see.
+ * ## The invariant, and the lock that keeps it
  *
- * ## Two questions that look like one
+ * **Per unit, at most one flagged row among the Masa Huni whose last day has not passed or has not
+ * been written.** Call that set *S*, for one unit and one day.
  *
- * "Is the primary-occupant slot filled?" and "is this person living here now?" are different
- * questions and take different predicates. The first is `ended_on is null`, because that is what
- * `occupancies_primary_occupant_unique` means; the second is `isStillRunningOn` in `./visibility.ts`,
- * `started_on <= today and (ended_on is null or ended_on >= today)`. Answering the second with the
- * first is what made a resident with a future end date read as having moved out already, and a stay
- * recorded to start next month read as living here already — see
- * `summarizeActiveOccupancies` for the same split on the admin side. Everything in this module that
- * says "now" uses the second one and takes a `Clock` to get the day; `assertPrimarySlotFree` uses
- * neither, because an overlap between two stays is a question about their own days and never about
- * today's.
+ * `occupancies_primary_occupant_unique` does not keep it. That index covers the flagged rows whose
+ * `ended_on` is null, and a flagged row whose last day has been written but has not arrived is
+ * outside it while it is still very much in *S*. The exclusion constraint that would cover every
+ * flagged row is refused by the schema for `btree_gist` reasons, and would state the rule this ADR
+ * rejected besides: "no two flagged stays overlap" is the old date-clash model, not "one flag among
+ * the stays that have not passed". So this module keeps the invariant, and the index stays as the
+ * last line of defence for the one case it can see.
+ *
+ * Every way a row can enter *S* is accounted for:
+ *
+ * 1. **The flag is set.** Only `movePrimaryOccupantMarker` below does that in this module, and it is
+ *    reached from `setPrimaryOccupant` and from `recordOccupancy` asked to mark the new stay. Both
+ *    take the unit's row lock — `select … from units where id = … for update`, in `lockUnit` — before
+ *    they read anything the move depends on. The move then takes the flag off every row of the unit
+ *    in *S* and puts it on the target, in the same transaction. The one other writer of the flag,
+ *    `fixDuplicateOccupancies` in `./duplicate-fix.ts`, locks every unit first, in `id` order.
+ * 2. **A flagged row is inserted.** Nothing does that: `recordOccupancy` inserts unflagged and then
+ *    moves, and every other path that creates a Masa Huni — the resident import, invitations,
+ *    registrations — writes `isPrimaryOccupant: false`.
+ * 3. **A flagged row's last day moves from passed to not passed.** `endOccupancy` can correct the
+ *    last day of a stay that is already over. It takes the stale flag off in the same statement,
+ *    so a correction never brings a row back into *S* with its flag on — see that function.
+ * 4. **The day changes.** Only ever forward, and a later day only takes rows out of *S*.
+ *
+ * **Why the lock makes the move safe.** The lock is held until the transaction ends, so two moves on
+ * one unit never overlap: the second waits in `lockUnit` until the first has committed or rolled
+ * back. PostgreSQL's default isolation, `read committed`, gives every statement a snapshot taken when
+ * that statement starts, and the statement that takes the flag off *S* starts only after the lock was
+ * granted — so its snapshot includes the first move's committed flag, and it takes that off too.
+ * Without the lock the second move's update could start while the first was still open: it would
+ * find the first holder's row, wait for it, re-check it after the commit and skip it, and never see
+ * the row the first move had just flagged, because that row did not match when its snapshot was
+ * taken. Two flags. `tests/unit/occupancy-service.test.ts` holds a second connection's transaction
+ * open across the call and waits until PostgreSQL reports the call blocked on it before committing,
+ * because two calls raced through `Promise.allSettled` would prove nothing: nothing makes one of them
+ * land inside the other's window.
+ *
+ * The same argument covers the index: the move takes the flag off every row whose `ended_on` is null
+ * before it sets one, so it can never trip `occupancies_primary_occupant_unique` itself.
  */
 
 /** The audit log's `action` for a newly recorded occupancy. */
 export const OCCUPANCY_RECORDED_ACTION = 'occupancy_recorded';
 /** The audit log's `action` for an occupancy that was given an end date. */
 export const OCCUPANCY_ENDED_ACTION = 'occupancy_ended';
-/** The audit log's `action` for an occupancy that became the unit's primary occupant. */
+/**
+ * The audit log's `action` for the Penanggung Jawab flag moving onto an occupancy. The name is older
+ * than the move and is kept, because rows carrying it are already stored. `before` names the stay and
+ * resident that held the flag, `{ occupancyId, residentId }`, and is empty when nobody did; `after`
+ * names the new holder and the unit, `{ occupancyId, residentId, unitId }`.
+ */
 export const PRIMARY_OCCUPANT_MARKED_ACTION = 'occupancy_primary_occupant_marked';
 
 /** A calendar day as the schema stores it. Anchored at both ends, so nothing longer can slip past. */
@@ -120,49 +151,41 @@ export class OccupancyDateOrderError extends Error {
 }
 
 /**
- * Thrown when marking a primary occupant would give a unit two of them over days they both cover.
+ * Thrown when the Penanggung Jawab flag is asked to land on a Masa Huni that has not started yet —
+ * marking one with "Jadikan penanggung jawab", or recording one with the box ticked. Both are the same
+ * refusal, because both would leave the house with nobody to send its invoices to until that day
+ * came: ADR 0001 lets the flag land only on a stay that is running.
  *
- * It names who holds the slot today, because that is what the superuser reading the refusal has to
- * act on — `spec-warga-unit-v1.md` asks for "galat bernama yang menyebut siapa penanggung jawab yang
- * sekarang", and an error saying only "already taken" sends them back to the history screen to find
- * out by whom.
+ * It carries the day the stay starts, because that is what the superuser reading the refusal has to
+ * act on: the flag can be moved on that day.
  */
-export class PrimaryOccupantConflictError extends Error {
-	override readonly name = 'PrimaryOccupantConflictError';
+export class PrimaryOccupantNotStartedError extends Error {
+	override readonly name = 'PrimaryOccupantNotStartedError';
 
-	/** The house that already has a primary occupant over these days. */
-	readonly unitId: string;
-	/** The occupancy currently holding the slot. */
-	readonly occupancyId: string;
-	/** The resident holding it. */
-	readonly residentId: string;
-	/** That resident's name, for the message a superuser reads. */
-	readonly residentName: string;
-	/** The day their occupancy started. */
+	/** The first day of the stay, as `YYYY-MM-DD` — later than today. */
 	readonly startedOn: string;
-	/** The last day of it, or `null` while it has no end date. */
-	readonly endedOn: string | null;
 
-	constructor(unitId: string, holder: PrimaryOccupantHolder) {
-		super(
-			`Unit "${unitId}" already has a primary occupant over those days: "${holder.residentName}", from ${holder.startedOn} to ${holder.endedOn ?? 'further notice'}.`
-		);
-		this.unitId = unitId;
-		this.occupancyId = holder.occupancyId;
-		this.residentId = holder.residentId;
-		this.residentName = holder.residentName;
-		this.startedOn = holder.startedOn;
-		this.endedOn = holder.endedOn;
+	constructor(startedOn: string) {
+		super(`An occupancy starting on ${startedOn} cannot be the primary occupant before that day.`);
+		this.startedOn = startedOn;
 	}
 }
 
-/** Whoever currently holds a unit's primary-occupant slot, as the refusal above reports them. */
-export interface PrimaryOccupantHolder {
-	readonly occupancyId: string;
-	readonly residentId: string;
-	readonly residentName: string;
-	readonly startedOn: string;
-	readonly endedOn: string | null;
+/**
+ * Thrown when the Penanggung Jawab flag is asked to land on a Masa Huni whose last day has passed.
+ * The screen never offers it; a request that gets here anyway is refused rather than handing the
+ * house's invoices to someone who no longer lives there.
+ */
+export class PrimaryOccupantAlreadyEndedError extends Error {
+	override readonly name = 'PrimaryOccupantAlreadyEndedError';
+
+	/** The last day of the stay, as `YYYY-MM-DD` — earlier than today. */
+	readonly endedOn: string;
+
+	constructor(endedOn: string) {
+		super(`An occupancy whose last day was ${endedOn} cannot be the primary occupant any more.`);
+		this.endedOn = endedOn;
+	}
 }
 
 /** One line of a unit's occupancy history, with the occupant named rather than only identified. */
@@ -194,20 +217,29 @@ export interface RecordOccupancyRequest {
 	readonly role: OccupancyRole;
 	/** The first day of the stay, as `YYYY-MM-DD`. */
 	readonly startedOn: string;
-	/** `true` also marks this stay as the unit's primary occupant. Defaults to `false`. */
+	/**
+	 * `true` also moves the Penanggung Jawab flag onto this stay, taking it off whoever holds it now.
+	 * Only allowed when `startedOn` is today or earlier. Defaults to `false`.
+	 */
 	readonly isPrimaryOccupant?: boolean;
 }
 
 /**
- * Records a new, still-running occupancy. There is no end date here on purpose: a stay that is over
+ * Records a new occupancy with no end date. There is no end date here on purpose: a stay that is over
  * is recorded and then ended, so that the end always goes through `endOccupancy`'s rules.
+ *
+ * With `isPrimaryOccupant`, this records the stay and then moves the Penanggung Jawab flag onto it,
+ * in the same transaction and under the same unit lock — see this module's doc comment. Whoever held
+ * the flag keeps living in the house. The `OCCUPANCY_RECORDED_ACTION` entry describes the row as it
+ * was inserted, unflagged, and the move writes its own `PRIMARY_OCCUPANT_MARKED_ACTION` entry after
+ * it, so the audit log reads "recorded, then marked", which is what happened.
  *
  * @throws {PermissionDeniedError} when `actorId` does not hold `superuser`.
  * @throws {TypeError} when `startedOn` is not a `YYYY-MM-DD` day.
+ * @throws {PrimaryOccupantNotStartedError} when `isPrimaryOccupant` is asked for and `startedOn` is
+ *   later than today. Nothing is recorded.
  * @throws {UnitNotFoundError} when `unitId` names no unit.
  * @throws {ResidentNotFoundError} when `residentId` names no resident.
- * @throws {PrimaryOccupantConflictError} when `isPrimaryOccupant` is asked for and someone else
- *   already holds the slot over overlapping days.
  */
 export async function recordOccupancy(
 	db: Database,
@@ -219,15 +251,13 @@ export async function recordOccupancy(
 
 	return db.transaction(async (transaction) => {
 		await requirePermission(transaction, request.actorId, ACTION.manageOccupancies);
+		const today = currentDay(clock);
+		if (isPrimaryOccupant) {
+			assertMayHoldPrimaryOccupant({ startedOn: request.startedOn, endedOn: null }, today);
+		}
+
 		await lockUnit(transaction, request.unitId);
 		await assertResidentExists(transaction, request.residentId);
-
-		if (isPrimaryOccupant) {
-			await assertPrimarySlotFree(transaction, request.unitId, {
-				from: request.startedOn,
-				to: null
-			});
-		}
 
 		const [row] = await transaction
 			.insert(occupancies)
@@ -237,7 +267,7 @@ export async function recordOccupancy(
 				role: request.role,
 				startedOn: request.startedOn,
 				endedOn: null,
-				isPrimaryOccupant,
+				isPrimaryOccupant: false,
 				createdAt: clock.now()
 			})
 			.returning();
@@ -255,7 +285,10 @@ export async function recordOccupancy(
 			}
 		});
 
-		return row;
+		if (!isPrimaryOccupant) {
+			return row;
+		}
+		return movePrimaryOccupantMarker(transaction, clock, request.actorId, row, today);
 	});
 }
 
@@ -271,10 +304,19 @@ export interface EndOccupancyRequest {
 /**
  * Ends an occupancy, or corrects the day an already-ended one ended on.
  *
- * Ending the primary occupant's stay deliberately leaves the flag where it is — the schema keeps it
- * as history so that "who was the primary occupant in March" still has an answer — and leaves the
- * unit with no *running* primary occupant, which is what makes it show up on the admin list as
- * something to sort out.
+ * **Ending never moves the Penanggung Jawab flag.** Ending the Penanggung Jawab's stay leaves the
+ * flag on it, and they stay the house's Penanggung Jawab until their last day has passed; the admin
+ * screens warn about exactly that stretch, so that someone moves the flag in time. Nothing here
+ * compares the stay's days with anyone else's: ADR 0001 took the date-clash check out.
+ *
+ * **One correction takes a flag off, and never puts one on.** A flag left on a stay whose last day
+ * has passed is dead — ADR 0001: nothing reads it. Correcting that last day to today or later would
+ * bring the stay back among the ones that have not passed with the old flag still on it, making its
+ * resident the house's invoice recipient again without a move, without the audit entry every move
+ * writes, and possibly beside the Penanggung Jawab the house has now. So that one correction takes
+ * the stale flag off in the same statement, and records it in the audit entry as a change like any
+ * other. It is the third case in this module's list of ways a row could enter the invariant's set.
+ * If that resident is meant to hold the flag again, "Jadikan penanggung jawab" moves it to them.
  *
  * A request that asks for the end date the occupancy already has changes nothing and writes no audit
  * row, the same idiom `deactivateUnit` follows.
@@ -283,8 +325,6 @@ export interface EndOccupancyRequest {
  * @throws {TypeError} when `endedOn` is not a `YYYY-MM-DD` day.
  * @throws {OccupancyNotFoundError} when `occupancyId` names no occupancy.
  * @throws {OccupancyDateOrderError} when `endedOn` is earlier than the day the stay started.
- * @throws {PrimaryOccupantConflictError} when moving a primary occupant's end date later would make
- *   the unit's days overlap another primary occupant's.
  */
 export async function endOccupancy(
 	db: Database,
@@ -303,18 +343,20 @@ export async function endOccupancy(
 		if (existing.endedOn === request.endedOn) {
 			return existing;
 		}
-		if (existing.isPrimaryOccupant) {
-			await assertPrimarySlotFree(
-				transaction,
-				existing.unitId,
-				{ from: existing.startedOn, to: request.endedOn },
-				existing.id
-			);
-		}
+
+		const today = currentDay(clock);
+		const dropsStaleFlag =
+			existing.isPrimaryOccupant &&
+			hasPassedOn(existing.endedOn, today) &&
+			!hasPassedOn(request.endedOn, today);
 
 		const [row] = await transaction
 			.update(occupancies)
-			.set({ endedOn: request.endedOn })
+			.set(
+				dropsStaleFlag
+					? { endedOn: request.endedOn, isPrimaryOccupant: false }
+					: { endedOn: request.endedOn }
+			)
 			.where(eq(occupancies.id, existing.id))
 			.returning();
 
@@ -322,8 +364,12 @@ export async function endOccupancy(
 			actorId: request.actorId,
 			action: OCCUPANCY_ENDED_ACTION,
 			targetId: row.id,
-			before: { endedOn: existing.endedOn },
-			after: { endedOn: row.endedOn }
+			before: dropsStaleFlag
+				? { endedOn: existing.endedOn, isPrimaryOccupant: existing.isPrimaryOccupant }
+				: { endedOn: existing.endedOn },
+			after: dropsStaleFlag
+				? { endedOn: row.endedOn, isPrimaryOccupant: row.isPrimaryOccupant }
+				: { endedOn: row.endedOn }
 		});
 
 		return row;
@@ -338,15 +384,18 @@ export interface SetPrimaryOccupantRequest {
 }
 
 /**
- * Marks an occupancy as the one the house's invoices are addressed to.
+ * Makes an occupancy the house's Penanggung Jawab: moves the flag onto it from whoever holds it,
+ * effective at once. The previous holder keeps living in the house for as long as their own stay
+ * runs — this changes who the invoices go to, never who lives there. A housemate who has lived there
+ * all along can be marked; so can someone who moved in today, on the same day the previous holder's
+ * last day falls.
  *
  * An occupancy that already carries the flag is left alone, with no audit row.
  *
  * @throws {PermissionDeniedError} when `actorId` does not hold `superuser`.
  * @throws {OccupancyNotFoundError} when `occupancyId` names no occupancy.
- * @throws {PrimaryOccupantConflictError} when another occupancy of the same unit already holds the
- *   slot over days this one covers — including one whose end date has been written but has not
- *   arrived yet, which is the case the database index cannot see.
+ * @throws {PrimaryOccupantNotStartedError} when the stay starts after today.
+ * @throws {PrimaryOccupantAlreadyEndedError} when the stay's last day was before today.
  */
 export async function setPrimaryOccupant(
 	db: Database,
@@ -355,34 +404,11 @@ export async function setPrimaryOccupant(
 ): Promise<Occupancy> {
 	return db.transaction(async (transaction) => {
 		await requirePermission(transaction, request.actorId, ACTION.manageOccupancies);
-		const existing = await lockUnitOfOccupancy(transaction, request.occupancyId);
+		const target = await lockUnitOfOccupancy(transaction, request.occupancyId);
 
-		if (existing.isPrimaryOccupant) {
-			return existing;
-		}
-
-		await assertPrimarySlotFree(
-			transaction,
-			existing.unitId,
-			{ from: existing.startedOn, to: existing.endedOn },
-			existing.id
-		);
-
-		const [row] = await transaction
-			.update(occupancies)
-			.set({ isPrimaryOccupant: true })
-			.where(eq(occupancies.id, existing.id))
-			.returning();
-
-		await recordAuditEntry(transaction, clock, {
-			actorId: request.actorId,
-			action: PRIMARY_OCCUPANT_MARKED_ACTION,
-			targetId: row.id,
-			before: { isPrimaryOccupant: existing.isPrimaryOccupant },
-			after: { isPrimaryOccupant: row.isPrimaryOccupant, unitId: row.unitId }
-		});
-
-		return row;
+		const today = currentDay(clock);
+		assertMayHoldPrimaryOccupant(target, today);
+		return movePrimaryOccupantMarker(transaction, clock, request.actorId, target, today);
 	});
 }
 
@@ -568,8 +594,9 @@ const OCCUPANCY_RECORD_COLUMNS = {
 };
 
 /**
- * Takes the unit's row lock, so that every primary-occupant decision about one house happens one at
- * a time. Also proves the unit exists, which is why nothing else looks it up first.
+ * Takes the unit's row lock, held until the transaction ends, so that every Penanggung Jawab
+ * decision about one house happens one at a time — see this module's doc comment for why the
+ * invariant rests on it. Also proves the unit exists, which is why nothing else looks it up first.
  *
  * @throws {UnitNotFoundError} when `unitId` names no unit.
  */
@@ -621,47 +648,117 @@ async function lockUnitOfOccupancy(
 }
 
 /**
- * Throws unless nobody else is the unit's primary occupant over any of `range`'s days.
+ * Throws unless a stay with these days may carry the Penanggung Jawab flag on `today`: it must be
+ * running, `isStillRunningOn` in `./visibility.ts`. Checked on the target as read behind the unit
+ * lock, or on the days of a stay about to be recorded, so that a refusal records nothing.
  *
- * Only correct while the unit's row lock is held — see this module's doc comment. `exceptId` leaves
- * the occupancy being changed out of its own comparison.
- *
- * @throws {PrimaryOccupantConflictError} naming whoever holds the slot.
+ * @throws {PrimaryOccupantNotStartedError} when the stay starts after `today`.
+ * @throws {PrimaryOccupantAlreadyEndedError} when its last day was before `today`.
  */
-async function assertPrimarySlotFree(
+function assertMayHoldPrimaryOccupant(stay: OccupancyDays, today: string): void {
+	if (isStillRunningOn(stay, today)) {
+		return;
+	}
+	if (stay.startedOn > today) {
+		throw new PrimaryOccupantNotStartedError(stay.startedOn);
+	}
+	// Not running and already started: only a last day before today leaves that.
+	throw new PrimaryOccupantAlreadyEndedError(stay.endedOn ?? stay.startedOn);
+}
+
+/**
+ * Moves the Penanggung Jawab flag onto `target`: takes it off every row of the unit whose last day
+ * has not passed on `today` or has not been written, puts it on `target`, and writes one
+ * `PRIMARY_OCCUPANT_MARKED_ACTION` entry naming the previous holder and the new one. A `target` that
+ * already carries the flag is returned as it is, with no write and no audit entry.
+ *
+ * Only correct while the unit's row lock is held and `target` was read behind it — this module's doc
+ * comment is the argument. The caller has already checked that `target` is running on `today`.
+ *
+ * Rows whose last day has passed keep whatever flag they carry: nothing reads it, and
+ * `docs/spec-penghuni-v1.md` leaves those flags stored rather than migrating them away.
+ */
+async function movePrimaryOccupantMarker(
 	transaction: Transaction,
-	unitId: string,
-	range: DateRange,
-	exceptId?: string
-): Promise<void> {
-	const [holder] = await transaction
-		.select({
-			occupancyId: occupancies.id,
-			residentId: residents.id,
-			residentName: user.name,
-			startedOn: occupancies.startedOn,
-			endedOn: occupancies.endedOn
-		})
-		.from(occupancies)
-		.innerJoin(residents, eq(residents.id, occupancies.residentId))
-		.innerJoin(user, eq(user.id, residents.userId))
+	clock: Clock,
+	actorId: string,
+	target: Occupancy,
+	today: string
+): Promise<Occupancy> {
+	if (target.isPrimaryOccupant) {
+		return target;
+	}
+
+	const cleared = await transaction
+		.update(occupancies)
+		.set({ isPrimaryOccupant: false })
 		.where(
 			and(
-				eq(occupancies.unitId, unitId),
+				eq(occupancies.unitId, target.unitId),
 				eq(occupancies.isPrimaryOccupant, true),
-				exceptId ? ne(occupancies.id, exceptId) : undefined,
-				// The existing stay has not ended before this range starts …
-				or(isNull(occupancies.endedOn), gte(occupancies.endedOn, range.from)),
-				// … and it started before this range ends. An open-ended range has no such bound.
-				range.to === null ? undefined : lte(occupancies.startedOn, range.to)
+				notPassedOn(today)
 			)
 		)
-		.orderBy(asc(occupancies.startedOn))
-		.limit(1);
+		.returning();
 
-	if (holder) {
-		throw new PrimaryOccupantConflictError(unitId, holder);
+	const [row] = await transaction
+		.update(occupancies)
+		.set({ isPrimaryOccupant: true })
+		.where(eq(occupancies.id, target.id))
+		.returning();
+
+	const previous = previousHolder(cleared, today);
+	await recordAuditEntry(transaction, clock, {
+		actorId,
+		action: PRIMARY_OCCUPANT_MARKED_ACTION,
+		targetId: row.id,
+		before: previous ? { occupancyId: previous.id, residentId: previous.residentId } : undefined,
+		after: { occupancyId: row.id, residentId: row.residentId, unitId: row.unitId }
+	});
+
+	return row;
+}
+
+/**
+ * Which of the rows a move took the flag off is the holder its audit entry names.
+ *
+ * While the invariant holds there is at most one. Rows written under the date-clash model can leave
+ * two in one unit — a holder whose last day has been written and, after it, a stay flagged ahead of
+ * time — and every one of them loses the flag; the entry then names the one the invoices were going
+ * to, picked the way `notifyInvoiceIssued` picks its recipient: running today, then the latest start
+ * day, then the latest recorded.
+ */
+function previousHolder(cleared: readonly Occupancy[], today: string): Occupancy | undefined {
+	return [...cleared].sort(
+		(left, right) =>
+			Number(isStillRunningOn(right, today)) - Number(isStillRunningOn(left, today)) ||
+			compareDescending(left.startedOn, right.startedOn) ||
+			right.createdAt.getTime() - left.createdAt.getTime() ||
+			compareDescending(left.id, right.id)
+	)[0];
+}
+
+/** `1`, `0` or `-1`, so that sorting by it puts the larger of two strings first. */
+function compareDescending(left: string, right: string): number {
+	if (left === right) {
+		return 0;
 	}
+	return left < right ? 1 : -1;
+}
+
+/**
+ * The rows whose last day has not passed on `today`, or has not been written: the set ADR 0001's
+ * invariant counts flags in. It reads the last day alone on purpose — a stay that has not begun is
+ * in the set — so it is not `stillRunningOn`, and must not become it.
+ */
+function notPassedOn(today: string): SQL {
+	// `or()` only widens to `undefined` when every argument is, and neither of these is.
+	return or(isNull(occupancies.endedOn), gte(occupancies.endedOn, today)) as SQL;
+}
+
+/** Whether a stay with this last day is over on `today`. A stay with no last day never is. */
+function hasPassedOn(endedOn: string | null, today: string): boolean {
+	return endedOn !== null && endedOn < today;
 }
 
 /**
