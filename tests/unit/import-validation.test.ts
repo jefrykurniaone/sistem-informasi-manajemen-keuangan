@@ -171,6 +171,27 @@ describe('validateImportRows, the reasons a row is refused', () => {
 		expect(codesAt(rows, 3)).toContain(IMPORT_PROBLEM.duplicateEmailInFile);
 	});
 
+	it('reports the same person recorded twice for the same unit as a row error', () => {
+		// Decision 6 of docs/spec-penghuni-v1.md: the only way an import file could create a duplicate
+		// Masa Huni is the same person named twice for the same unit, and that is already refused by
+		// the two checks above — the same address twice, and the same unit twice — landing on both rows
+		// at once. This locks that in rather than adding a new check.
+		const rows = [GOOD_ROW, row('A', '1', 'Budi', 'budi@komplek.id', 'penyewa')];
+
+		expect(codesAt(rows, 2)).toEqual(
+			expect.arrayContaining([
+				IMPORT_PROBLEM.duplicateUnitInFile,
+				IMPORT_PROBLEM.duplicateEmailInFile
+			])
+		);
+		expect(codesAt(rows, 3)).toEqual(
+			expect.arrayContaining([
+				IMPORT_PROBLEM.duplicateUnitInFile,
+				IMPORT_PROBLEM.duplicateEmailInFile
+			])
+		);
+	});
+
 	it('records every reason one row breaks, not only the first', () => {
 		expect(codesAt([row('', '', 'Budi', 'bukan-email', 'juragan')], 2)).toEqual([
 			IMPORT_PROBLEM.missingBlock,

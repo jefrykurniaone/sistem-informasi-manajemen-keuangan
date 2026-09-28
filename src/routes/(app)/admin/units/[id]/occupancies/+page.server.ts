@@ -12,6 +12,7 @@ import {
 	listUnitOccupanciesGrouped,
 	OccupancyDateOrderError,
 	OccupancyNotFoundError,
+	OccupancyOverlapError,
 	PrimaryOccupantAlreadyEndedError,
 	PrimaryOccupantNotStartedError,
 	recordOccupancy,
@@ -31,8 +32,9 @@ import type { Actions, PageServerLoad } from './$types';
  * for a unit or an occupancy that does not exist gets a 404, because both ids come straight from the
  * URL or from a hidden field this screen rendered; and a rule the complex refuses — a Penanggung
  * Jawab on a stay that has not started or is already over, an end date before the start date, a
- * resident who has since been removed — is `fail(400, …)`, because the superuser did nothing outside
- * their rights and only this particular change is refused.
+ * resident who has since been removed, or a second Masa Huni that would overlap one the resident
+ * already has in this unit — is `fail(400, …)`, because the superuser did nothing outside their rights
+ * and only this particular change is refused.
  *
  * The load hands the screen the unit's `primaryOccupantNeed` as the Unit service decided it, so the
  * red and yellow warnings are never a date comparison made in the template. `occupancies` is likewise
@@ -153,7 +155,9 @@ function isOccupancyRole(value: string): value is OccupancyRole {
  * them from a permission refusal — see `src/lib/errors.ts` on `LastSuperuserError` for the same
  * distinction drawn the first time. `PrimaryOccupantNotStartedError` answers both "Jadikan
  * penanggung jawab" on a stay that starts later and "Catat masa huni" with the box ticked for a start
- * day after today, and its message names that start day.
+ * day after today, and its message names that start day. `OccupancyOverlapError` carries one of two
+ * things — `mustEndFirst` picks which message names it — never both: the earliest day a new stay may
+ * start, or nothing at all when the conflicting stay has no last day yet to count from.
  */
 function refusalOrThrow(caught: unknown) {
 	if (caught instanceof PrimaryOccupantNotStartedError) {
@@ -176,6 +180,13 @@ function refusalOrThrow(caught: unknown) {
 	}
 	if (caught instanceof ResidentNotFoundError) {
 		return fail(400, { message: m.adminOccupancies_residentNotFound() });
+	}
+	if (caught instanceof OccupancyOverlapError) {
+		return fail(400, {
+			message: caught.mustEndFirst
+				? m.adminOccupancies_overlapMustEnd()
+				: m.adminOccupancies_overlap({ earliestStartedOn: caught.earliestStartedOn ?? '' })
+		});
 	}
 	throwAsRouteError(caught);
 }

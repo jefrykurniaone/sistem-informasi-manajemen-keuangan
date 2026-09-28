@@ -80,6 +80,29 @@ import { currentDay, isStillRunningOn, stillRunningOn, type OccupancyDays } from
  *
  * The same argument covers the index: the move takes the flag off every row whose `ended_on` is null
  * before it sets one, so it can never trip `occupancies_primary_occupant_unique` itself.
+ *
+ * ## No two overlapping stays for one resident and unit
+ *
+ * `docs/spec-penghuni-v1.md` decision 6: the same resident cannot hold two Masa Huni in the same unit
+ * whose days intersect, both ends inclusive — starting exactly on a conflicting stay's last day counts
+ * as intersecting too. `recordOccupancy` always inserts a stay with no end date (see its own doc
+ * comment), so a new stay's range is always `[startedOn, ∞)`, and asking whether an existing stay
+ * intersects that reduces to asking whether it has already ended before `startedOn` — `notPassedOn`,
+ * the same predicate the invariant above uses, asked here of one resident's rows in one unit instead of
+ * one unit's flagged rows. `findOverlappingOccupancy` below is that question.
+ *
+ * `recordOccupancy`, and `ensureOccupancy` in `../invitation` and `../registration`, are the three
+ * places that can insert a Masa Huni row outside the one-off data-fix script. Each takes `lockUnit`
+ * before calling `findOverlappingOccupancy`, for the reason the flag's move takes it: two concurrent
+ * insertions for the same resident and unit must not both read "no conflict" before either has
+ * inserted. The two service functions ask it from today rather than from a caller-chosen start date,
+ * because they have none — they silently skip instead of refusing, the idempotent behaviour
+ * `docs/spec-penghuni-v1.md` decision 6 keeps from before this rule existed.
+ *
+ * The fourth path, the resident import, never asks this question at all: the same person appearing
+ * twice for the same unit in one file is one request, not two racing ones, and is already refused by
+ * `duplicateUnitInFile`/`duplicateEmailInFile` in `src/lib/server/services/import/validation.ts` before
+ * any Masa Huni is written — locked by `tests/unit/import-validation.test.ts` rather than checked here.
  */
 
 /** The audit log's `action` for a newly recorded occupancy. */
@@ -188,6 +211,36 @@ export class PrimaryOccupantAlreadyEndedError extends Error {
 	}
 }
 
+/**
+ * Thrown when a new Masa Huni for a resident would overlap one they already have in the same unit —
+ * decision 6 of `docs/spec-penghuni-v1.md`, this module's doc comment has the invariant and the lock
+ * that keeps it. Both ends of a stay are inclusive, so starting exactly on the conflicting stay's last
+ * day is refused too, not only starting inside it.
+ *
+ * Carries `earliestStartedOn`, one day after the conflicting stay's last day, when it has one — that is
+ * the day the superuser reading the refusal can retry on. The conflicting stay may have no last day
+ * written yet, in which case there is no earliest day to name until it gets one: `mustEndFirst` is
+ * `true` and `earliestStartedOn` is `undefined`, and the caller has to end that stay first.
+ */
+export class OccupancyOverlapError extends Error {
+	override readonly name = 'OccupancyOverlapError';
+
+	/** One day after the conflicting stay's last day, or `undefined` when it has none yet. */
+	readonly earliestStartedOn?: string;
+	/** `true` when the conflicting stay has no last day yet and must be ended before this can retry. */
+	readonly mustEndFirst: boolean;
+
+	constructor(earliestStartedOn?: string) {
+		super(
+			earliestStartedOn === undefined
+				? 'This resident already has an occupancy in this unit with no last day yet; it must be ended first.'
+				: `This resident already has an occupancy in this unit that overlaps; the earliest this one may start is ${earliestStartedOn}.`
+		);
+		this.earliestStartedOn = earliestStartedOn;
+		this.mustEndFirst = earliestStartedOn === undefined;
+	}
+}
+
 /** One line of a unit's occupancy history, with the occupant named rather than only identified. */
 export interface OccupancyRecord {
 	readonly occupancyId: string;
@@ -240,6 +293,8 @@ export interface RecordOccupancyRequest {
  *   later than today. Nothing is recorded.
  * @throws {UnitNotFoundError} when `unitId` names no unit.
  * @throws {ResidentNotFoundError} when `residentId` names no resident.
+ * @throws {OccupancyOverlapError} when `residentId` already has a Masa Huni in `unitId` whose days
+ *   intersect `startedOn` onwards — this module's doc comment has the rule. Nothing is recorded.
  */
 export async function recordOccupancy(
 	db: Database,
@@ -258,6 +313,18 @@ export async function recordOccupancy(
 
 		await lockUnit(transaction, request.unitId);
 		await assertResidentExists(transaction, request.residentId);
+
+		const conflict = await findOverlappingOccupancy(
+			transaction,
+			request.residentId,
+			request.unitId,
+			request.startedOn
+		);
+		if (conflict) {
+			throw new OccupancyOverlapError(
+				conflict.endedOn === null ? undefined : nextDay(conflict.endedOn)
+			);
+		}
 
 		const [row] = await transaction
 			.insert(occupancies)
@@ -703,13 +770,17 @@ const OCCUPANCY_RECORD_COLUMNS = {
 };
 
 /**
- * Takes the unit's row lock, held until the transaction ends, so that every Penanggung Jawab
- * decision about one house happens one at a time — see this module's doc comment for why the
- * invariant rests on it. Also proves the unit exists, which is why nothing else looks it up first.
+ * Takes the unit's row lock, held until the transaction ends, so that every Penanggung Jawab decision
+ * about one house, and every check for an overlapping Masa Huni, happens one at a time — see this
+ * module's doc comment for why both invariants rest on it. Also proves the unit exists, which is why
+ * nothing else looks it up first.
+ *
+ * Exported so that `../invitation` and `../registration` can take the same lock before asking
+ * `findOverlappingOccupancy` the same question `recordOccupancy` asks under it.
  *
  * @throws {UnitNotFoundError} when `unitId` names no unit.
  */
-async function lockUnit(transaction: Transaction, unitId: string): Promise<void> {
+export async function lockUnit(transaction: Transaction, unitId: string): Promise<void> {
 	const [row] = await transaction
 		.select({ id: units.id })
 		.from(units)
@@ -856,18 +927,74 @@ function compareDescending(left: string, right: string): number {
 }
 
 /**
- * The rows whose last day has not passed on `today`, or has not been written: the set ADR 0001's
- * invariant counts flags in. It reads the last day alone on purpose — a stay that has not begun is
- * in the set — so it is not `stillRunningOn`, and must not become it.
+ * The rows whose last day has not passed on `day`, or has not been written. Under `day = today` this
+ * is the set ADR 0001's Penanggung Jawab invariant counts flags in; under `day` = a stay's own start
+ * date, `findOverlappingOccupancy` below reuses it to ask the overlap question instead. It reads the
+ * last day alone on purpose — a stay that has not begun is in the set — so it is not `stillRunningOn`,
+ * and must not become it.
  */
-function notPassedOn(today: string): SQL {
+function notPassedOn(day: string): SQL {
 	// `or()` only widens to `undefined` when every argument is, and neither of these is.
-	return or(isNull(occupancies.endedOn), gte(occupancies.endedOn, today)) as SQL;
+	return or(isNull(occupancies.endedOn), gte(occupancies.endedOn, day)) as SQL;
 }
 
 /** Whether a stay with this last day is over on `today`. A stay with no last day never is. */
 function hasPassedOn(endedOn: string | null, today: string): boolean {
 	return endedOn !== null && endedOn < today;
+}
+
+/**
+ * The Masa Huni among `residentId`'s stays in `unitId` whose range intersects `[fromDay, ∞)`, or
+ * `undefined` when none does — decision 6 of `docs/spec-penghuni-v1.md`, this module's doc comment has
+ * the rule and the lock that keeps it. A newly recorded stay is always open-ended, so its range is
+ * exactly `[fromDay, ∞)`, and intersecting it is `notPassedOn(fromDay)`: has not already ended before
+ * `fromDay`.
+ *
+ * More than one row could match on data written before this rule existed. When that happens the
+ * open-ended one, if there is one, is returned — nothing can ever start after a stay that never ends —
+ * otherwise the row with the latest last day, so the caller reports the latest day it would have to
+ * wait past.
+ *
+ * Only correct while `unitId`'s row lock is held — the same argument as `movePrimaryOccupantMarker`,
+ * in this module's doc comment. Exported so that `../invitation` and `../registration` can ask the
+ * same question after taking `lockUnit` themselves.
+ */
+export async function findOverlappingOccupancy(
+	transaction: Transaction,
+	residentId: string,
+	unitId: string,
+	fromDay: string
+): Promise<Occupancy | undefined> {
+	const rows = await transaction
+		.select()
+		.from(occupancies)
+		.where(
+			and(
+				eq(occupancies.residentId, residentId),
+				eq(occupancies.unitId, unitId),
+				notPassedOn(fromDay)
+			)
+		);
+	if (rows.length === 0) {
+		return undefined;
+	}
+	const open = rows.find((row) => row.endedOn === null);
+	if (open) {
+		return open;
+	}
+	return [...rows].sort((left, right) =>
+		compareDescending(left.endedOn as string, right.endedOn as string)
+	)[0];
+}
+
+/** `day` plus one calendar day, both as `YYYY-MM-DD`. A calendar day has no time-zone component, so
+ * doing the arithmetic in UTC cannot shift it — unlike `civilDayOf` in `$lib/time`, which reads an
+ * instant, this reads and returns a day and never touches `Clock`.
+ */
+function nextDay(day: string): string {
+	const next = new Date(`${day}T00:00:00Z`);
+	next.setUTCDate(next.getUTCDate() + 1);
+	return next.toISOString().slice(0, 10);
 }
 
 /**

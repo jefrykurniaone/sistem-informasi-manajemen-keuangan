@@ -395,11 +395,12 @@ describe('approveRegistration', () => {
 		expect(stays[0].unitId).toBe(chosen.unitId);
 	});
 
-	it('does not treat a stay on that unit that starts tomorrow as running', async () => {
-		// `stillRunningOn` reads the start date too, so a Masa Huni recorded to begin tomorrow is not
-		// one the registrant already has running, and approval records the stay it promises. Which
-		// existing stays should make approval skip that write is the overlap rule's question, and the
-		// ticket that brings that rule in is the one that changes this answer.
+	it('does not add a second stay when the registrant already has one starting tomorrow', async () => {
+		// Decision 6 of docs/spec-penghuni-v1.md: a stay that has not started yet also makes approval
+		// skip, because it will overlap [today, open) as soon as it starts. Before this ticket the
+		// check was `stillRunningOn`, which reads the start date too and let this stay through as "not
+		// running yet" — approval inserted a second row. The overlap rule replaces that check with one
+		// that reads the last day alone, so an upcoming stay blocks a new one exactly like a current one.
 		const actorId = await insertSuperuser();
 		const clock = new FakeClock(START);
 		const unit = await insertUnitRow();
@@ -425,6 +426,72 @@ describe('approveRegistration', () => {
 			origin: TEST_ORIGIN
 		});
 
+		expect(approved).toMatchObject({ residentId: residentRow.id, createdOccupancy: false });
+		expect(
+			await testDb.db.select().from(occupancies).where(eq(occupancies.residentId, residentRow.id))
+		).toHaveLength(1);
+	});
+
+	it('does not add a second stay when the registrant’s previous one in that unit ends today', async () => {
+		// The inclusive boundary of decision 6's overlap rule: a stay whose last day is today has not
+		// passed yet, so it still blocks a new one, the same as one with no last day at all.
+		const actorId = await insertSuperuser();
+		const clock = new FakeClock(START);
+		const unit = await insertUnitRow();
+		const registrant = await register('leaving-today', unit, clock);
+		const [residentRow] = await testDb.db
+			.insert(residents)
+			.values({ userId: registrant.userId, createdAt: new Date(START) })
+			.returning();
+		await testDb.db.insert(occupancies).values({
+			unitId: unit.unitId,
+			residentId: residentRow.id,
+			role: OCCUPANCY_ROLE.tenant,
+			startedOn: '2025-06-01',
+			endedOn: '2026-01-01',
+			isPrimaryOccupant: false,
+			createdAt: new Date(START)
+		});
+
+		const approved = await approveRegistration(testDb.db, clock, {
+			actorId,
+			registrationId: registrant.registrationId,
+			unitId: unit.unitId,
+			origin: TEST_ORIGIN
+		});
+
+		expect(approved).toMatchObject({ residentId: residentRow.id, createdOccupancy: false });
+		expect(
+			await testDb.db.select().from(occupancies).where(eq(occupancies.residentId, residentRow.id))
+		).toHaveLength(1);
+	});
+
+	it('still records the stay when the registrant’s previous one in that unit ended yesterday', async () => {
+		const actorId = await insertSuperuser();
+		const clock = new FakeClock(START);
+		const unit = await insertUnitRow();
+		const registrant = await register('returning', unit, clock);
+		const [residentRow] = await testDb.db
+			.insert(residents)
+			.values({ userId: registrant.userId, createdAt: new Date(START) })
+			.returning();
+		await testDb.db.insert(occupancies).values({
+			unitId: unit.unitId,
+			residentId: residentRow.id,
+			role: OCCUPANCY_ROLE.tenant,
+			startedOn: '2025-06-01',
+			endedOn: '2025-12-31',
+			isPrimaryOccupant: false,
+			createdAt: new Date(START)
+		});
+
+		const approved = await approveRegistration(testDb.db, clock, {
+			actorId,
+			registrationId: registrant.registrationId,
+			unitId: unit.unitId,
+			origin: TEST_ORIGIN
+		});
+
 		expect(approved).toMatchObject({ residentId: residentRow.id, createdOccupancy: true });
 		expect(
 			await testDb.db
@@ -432,7 +499,7 @@ describe('approveRegistration', () => {
 				.from(occupancies)
 				.where(eq(occupancies.residentId, residentRow.id))
 				.orderBy(occupancies.startedOn)
-		).toEqual([{ startedOn: '2026-01-01' }, { startedOn: '2026-01-02' }]);
+		).toEqual([{ startedOn: '2025-06-01' }, { startedOn: '2026-01-01' }]);
 	});
 
 	it('queues the approval email naming the approved house and the sign-in page', async () => {

@@ -19,7 +19,8 @@ import {
 	registrationApprovedPayload
 } from '../../email/templates/registration-approved';
 import type { Clock } from '../../ports/clock';
-import { currentDay, stillRunningOn } from '../occupancy/visibility';
+import { findOverlappingOccupancy, lockUnit } from '../occupancy';
+import { currentDay } from '../occupancy/visibility';
 import { ensureDefaultSubscriptions } from '../subscription';
 import { UnitNotFoundError } from '../unit';
 
@@ -578,8 +579,15 @@ interface OccupancyToEnsure {
 }
 
 /**
- * The Masa Huni the approval promises, unless one is already running: role `owner` (see the module
- * doc comment), starting on the approval day, never the Penanggung Jawab.
+ * The Masa Huni the approval promises, unless one that would overlap it already exists: role `owner`
+ * (see the module doc comment), starting on the approval day, never the Penanggung Jawab.
+ *
+ * "Already exists" is decision 6 of `docs/spec-penghuni-v1.md`'s overlap rule, asked from today rather
+ * than a chosen start date since approval always starts today: any stay for this resident and unit
+ * whose last day has not passed today or has not been written, including one that has not started yet.
+ * Skipping silently rather than refusing is the idempotent behaviour this function had before that
+ * rule existed, kept as-is — only the question changed, from `stillRunningOn` to the overlap check
+ * `findOverlappingOccupancy` in `../occupancy` asks under the same unit lock that service takes.
  */
 async function ensureOccupancy(
 	transaction: Transaction,
@@ -587,18 +595,9 @@ async function ensureOccupancy(
 	stay: OccupancyToEnsure
 ): Promise<boolean> {
 	const today = currentDay(clock);
-	const [running] = await transaction
-		.select({ id: occupancies.id })
-		.from(occupancies)
-		.where(
-			and(
-				eq(occupancies.unitId, stay.unitId),
-				eq(occupancies.residentId, stay.residentId),
-				stillRunningOn(occupancies, today)
-			)
-		)
-		.limit(1);
-	if (running) {
+	await lockUnit(transaction, stay.unitId);
+	const conflict = await findOverlappingOccupancy(transaction, stay.residentId, stay.unitId, today);
+	if (conflict) {
 		return false;
 	}
 
