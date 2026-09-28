@@ -11,13 +11,15 @@
 		tenant: m.myUnit_roleTenant
 	};
 
-	/** The stay's stretch of days, read as one line. */
-	function period(startedOn: string, endedOn: string | null): string {
-		if (endedOn === null) {
-			return m.myUnit_periodRunning({ startedOn });
-		}
-		return m.myUnit_periodEnded({ startedOn, endedOn });
-	}
+	/**
+	 * `occupiedUnitsForUserGrouped` already splits these houses into the three groups
+	 * `docs/spec-penghuni-v1.md` decision 3 defines. This page only renders them; it makes no date
+	 * comparison and no `endedOn === null` check of its own.
+	 */
+	const groups = $derived(data.occupancies);
+	const hasAnyHouse = $derived(
+		groups.current.length > 0 || groups.upcoming.length > 0 || groups.history.length > 0
+	);
 </script>
 
 <svelte:head>
@@ -35,50 +37,111 @@
 			<h2 class="font-medium">{m.myUnit_noRecordTitle()}</h2>
 			<p class="text-sm text-muted-foreground">{m.myUnit_noRecordBody()}</p>
 		</section>
-	{:else if data.occupancies.length === 0}
+	{:else if !hasAnyHouse}
 		<section class="flex flex-col gap-2 rounded-lg border border-border p-4">
 			<h2 class="font-medium">{m.myUnit_emptyTitle()}</h2>
 			<p class="text-sm text-muted-foreground">{m.myUnit_emptyBody()}</p>
 		</section>
 	{:else}
-		{#each data.occupancies as occupancy (occupancy.occupancyId)}
-			<section class="flex flex-col gap-3 rounded-lg border border-border p-4">
-				<div class="flex flex-wrap items-center justify-between gap-2">
-					<h2 class="font-medium">
-						{m.myUnit_unitHeading({ block: occupancy.block, number: occupancy.number })}
-					</h2>
-					<span class="text-sm text-muted-foreground">
-						{ROLE_LABEL[occupancy.role]?.() ?? occupancy.role}
-					</span>
-				</div>
+		{#if groups.current.length > 0}
+			<section class="flex flex-col gap-3">
+				<h2 class="text-lg font-semibold">{m.myUnit_currentHeading()}</h2>
 
-				<p class="text-sm text-muted-foreground">
-					{period(occupancy.startedOn, occupancy.endedOn)}
-				</p>
+				{#each groups.current as occupancy (occupancy.occupancyId)}
+					<section class="flex flex-col gap-3 rounded-lg border border-border p-4">
+						<div class="flex flex-wrap items-center justify-between gap-2">
+							<h3 class="font-medium">
+								{m.myUnit_unitHeading({ block: occupancy.block, number: occupancy.number })}
+							</h3>
+							<span class="text-sm text-muted-foreground">
+								{ROLE_LABEL[occupancy.role]?.() ?? occupancy.role}
+							</span>
+						</div>
 
-				{#if occupancy.isPrimaryOccupant}
-					<p class="text-sm font-medium">{m.myUnit_primaryBadge()}</p>
-				{/if}
+						<p class="text-sm text-muted-foreground">
+							{#if occupancy.endedOn}
+								{m.myUnit_currentSinceWithEnd({
+									startedOn: occupancy.startedOn,
+									endedOn: occupancy.endedOn
+								})}
+							{:else}
+								{m.myUnit_currentSince({ startedOn: occupancy.startedOn })}
+							{/if}
+						</p>
 
-				{#if occupancy.isRunning}
-					<h3 class="text-sm font-medium">{m.myUnit_occupantsHeading()}</h3>
-					<ul class="flex flex-col gap-2">
-						{#each occupancy.occupants as occupant (occupant.residentId)}
-							<li class="flex flex-wrap items-center justify-between gap-2 text-sm">
-								<span>{occupant.name}</span>
-								<span class="text-muted-foreground">
-									{ROLE_LABEL[occupant.role]?.() ?? occupant.role}
-									{#if occupant.isPrimaryOccupant}
-										· {m.myUnit_occupantPrimaryBadge()}
-									{/if}
-								</span>
-							</li>
-						{/each}
-					</ul>
-				{:else}
-					<p class="text-sm text-muted-foreground">{m.myUnit_endedNote()}</p>
-				{/if}
+						{#if occupancy.isPrimaryOccupant}
+							<p class="text-sm font-medium">{m.myUnit_primaryBadge()}</p>
+						{/if}
+
+						<h4 class="text-sm font-medium">{m.myUnit_occupantsHeading()}</h4>
+						<ul class="flex flex-col gap-2">
+							{#each occupancy.occupants as occupant (occupant.residentId)}
+								<li class="flex flex-wrap items-center justify-between gap-2 text-sm">
+									<span>{occupant.name}</span>
+									<span class="text-muted-foreground">
+										{ROLE_LABEL[occupant.role]?.() ?? occupant.role}
+										{#if occupant.isPrimaryOccupant}
+											· {m.myUnit_occupantPrimaryBadge()}
+										{/if}
+									</span>
+								</li>
+							{/each}
+						</ul>
+					</section>
+				{/each}
 			</section>
-		{/each}
+		{/if}
+
+		{#if groups.upcoming.length > 0}
+			<section class="flex flex-col gap-3">
+				<h2 class="text-lg font-semibold">{m.myUnit_upcomingHeading()}</h2>
+
+				{#each groups.upcoming as occupancy (occupancy.occupancyId)}
+					<section class="flex flex-col gap-2 rounded-lg border border-border p-4">
+						<div class="flex flex-wrap items-center justify-between gap-2">
+							<h3 class="font-medium">
+								{m.myUnit_unitHeading({ block: occupancy.block, number: occupancy.number })}
+							</h3>
+							<span class="text-sm text-muted-foreground">
+								{ROLE_LABEL[occupancy.role]?.() ?? occupancy.role}
+							</span>
+						</div>
+
+						<p class="text-sm text-muted-foreground">
+							{m.myUnit_upcomingStarts({ startedOn: occupancy.startedOn })}
+						</p>
+					</section>
+				{/each}
+			</section>
+		{/if}
+
+		{#if groups.history.length > 0}
+			<details class="rounded-lg border border-border">
+				<summary class="cursor-pointer px-4 py-3 text-lg font-semibold select-none">
+					{m.myUnit_historySummary({ count: groups.history.length })}
+				</summary>
+				<div class="flex flex-col gap-3 border-t border-border p-4">
+					{#each groups.history as occupancy (occupancy.occupancyId)}
+						<section class="flex flex-col gap-2 rounded-lg border border-border p-4">
+							<div class="flex flex-wrap items-center justify-between gap-2">
+								<h3 class="font-medium">
+									{m.myUnit_unitHeading({ block: occupancy.block, number: occupancy.number })}
+								</h3>
+								<span class="text-sm text-muted-foreground">
+									{ROLE_LABEL[occupancy.role]?.() ?? occupancy.role}
+								</span>
+							</div>
+
+							<p class="text-sm text-muted-foreground">
+								{m.myUnit_periodEnded({
+									startedOn: occupancy.startedOn,
+									endedOn: occupancy.endedOn
+								})}
+							</p>
+						</section>
+					{/each}
+				</div>
+			</details>
+		{/if}
 	{/if}
 </main>

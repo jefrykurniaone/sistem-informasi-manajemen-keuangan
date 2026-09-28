@@ -9,7 +9,7 @@ import { systemClock } from '$lib/server/ports/clock';
 import {
 	endOccupancy,
 	listAssignableResidents,
-	listUnitOccupancies,
+	listUnitOccupanciesGrouped,
 	OccupancyDateOrderError,
 	OccupancyNotFoundError,
 	PrimaryOccupantAlreadyEndedError,
@@ -35,7 +35,10 @@ import type { Actions, PageServerLoad } from './$types';
  * their rights and only this particular change is refused.
  *
  * The load hands the screen the unit's `primaryOccupantNeed` as the Unit service decided it, so the
- * red and yellow warnings are never a date comparison made in the template.
+ * red and yellow warnings are never a date comparison made in the template. `occupancies` is likewise
+ * handed over already split into `current`, `upcoming` and `history` by `listUnitOccupanciesGrouped` —
+ * `docs/spec-penghuni-v1.md` decision 3 — so the page renders those three groups rather than
+ * classifying Masa Huni by date itself.
  */
 
 /** A calendar day as an `<input type="date">` posts it. */
@@ -52,7 +55,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	try {
 		const [unit, occupancies, residents] = await Promise.all([
 			getUnit(db, locals.user.id, params.id, systemClock),
-			listUnitOccupancies(db, systemClock, locals.user.id, params.id),
+			listUnitOccupanciesGrouped(db, systemClock, locals.user.id, params.id),
 			listAssignableResidents(db, locals.user.id)
 		]);
 		return { unit, occupancies, residents, roles: OCCUPANCY_ROLES };

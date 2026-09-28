@@ -413,7 +413,77 @@ export async function setPrimaryOccupant(
 }
 
 /**
- * Every occupancy of one unit, newest stay first — the history the admin screen shows.
+ * The three groups `docs/spec-penghuni-v1.md` decision 3 splits a Masa Huni list into, so that the
+ * unit's own history screen and "Rumah saya" both render what the service already classified rather
+ * than each reimplementing the split from `startedOn`/`endedOn` on its own — which is how the label
+ * bug the spec describes came about in the first place.
+ *
+ * `history`'s `endedOn` is narrowed to `string`: a row only lands there once `groupByPeriod` has
+ * already shown its last day is not null (see that function's doc comment), so nothing that reads
+ * `history` needs an `endedOn === null` check of its own.
+ */
+export interface OccupancyGroups<T extends OccupancyDays> {
+	/** Sedang menghuni hari ini. Penanggung Jawab first, then by start date. */
+	readonly current: readonly T[];
+	/** Start date after today, by start date. */
+	readonly upcoming: readonly T[];
+	/** Last day before today, most recent last day first. */
+	readonly history: readonly (T & { readonly endedOn: string })[];
+}
+
+/**
+ * Splits any list of Masa Huni-shaped rows into `current`, `upcoming` and `history` —
+ * `docs/spec-penghuni-v1.md` decision 3. Shared by `listUnitOccupanciesGrouped` and
+ * `occupiedUnitsForUserGrouped` so the two screens can never disagree about where one stay belongs.
+ *
+ * A row is `current` when `isRunning` is `true` — the same `isStillRunningOn` every other reader of
+ * this module goes through. Otherwise it is `upcoming` when its start date is still ahead of `today`,
+ * or else `history`: not running and not upcoming only happens when the stay has started and its
+ * last day is before `today`, so `endedOn` is never null there.
+ */
+function groupByPeriod<
+	T extends OccupancyDays & { readonly isRunning: boolean; readonly isPrimaryOccupant: boolean }
+>(rows: readonly T[], today: string): OccupancyGroups<T> {
+	const current: T[] = [];
+	const upcoming: T[] = [];
+	const history: (T & { endedOn: string })[] = [];
+
+	for (const row of rows) {
+		if (row.isRunning) {
+			current.push(row);
+		} else if (row.startedOn > today) {
+			upcoming.push(row);
+		} else {
+			history.push(row as T & { endedOn: string });
+		}
+	}
+
+	current.sort(
+		(left, right) =>
+			Number(right.isPrimaryOccupant) - Number(left.isPrimaryOccupant) ||
+			compareAscending(left.startedOn, right.startedOn)
+	);
+	upcoming.sort((left, right) => compareAscending(left.startedOn, right.startedOn));
+	history.sort((left, right) => compareDescending(left.endedOn, right.endedOn));
+
+	return { current, upcoming, history };
+}
+
+/** `-1`, `0` or `1`, so that sorting by it puts the smaller of two strings first. */
+function compareAscending(left: string, right: string): number {
+	if (left === right) {
+		return 0;
+	}
+	return left < right ? -1 : 1;
+}
+
+/**
+ * Every occupancy of one unit, newest stay first.
+ *
+ * **Kept as a flat list on purpose.** `scripts/seed-dev.ts` reads this shape to find the first
+ * Warga recorded in a house and does not care about `current`/`upcoming`/`history`. The "Penghuni"
+ * screen wants that split, so it reads `listUnitOccupanciesGrouped` below instead of reclassifying
+ * this list itself.
  *
  * @throws {PermissionDeniedError} when `actorId` does not hold `superuser`.
  */
@@ -435,6 +505,23 @@ export async function listUnitOccupancies(
 		.orderBy(desc(occupancies.startedOn), desc(occupancies.createdAt));
 
 	return rows.map((row) => ({ ...row, isRunning: isStillRunningOn(row, today) }));
+}
+
+/**
+ * `listUnitOccupancies`, split into `current`, `upcoming` and `history` —
+ * `docs/spec-penghuni-v1.md` decision 3, the "Penghuni" screen's whole load. Nothing here decides how
+ * each group is rendered; that is left to the page.
+ *
+ * @throws {PermissionDeniedError} when `actorId` does not hold `superuser`.
+ */
+export async function listUnitOccupanciesGrouped(
+	db: DatabaseWriter,
+	clock: Clock,
+	actorId: string,
+	unitId: string
+): Promise<OccupancyGroups<OccupancyRecord>> {
+	const rows = await listUnitOccupancies(db, clock, actorId, unitId);
+	return groupByPeriod(rows, currentDay(clock));
 }
 
 /** One person who can be attached to a house, for the picker on the admin form. */
@@ -497,13 +584,17 @@ export interface OwnOccupancy {
 }
 
 /**
- * Every house `userId` is recorded as living, or having lived, in — the `/my-unit` screen's whole
- * load.
+ * Every house `userId` is recorded as living, or having lived, in, newest stay first.
  *
  * Guarded by row ownership rather than by a `PERMISSIONS` action, the pattern
  * `src/lib/server/services/resident/profile.ts` settled: the caller's own account is the only key
  * this function takes, so there is no id a caller could swap for someone else's. An account with no
  * `residents` row gets an empty list — an expected state until #20 and #21 land, not an error.
+ *
+ * **Kept as a flat list on purpose.** `src/lib/server/services/dues/payment.ts` and
+ * `src/routes/(app)/payments/+page.server.ts` both read this shape to match a payment to a resident's
+ * house, and neither cares about `current`/`upcoming`/`history`. "Rumah saya" wants that split, so it
+ * reads `occupiedUnitsForUserGrouped` below instead of reclassifying this list itself.
  */
 export async function occupiedUnitsForUser(
 	db: DatabaseWriter,
@@ -543,6 +634,24 @@ export async function occupiedUnitsForUser(
 			occupants: isRunning ? (occupantsByUnit.get(stay.unitId) ?? []) : []
 		};
 	});
+}
+
+/** `occupiedUnitsForUser`, split into the same three groups a unit's own history is. */
+export type OwnOccupancyGroups = OccupancyGroups<OwnOccupancy>;
+
+/**
+ * `occupiedUnitsForUser`, split into `current`, `upcoming` and `history` —
+ * `docs/spec-penghuni-v1.md` decision 3's "Rumah saya" half. The occupant list on a house in
+ * `upcoming` or `history` is already empty (`occupiedUnitsForUser` only fills it in for a running
+ * stay), so grouping needs nothing more to keep that half of the decision too.
+ */
+export async function occupiedUnitsForUserGrouped(
+	db: DatabaseWriter,
+	clock: Clock,
+	userId: string
+): Promise<OwnOccupancyGroups> {
+	const stays = await occupiedUnitsForUser(db, clock, userId);
+	return groupByPeriod(stays, currentDay(clock));
 }
 
 /** Everyone living in each unit in `unitIds` on `today`, in one query. */
