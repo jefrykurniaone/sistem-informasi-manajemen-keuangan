@@ -12,6 +12,13 @@
 #   patch avoids it. It does not reach this app: the app serves through a node:http server and
 #   sends no request through a node:http client. Recheck that before the next bump.
 FROM oven/bun:1.4.2-alpine AS base
+# The tag is frozen on one Alpine build and is not republished, so without this step a fix to an OS
+# package from the same Alpine branch never reaches the image, however often it is rebuilt (#281).
+# The step is in `base` so that deps, dev, build and production all inherit it. The consequence is
+# deliberate: two builds on different days can carry different OS patches inside the same Alpine
+# 3.22, while the Bun version still comes from the tag. The `image-scan` job in
+# .github/workflows/security.yml is what checks the result.
+RUN apk upgrade --no-cache
 WORKDIR /app
 
 # Dependencies are installed in their own layer so that a source change does not reinstall them.
