@@ -1,0 +1,39 @@
+name: Security
+
+# A workflow of its own, not a job in ci.yml: an advisory published in the middle of a run must not
+# fail the quality gate of a pull request that never touched a dependency. There is no `schedule`
+# on purpose, so a new advisory on a transitive package shows only on the next pull request or push
+# to `main`.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Every dependency, not only `--prod`: SvelteKit, Svelte and Vite are devDependencies that
+      # end up in the build. The ignore list, with a reason for every entry, lives in
+      # `scripts/audit.ts`.
+      - name: audit
+        run: bun run audit

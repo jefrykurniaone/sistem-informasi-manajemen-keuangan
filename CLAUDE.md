@@ -62,6 +62,8 @@ checked in a running browser.
   `DATABASE_URL`. One test run per database at a time; a lone `ETIMEDOUT` from
   `ensureDatabaseExists` gets one retry.
 - CI has no `.env`: a variable a test reads also goes into `.github/workflows/ci.yml`.
+- `bun run audit` is run by the Security workflow in CI and is not part of the gate: an advisory
+  published in the middle of a run must not fail a wave of unrelated tickets.
 - A rule such as "the last X cannot be removed" holds only with `.for('update')` on every row it
   depends on, at every writer. Prove it with a second connection holding the lock (a hand-written
   lock test takes `for no key update`); `Promise.allSettled` never reproduces the race.

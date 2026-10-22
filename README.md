@@ -174,6 +174,37 @@ End-to-end tests run separately with `bun run test:e2e` and are **not** part of 
 gate: it builds the application, starts `vite preview`, and runs Playwright. `bun run format`
 tidies files with Prettier.
 
+## Security checks
+
+`bun run audit` runs `bun audit` over every dependency, not only the production ones (`--prod`):
+SvelteKit, Svelte and Vite sit in `devDependencies` but are bundled into the build. The threshold
+is `low`, so any advisory not on the ignore list fails the check. The command is **not** part of the
+four-command gate above, because an advisory published in the middle of a run must not fail
+unrelated work. GitHub Actions runs it through its own workflow, `.github/workflows/security.yml`
+(job `audit`), on every pull request, on every push to `main` and on demand.
+
+**The ignore list** is data in `scripts/audit.ts`, one entry per advisory, keyed by its GHSA id (a
+CVE id does not match the registry data `bun audit` reads). Every entry must state:
+
+- the GHSA id;
+- the package and version, and the parent that brings it in;
+- why the advisory does not apply to this repository;
+- the condition that removes the entry.
+
+To add an entry, prove the advisory is not reachable here and fill in all four. To remove one,
+delete it once its condition holds, then run `bun run audit` and confirm it still exits 0.
+
+**Settings on GitHub, on since 2026-10-23:**
+
+- Dependabot alerts, for direct dependencies only: the dependency graph does not read `bun.lock`.
+- Secret scanning, with push protection.
+- CodeQL, default setup.
+
+Dependabot security updates are off, because they do not support Bun.
+
+**What this cannot see.** There is no schedule, so a new advisory on a transitive package shows
+only when a pull request or a push to `main` runs the workflow.
+
 ## Conventions
 
 The decisions below were set by the scaffolding ticket and are followed by all later work.
