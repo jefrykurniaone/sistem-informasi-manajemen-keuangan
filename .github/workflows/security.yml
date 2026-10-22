@@ -37,3 +37,63 @@ jobs:
       # `scripts/audit.ts`.
       - name: audit
         run: bun run audit
+
+  # The OS packages of the image that runs in production, the Alpine layer under oven/bun. Language
+  # packages are left to the `audit` job above: scanning node_modules here as well would report
+  # again the advisories that `scripts/audit.ts` ignores on purpose, without their reasons.
+  image-scan:
+    name: image-scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # The same target and build arg as a production build. The image stays in the runner's
+      # Docker daemon and is never pushed.
+      - name: Build production image
+        run: >-
+          docker build --progress plain --target production
+          --build-arg PUBLIC_COMPLEX_NAME=Komplek --tag komplek:image-scan .
+
+      # The release archive, checked against a hash held in this file, rather than
+      # aquasecurity/trivy-action. That action reaches the binary through setup-trivy, whose
+      # install script checks it only against the checksums file of the release it downloads from,
+      # and which restores a cached binary with no check at all. Here a changed archive fails the
+      # step. The archive goes to RUNNER_TEMP, outside the build context.
+      #
+      # Why 0.76.1: the only binary release that CVE-2026-33634 (GHSA-69fq-xp46-6x23) made
+      # malicious is v0.69.4, and every Trivy advisory published since is fixed from 0.72.0 on.
+      # The release is immutable, so its assets cannot be replaced after publication. Bumping is
+      # described in README.md, "Security checks".
+      - name: Install Trivy
+        env:
+          VERSION: 0.76.1
+          ARCHIVE_SHA256: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+        run: |
+          archive="trivy_${VERSION}_Linux-64bit.tar.gz"
+          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${VERSION}/${archive}"
+          echo "${ARCHIVE_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+          mkdir "$RUNNER_TEMP/trivy"
+          tar --extract --gzip --file "$RUNNER_TEMP/$archive" --directory "$RUNNER_TEMP/trivy" trivy
+          echo "$RUNNER_TEMP/trivy" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/trivy/trivy" --version
+
+      # Both scans read the local image only (`--image-src docker`), so a registry image with the
+      # same name can never stand in for it, and look for vulnerabilities only: Trivy's default
+      # secret scanner would walk node_modules, which is not what this job is for. The
+      # vulnerability database is downloaded fresh by this step on every run and not cached, so a
+      # run never scans against an old database restored from a cache entry.
+      - name: report (all severities, does not block)
+        run: >-
+          trivy image --image-src docker --scanners vuln --pkg-types os --disable-telemetry
+          --format table --exit-code 0 komplek:image-scan
+
+      # Blocks only on what can be acted on: a HIGH or CRITICAL finding with a fixed version in
+      # Alpine, which a rebuild or a base-image bump removes. An unfixed CVE would hold every pull
+      # request hostage to an upstream that has not shipped a fix, so it stays in the report above.
+      - name: gate (fixable HIGH and CRITICAL)
+        run: >-
+          trivy image --image-src docker --scanners vuln --pkg-types os --disable-telemetry
+          --skip-db-update --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
+          komplek:image-scan
