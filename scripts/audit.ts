@@ -73,6 +73,12 @@ const args = [
 	...IGNORED_ADVISORIES.map((advisory) => `--ignore=${advisory.id}`)
 ];
 
+// `bun audit` only reports a count of ignored advisories, so the log would not say which ones. These
+// lines make a reader of the CI log see exactly what was ignored.
+for (const advisory of IGNORED_ADVISORIES) {
+	console.log(`audit: ignoring ${advisory.id} (${advisory.package}, via ${advisory.parent})`);
+}
+
 // `process.execPath` is the Bun that runs this script, so the audit uses the same version.
 const result = spawnSync(process.execPath, args, { stdio: 'inherit' });
 
