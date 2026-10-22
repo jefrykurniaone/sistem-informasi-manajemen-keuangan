@@ -77,6 +77,6 @@
 		"exceljs": "^4.4.0",
 		"nodemailer": "^10.0.10",
 		"pg": "8.23.0",
-		"sanitize-html": "2.18.0"
+		"sanitize-html": "2.18.1"
 	}
 }
