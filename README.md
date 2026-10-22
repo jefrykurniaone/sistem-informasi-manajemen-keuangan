@@ -200,8 +200,9 @@ Alpine layer under `oven/bun`). JavaScript packages are left out because `bun ru
 covers them: scanning them here would report again the advisories the ignore list sets aside, without
 their reasons. The job prints a report of every severity, which never blocks, then fails only on a
 HIGH or CRITICAL finding that already has a fixed version (`--ignore-unfixed`): that is a finding a
-rebuild or a base-image bump removes, while an unfixed one would block every pull request until an
-upstream ships a fix. To run it locally, use Trivy 0.76.1, the version the job pins, inside WSL
+rebuild removes, because the `base` stage runs `apk upgrade`; a base-image bump is needed only when
+the Alpine branch under the pinned tag no longer receives the fix. An unfixed finding would block
+every pull request until an upstream ships a fix. To run it locally, use Trivy 0.76.1, the version the job pins, inside WSL
 where Docker runs, from the repository root:
 
 ```sh
