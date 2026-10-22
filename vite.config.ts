@@ -78,7 +78,18 @@ export default defineConfig(({ mode }) => {
 			// container that has just started that can pass the 10 second default. See
 			// src/lib/server/db/test-helpers.ts.
 			hookTimeout: 60_000,
-			testTimeout: 20_000
+			testTimeout: 20_000,
+			// Off unless `--coverage` is passed, which only CI does: its `coverage/lcov.info` is what
+			// SonarQube Cloud reads. Instrumentation covers `src/lib/**/*.ts`, where the services and
+			// helpers the unit tests exercise live; routes and Svelte components produce no coverage
+			// data at all. `sonar.coverage.exclusions` in sonar-project.properties lists everything
+			// outside this scope, so change the two together. See docs/sonarcloud-analysis.md.
+			coverage: {
+				provider: 'v8',
+				reporter: ['text-summary', 'lcov'],
+				include: ['src/lib/**/*.ts'],
+				exclude: ['src/lib/paraglide/**']
+			}
 		}
 	};
 });

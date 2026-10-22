@@ -15,6 +15,9 @@ data that stays outside this repository.
   install, worktree stacks, PowerShell traps. Read it before starting a database, a dev server, an
   e2e run or a worktree.
 - `docs/deploy.md` — the production runbook.
+- `docs/sonarcloud-analysis.md` — SonarQube Cloud, the CI static-analysis gate. Read it when the
+  `sonar` job fails, or before changing `sonar-project.properties` or `test.coverage` in
+  `vite.config.ts`: the two move together.
 - `docs/spec-*.md` are point-in-time copies; the GitHub issue is the source of truth.
 - `src/lib/money.ts` and `src/lib/time.ts` open with the decisions every money or date change
   follows.
