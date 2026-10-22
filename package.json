@@ -11,6 +11,7 @@
 		"paraglide:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide --strategy cookie --strategy baseLocale --emit-ts-declarations",
 		"check": "bun run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "bun run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"audit": "bun scripts/audit.ts",
 		"lint": "bun run paraglide:compile && prettier --check . && eslint .",
 		"format": "prettier --write .",
 		"test": "bun run paraglide:compile && vitest run",
