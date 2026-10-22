@@ -45,9 +45,9 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
 
@@ -84,3 +84,14 @@ jobs:
 
       - name: build
         run: bun run build
+
+# Proof for the pinned SHAs above, fetched 2026-10-23. Both tags are lightweight, so
+# `object.type` is `commit` and the ref SHA already is the commit SHA: no `git/tags/<sha>` step.
+# Each is the newest release in its major (checkout v5, setup-bun v2); no major bump here.
+#
+#   gh api repos/actions/checkout/git/ref/tags/v5.1.0
+#     object: { "sha": "fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", "type": "commit" }
+#   gh api repos/oven-sh/setup-bun/git/ref/tags/v2.2.0
+#     object: { "sha": "0c5077e51419868618aeaa5fe8019c62421857d6", "type": "commit" }
+#
+# Refresh: Dependabot (`.github/dependabot.yml`) opens one grouped PR per month.
