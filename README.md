@@ -174,6 +174,64 @@ End-to-end tests run separately with `bun run test:e2e` and are **not** part of 
 gate: it builds the application, starts `vite preview`, and runs Playwright. `bun run format`
 tidies files with Prettier.
 
+## Security checks
+
+`bun run audit` runs `bun audit` over every dependency, not only the production ones (`--prod`):
+SvelteKit, Svelte and Vite sit in `devDependencies` but are bundled into the build. The threshold
+is `low`, so any advisory not on the ignore list fails the check. The command is **not** part of the
+four-command gate above, because an advisory published in the middle of a run must not fail
+unrelated work. GitHub Actions runs it through its own workflow, `.github/workflows/security.yml`
+(job `audit`), on every pull request, on every push to `main` and on demand.
+
+**The ignore list** is data in `scripts/audit.ts`, one entry per advisory, keyed by its GHSA id (a
+CVE id does not match the registry data `bun audit` reads). Every entry must state:
+
+- the GHSA id;
+- the package and version, and the parent that brings it in;
+- why the advisory does not apply to this repository;
+- the condition that removes the entry.
+
+To add an entry, prove the advisory is not reachable here and fill in all four. To remove one,
+delete it once its condition holds, then run `bun run audit` and confirm it still exits 0.
+
+**The image scan.** The same workflow has a second job, `image-scan`, which builds the `production`
+target of `Dockerfile` and scans it with Trivy for vulnerabilities in **OS packages only** (the
+Alpine layer under `oven/bun`). JavaScript packages are left out because `bun run audit` already
+covers them: scanning them here would report again the advisories the ignore list sets aside, without
+their reasons. The job prints a report of every severity, which never blocks, then fails only on a
+HIGH or CRITICAL finding that already has a fixed version (`--ignore-unfixed`): that is a finding a
+rebuild removes, because the `base` stage runs `apk upgrade`; a base-image bump is needed only when
+the Alpine branch under the pinned tag no longer receives the fix. An unfixed finding would block
+every pull request until an upstream ships a fix. To run it locally, use Trivy 0.76.1, the version the job pins, inside WSL
+where Docker runs, from the repository root:
+
+```sh
+docker build --target production --build-arg PUBLIC_COMPLEX_NAME=Komplek --tag komplek:image-scan .
+trivy image --image-src docker --scanners vuln --pkg-types os --exit-code 0 komplek:image-scan
+trivy image --image-src docker --scanners vuln --pkg-types os --severity HIGH,CRITICAL \
+  --ignore-unfixed --exit-code 1 komplek:image-scan
+```
+
+Install that Trivy from the `trivy_0.76.1_Linux-64bit.tar.gz` release archive and check it against
+the `ARCHIVE_SHA256` in the workflow, the same way the job's `Install Trivy` step does. The version
+and its hash are bumped together in that step's `env` in `.github/workflows/security.yml`, and only
+to a release whose `immutable` flag is true (`gh api repos/aquasecurity/trivy/releases/tags/v<x>`).
+Take the hash from the release's `trivy_<x>_checksums.txt` and confirm it matches the archive's
+`digest` in that same response. Trivy is deliberately not installed through `aquasecurity/trivy-action`: the reason is
+in the comment above that step.
+
+**Settings on GitHub, on since 2026-10-23:**
+
+- Dependabot alerts, for direct dependencies only: the dependency graph does not read `bun.lock`.
+- Secret scanning, with push protection.
+- CodeQL, default setup.
+
+Dependabot security updates are off, because they do not support Bun.
+
+**What this cannot see.** There is no schedule, so a new advisory on a transitive package, or a new
+CVE in an Alpine package of the image, shows only when a pull request or a push to `main` runs the
+workflow.
+
 ## Conventions
 
 The decisions below were set by the scaffolding ticket and are followed by all later work.

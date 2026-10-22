@@ -11,6 +11,7 @@
 		"paraglide:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide --strategy cookie --strategy baseLocale --emit-ts-declarations",
 		"check": "bun run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "bun run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"audit": "bun scripts/audit.ts",
 		"lint": "bun run paraglide:compile && prettier --check . && eslint .",
 		"format": "prettier --write .",
 		"test": "bun run paraglide:compile && vitest run",
@@ -57,7 +58,15 @@
 		"typescript": "^6.0.3",
 		"typescript-eslint": "^8.60.1",
 		"vite": "^8.0.16",
-		"vitest": "^4.1.8"
+		"vitest": "^4.1.12"
+	},
+	"overrides": {
+		"@sveltejs/kit": {
+			"cookie": "^0.7.0"
+		},
+		"exceljs": {
+			"uuid": "^11.1.1"
+		}
 	},
 	"dependencies": {
 		"@sinclair/typebox": "^0.34.15",
@@ -69,6 +78,6 @@
 		"exceljs": "^4.4.0",
 		"nodemailer": "^10.0.10",
 		"pg": "8.23.0",
-		"sanitize-html": "2.17.7"
+		"sanitize-html": "2.18.1"
 	}
 }

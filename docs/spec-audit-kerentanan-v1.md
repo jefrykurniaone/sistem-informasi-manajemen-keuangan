@@ -5,13 +5,26 @@
 | Item spesifikasi | [#273](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/273) |
 | Run | `aman-v1` |
 | Peta eksekusi | [#278](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/278) |
-| Tiket | #274, #275, #276, #277 |
-| Branch integrasi | `chore/audit-kerentanan` (draft PR ke `main` sejak Gelombang 1) |
+| Tiket | #274, #275, #276, #277, #281 (ditambahkan sebagai Gelombang 4) |
+| Branch integrasi | `chore/audit-kerentanan` (PR [#280](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/pull/280) ke `main`) |
 | Disalin pada | 2026-10-23, dari `main` di `9f84469` |
+| Lintasan penutup | 2026-10-23, sesudah Gelombang 4 (`8c5fe6c`) |
 
 Ini salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa
 adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang. Item di
 tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
+
+Lintasan penutup menambahkan penanda *Sesudah run* di bawah garis pada setiap klaim yang dibalik atau
+diubah bentuknya oleh tiket run ini. Tidak ada teks yang dihapus. Klaim yang ditandai:
+
+- jumlah advisory `bun audit`, CI yang tidak memeriksa kerentanan, dan action yang dirujuk dengan tag di *Problem statement* (#274, #275, #276, #277);
+- versi `sanitize-html` di keputusan 1: 2.18.1, bukan 2.18.0 (#274);
+- `lockfileVersion` dan bentuk override di keputusan 2 (#274);
+- bentuk daftar ignore di keputusan 4: data, bukan komentar, dan dicetak ke log (#276);
+- jalur pemasangan Trivy di keputusan 6, dan temuan pertama `image-scan` yang melahirkan #281 (#277, #281);
+- jalur gagal `image-scan` dan akun walk di *Testing decisions*;
+- isi `/reports` pada walk di *Success criteria*;
+- nama check persis untuk branch protection di *Further notes*.
 
 ---
 
@@ -29,15 +42,29 @@ menolak kerentanan baru. Per 2026-10-23, pada `main` di `9f84469`:
   test (vite, esbuild, source-map-js, postcss-selector-parser, @vitest/mocker). Atau paketnya ada di
   runtime, tetapi jalur kode yang rentan tidak dipanggil aplikasi (`cookie` di SvelteKit, `uuid` di
   exceljs).
+
+  > *Sesudah run (2026-10-23):* sejak #274, `bun audit` tanpa flag melaporkan tepat dua advisory,
+  > GHSA-67mh-4wv8-2f99 dan GHSA-rj75-hqrm-r3gf, dan keduanya ada di daftar ignore beralasan
+  > `scripts/audit.ts` (#276). `bun run audit` keluar dengan 0.
+
 - **CI tidak memeriksa kerentanan sama sekali.** Workflow "Quality gate" hanya menjalankan `check`,
   `lint`, `test` dan `build`. Ke-23 advisory di atas masuk tanpa terlihat, dan advisory berikutnya
   akan masuk dengan cara yang sama.
+
+  > *Sesudah run (2026-10-23):* workflow Security (`.github/workflows/security.yml`) menjalankan job
+  > `audit` (#276) dan `image-scan` (#277) di setiap pull request, push ke `main` dan
+  > `workflow_dispatch`.
+
 - **Pengaturan keamanan GitHub repo public ini mati semua**, dan branch `main` tidak diproteksi.
   Pengaturan yang mati adalah Dependabot alerts, secret scanning, push protection dan CodeQL.
 - **Action di workflow dirujuk dengan tag** (`actions/checkout@v5`, `oven-sh/setup-bun@v2`). Tag
   bisa dipindahkan ke kode lain oleh pemiliknya, atau oleh penyerang yang membobol akun pemiliknya.
   Contohnya `aquasecurity/trivy-action` pada 19 Maret 2026: 76 dari 77 tag versinya dipindah ke
   malware pencuri secret CI (CVE-2026-33634).
+
+  > *Sesudah run (2026-10-23):* setiap action di setiap workflow dirujuk dengan SHA commit 40
+  > karakter dan komentar versi: `actions/checkout@fbc6f399… # v5.1.0` dan
+  > `oven-sh/setup-bun@0c5077e5… # v2.2.0` (#275, dipakai ulang #276 dan #277).
 
 ## Solution
 
@@ -104,6 +131,11 @@ Dependabot alerts, secret scanning, push protection dan CodeQL default setup.
    - Tidak ada kenaikan major.
    - *Why:* dengan dua langkah ini, 19 dari 23 advisory tertutup tanpa melewati range yang dideklarasikan.
 
+   > *Sesudah run (2026-10-23):* `sanitize-html` di-pin exact **2.18.1**, bukan 2.18.0. Versi 2.18.0
+   > sendiri kena GHSA-c9rx-x947-fp3h (moderate, rentang `>=2.18.0 <2.18.1`), yang terbit 2026-10-21,
+   > sesudah dry-run spec ini. Executor #274 berhenti dan melapor; badan tiket dikoreksi ke 2.18.1.
+   > Tes sanitasi Post tidak berubah hasilnya.
+
 2. **Empat advisory yang diblok range induknya.** Aturannya: `overrides` untuk paket yang sampai ke
    runtime, dan ignore beralasan untuk tooling yang versinya berisiko dipaksa. Preseden repo lain
    pemilik lebih memilih `overrides` daripada menerima advisory.
@@ -127,6 +159,12 @@ Dependabot alerts, secret scanning, push protection dan CodeQL default setup.
      sebagai `lockfileVersion` 3 (per 2026-10-23 masih 1), yang tidak bisa dibaca Bun versi lama. Mesin
      lokal memakai 1.4.0, sedangkan CI dan Dockerfile memakai 1.4.2.
 
+   > *Sesudah run (2026-10-23):* `bun.lock` kini `lockfileVersion` 3, dan kedua override memakai
+   > bentuk objek npm: `"@sveltejs/kit": { "cookie": "^0.7.0" }` dan `"exceljs": { "uuid": "^11.1.1" }`.
+   > Terukur dengan `bun why`: SvelteKit mendapat `cookie` 0.7.2 dan elysia tetap 1.1.1; exceljs
+   > mendapat `uuid` 11.1.1 dan `@inlang/sdk` tetap 14.0.2. Bun 1.4.2 di CI membaca lockfile itu
+   > dengan `--frozen-lockfile` (#274).
+
 3. **Ambang dan cakupan audit.**
    - Ambangnya `low`: setiap advisory yang tidak ada di daftar ignore menggagalkan pemeriksaan.
    - Semua dependency diaudit, bukan `--prod` atau `--omit=dev`.
@@ -143,6 +181,11 @@ Dependabot alerts, secret scanning, push protection dan CodeQL default setup.
    - *Why:* menurut dokumentasi Bun 1.4.2, opsi `bun audit` hanya bisa lewat CLI; `bunfig.toml` tidak
      punya konfigurasi audit. `package.json` tidak bisa memuat komentar, sehingga alasan di README akan
      basi terpisah dari daftar ID. Skrip memberi satu sumber untuk lokal dan CI.
+
+   > *Sesudah run (2026-10-23):* alasan dan syarat cabut ditulis sebagai data, bukan komentar: setiap
+   > entri `IGNORED_ADVISORIES` memuat `id`, `package`, `parent`, `reason` dan `removeWhen`. Skrip
+   > mencetak setiap entri yang di-ignore ke log sebelum menjalankan `bun audit`, karena `bun audit`
+   > sendiri hanya menyebut jumlahnya (#276).
 
 5. **Workflow keamanan terpisah dari Quality gate.**
    - Pemicunya `pull_request`, push ke `main` dan `workflow_dispatch`. Tanpa jadwal, sesuai keputusan
@@ -161,6 +204,18 @@ Dependabot alerts, secret scanning, push protection dan CodeQL default setup.
    - *Why:* paket JS sudah dipegang audit. Kalau Trivy ikut memindai `node_modules`, advisory yang
      sengaja di-ignore muncul lagi dan butuh daftar ignore kedua. Base image Alpine juga hampir selalu
      membawa CVE low atau medium yang belum punya perbaikan.
+
+   > *Sesudah run (2026-10-23):* `trivy-action` tidak dipakai. Di dalamnya, `setup-trivy` v0.2.6
+   > memasang binary lewat `contrib/install.sh`, yang hanya memeriksa checksum dari rilis yang sama,
+   > dan memulihkan binary dari cache tanpa pemeriksaan, jadi rantainya tidak bisa dikunci dari repo
+   > ini. Job `image-scan` mengunduh arsip rilis Trivy 0.76.1 (rilis immutable, di luar rentang
+   > CVE-2026-33634 yang hanya mengenai binary 0.69.4) dan memeriksanya dengan SHA-256 yang ditulis di
+   > workflow. DB kerentanan diunduh setiap run dan tidak di-cache (#277).
+   >
+   > Run pertama `image-scan` menemukan CVE-2026-14456 (HIGH, sudah ada perbaikan) di `libssl3` dan
+   > `libcrypto3` 3.5.7-r0 base image `oven/bun:1.4.2-alpine`, yang tagnya membeku pada Alpine 3.22.5.
+   > Atas keputusan pemilik, #281 ditambahkan sebagai Gelombang 4: stage `base` Dockerfile menjalankan
+   > `apk upgrade --no-cache`, dan Bun tetap 1.4.2.
 
 7. **Pin SHA.**
    - Setiap action di setiap workflow dirujuk dengan SHA commit 40 karakter dan komentar versi.
@@ -203,6 +258,10 @@ halaman. Tes yang baik tidak menguji isi file konfigurasi. Seam yang disepakati 
 | S3: run GitHub Actions di PR integrasi: Quality gate dengan pin SHA, job `audit` dan `image-scan` | Wiring, SHA yang tidak valid, docker build di CI, konfigurasi Trivy | Jalur gagal `image-scan` (tidak diprovokasi). Log-nya cukup menunjukkan paket OS Alpine benar-benar dipindai. |
 | S4: walk Playwright MCP pada build produksi | Login (override `cookie`), halaman dengan data `load` (devalue), Post berformat (sanitize-html), console tanpa error | Selain smoke test |
 
+> *Sesudah run (2026-10-23):* jalur gagal `image-scan` ternyata terprovokasi oleh temuan sungguhan
+> pada run pertamanya (CVE-2026-14456, lihat keputusan 6), dan menjadi hijau setelah #281. Walk S4
+> membuka `/admin/units` sebagai superuser, karena `manageUnits` hanya untuk superuser.
+
 Tidak ada file tes unit baru. Skrip audit hanyalah pembungkus tipis, dan buktinya S1.
 
 ## Success criteria
@@ -217,6 +276,11 @@ Tidak ada file tes unit baru. Skrip audit hanyalah pembungkus tipis, dan buktiny
 - Dependabot version updates untuk `github-actions` terkonfigurasi bulanan dalam satu grup.
 - Walk orchestrator: admin bisa login, beranda dan laporan terbuka, dan Post berformat tampil dengan
   formatnya utuh. Console tidak mencatat error.
+
+  > *Sesudah run (2026-10-23):* `/reports` terbuka tanpa error tetapi kosong, karena Data Contoh
+  > tidak punya laporan terbit; alur laporan terbit yang dibuka warga dibuktikan e2e
+  > `reports.spec.ts`. Satu-satunya error console sepanjang walk adalah 403 `/admin/units` untuk
+  > admin, perilaku lama yang disengaja.
 - README dan CLAUDE.md menjelaskan pemeriksaan ini beserta batasnya.
 
 ## Out of scope
@@ -236,4 +300,9 @@ Tidak ada file tes unit baru. Skrip audit hanyalah pembungkus tipis, dan buktiny
   - Deploy, karena bundle produksi berubah (`devalue`, `sanitize-html`).
   - Branch protection di `main` dengan required status checks: job Quality gate, `audit` dan
     `image-scan`. Nama check-nya baru ada setelah workflow pertama berjalan.
+
+    > *Sesudah run (2026-10-23):* nama check persis di PR #280: `check, lint, test, build` (workflow
+    > Quality gate), `audit` dan `image-scan` (workflow Security). CodeQL default setup menambah
+    > `Analyze (actions)`, `Analyze (javascript-typescript)` dan `CodeQL`. Deploy juga membawa
+    > `apk upgrade` di image produksi (#281).
 - Angka audit di spec ini diukur dengan Bun 1.4.0 di mesin lokal. CI dan Dockerfile memakai Bun 1.4.2.
