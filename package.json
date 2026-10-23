@@ -38,6 +38,7 @@
 		"@types/node": "^24",
 		"@types/pg": "8.23.1",
 		"@types/sanitize-html": "2.16.1",
+		"@vitest/coverage-v8": "^4.1.12",
 		"bits-ui": "^2.18.0",
 		"clsx": "^2.1.1",
 		"drizzle-kit": "0.31.10",
