@@ -258,7 +258,7 @@ describe() {
 		;;
 	SMTP_USER)
 		kind=optional
-		help='Login SMTP; untuk Gmail, alamat Gmail lengkap. Kosongkan hanya bila server SMTP tidak memakai login, dan SMTP_PASS lalu ikut kosong.'
+		help='Login SMTP; untuk Gmail, alamat Gmail lengkap. Kosongkan hanya bila server SMTP tidak memakai login, dan SMTP_PASS lalu ikut kosong. Server itu tetap harus menawarkan STARTTLS.'
 		;;
 	SMTP_PASS)
 		kind=smtp_pass

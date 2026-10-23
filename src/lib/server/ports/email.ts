@@ -121,11 +121,23 @@ const PAST_LAST_SMTP_CODE = 600;
 const HIGHEST_PORT = 65_535;
 
 /**
+ * The hosts a local mail catcher answers on: Mailpit inside the compose network, and the loopback
+ * addresses a process on the developer machine reaches it through. Mail sent to them never leaves
+ * the machine, so they are the only hosts allowed to skip TLS.
+ */
+const LOCAL_MAIL_CATCHER_HOSTS: ReadonlySet<string> = new Set([
+	'localhost',
+	'127.0.0.1',
+	'::1',
+	'mailpit'
+]);
+
+/**
  * Turns `SmtpSettings` into the options `nodemailer`'s SMTP transport takes: `host`, `port` and
- * `secure: false` always, plus `auth` and `requireTLS: true` together when `settings.auth` is
- * set. Exported so a test can assert on this exact shape, the same object a running
- * `SmtpEmailSender` hands to `createTransport`, without constructing a transport or opening a
- * socket to do it.
+ * `secure: false` always, `auth` when `settings.auth` is set, and `requireTLS: true` for every
+ * server except a local mail catcher. Exported so a test can assert on this exact shape, the same
+ * object a running `SmtpEmailSender` hands to `createTransport`, without constructing a transport
+ * or opening a socket to do it.
  */
 export function smtpTransportOptions(settings: SmtpSettings): SMTPTransportOptions {
 	const base: SMTPTransportOptions = {
@@ -135,28 +147,27 @@ export function smtpTransportOptions(settings: SmtpSettings): SMTPTransportOptio
 		// STARTTLS: when a server offers it, the client still upgrades. Mailpit offers neither.
 		secure: false
 	};
-	if (settings.auth === undefined) {
+	const local = LOCAL_MAIL_CATCHER_HOSTS.has(settings.host.trim().toLowerCase());
+	if (settings.auth === undefined && local) {
 		return base;
 	}
-	return {
-		...base,
-		auth: settings.auth,
-		// Offered STARTTLS is not enough once a password is going over the wire: `requireTLS`
-		// fails the connection instead of falling back to sending credentials in the clear to a
-		// server that did not upgrade.
-		requireTLS: true
-	};
+	// Offered STARTTLS is not enough for mail that leaves the machine: `requireTLS` fails the
+	// connection instead of falling back to the clear with a server that did not upgrade. The
+	// invitation, verification and password reset emails carry a link with a token, so this holds
+	// with or without a login. A login always demands it, even to a local host.
+	const secured: SMTPTransportOptions = { ...base, requireTLS: true };
+	return settings.auth === undefined ? secured : { ...secured, auth: settings.auth };
 }
 
 /**
  * Sends email over SMTP. In the local environment that is Mailpit, which accepts everything and
  * shows it in a web interface at http://localhost:8025 instead of delivering it to anyone.
  *
- * Authentication is optional, decided by whether `settings.auth` is set. Unauthenticated is
- * Mailpit's case: no credentials, no forced TLS, the same transport this class has always built.
- * The moment credentials are given, STARTTLS becomes mandatory (`requireTLS: true`) rather than
- * merely offered, so a login and password never cross the wire to a server that only pretended to
- * upgrade. See `smtpTransportOptions` for the exact shape handed to the underlying SMTP client.
+ * Authentication is optional, decided by whether `settings.auth` is set. TLS is not: STARTTLS is
+ * mandatory (`requireTLS: true`) rather than merely offered for every server except a local mail
+ * catcher, so neither a login nor a link with a token crosses the wire to a server that only
+ * pretended to upgrade. Mailpit without credentials is the one plain connection left. See
+ * `smtpTransportOptions` for the exact shape handed to the underlying SMTP client.
  */
 export class SmtpEmailSender implements EmailSender {
 	readonly #from: string;
