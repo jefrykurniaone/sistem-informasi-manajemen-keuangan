@@ -11,6 +11,7 @@ import {
 	reportRevisedPayload
 } from '../../email/templates/report-revised';
 import type { Clock } from '../../ports/clock';
+import { withoutTrailingSlashes } from '../../url';
 import { periodLabel } from '../cash/period';
 import { residentsSubscribedTo, type SubscribedResident } from '../subscription';
 import { SUBSCRIPTION_KIND } from '../subscription/kinds';
@@ -273,7 +274,7 @@ async function recipientsAlreadySent(
 
 /** The address of one Periode's report page. Built from `ORIGIN`, never from a request header. */
 function reportUrl(origin: string, period: string): string {
-	return `${origin.replace(/\/+$/, '')}/reports/${period}`;
+	return `${withoutTrailingSlashes(origin)}/reports/${period}`;
 }
 
 /** The address of one recipient's own unsubscribe page, for the monthly report Langganan. */

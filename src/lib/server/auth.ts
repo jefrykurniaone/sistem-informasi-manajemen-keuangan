@@ -18,6 +18,7 @@ import {
 	verifyEmailPayload
 } from './email/templates/verify-email';
 import { systemClock, type Clock } from './ports/clock';
+import { withoutTrailingSlashes } from './url';
 
 /**
  * better-auth, configured for this application. This module is the only place that decides how
@@ -356,7 +357,7 @@ export function isSecureOrigin(baseURL: string): boolean {
 
 /** Builds a link to one of this application's pages, carrying a token. */
 function tokenLink(baseURL: string, path: string, token: string): string {
-	return `${baseURL.replace(/\/+$/, '')}${path}?token=${encodeURIComponent(token)}`;
+	return `${withoutTrailingSlashes(baseURL)}${path}?token=${encodeURIComponent(token)}`;
 }
 
 let instance: Auth | undefined;

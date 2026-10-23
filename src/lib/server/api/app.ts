@@ -70,7 +70,7 @@ export function createApiApp(settings: ApiAppSettings) {
 				id: user.id,
 				name: user.name,
 				email: user.email,
-				roles: [...roles].sort()
+				roles: [...roles].sort((left, right) => left.localeCompare(right))
 			}),
 			{ session: true }
 		);
