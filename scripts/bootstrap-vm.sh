@@ -11,10 +11,14 @@
 #
 # Nothing here handles a secret. The application's .env is written later by scripts/setup-env.sh.
 
-if [ -z "${BASH_VERSION:-}" ]; then
+# `case` rather than a test: this guard exists for the run under sh, where `[[` is not a command,
+# so it has to parse in a POSIX shell. Everything after it may use bash.
+case "${BASH_VERSION:-}" in
+'')
 	echo 'Jalankan dengan bash, bukan sh: bash bootstrap-vm.sh' >&2
 	exit 1
-fi
+	;;
+esac
 set -euo pipefail
 
 readonly APP_DIR=/opt/komplek

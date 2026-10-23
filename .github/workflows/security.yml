@@ -29,8 +29,9 @@ jobs:
         with:
           bun-version: 1.4.2
 
+      # `--ignore-scripts`: see the same step in ci.yml (githubactions:S6505).
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       # Every dependency, not only `--prod`: SvelteKit, Svelte and Vite are devDependencies that
       # end up in the build. The ignore list, with a reason for every entry, lives in
@@ -55,6 +56,9 @@ jobs:
           docker build --progress plain --target production
           --build-arg PUBLIC_COMPLEX_NAME=Komplek --tag komplek:image-scan .
 
+      # `--proto '=https'` keeps the download on HTTPS through every redirect GitHub answers with
+      # (githubactions:S6506).
+      #
       # The release archive, checked against a hash held in this file, rather than
       # aquasecurity/trivy-action. That action reaches the binary through setup-trivy, whose
       # install script checks it only against the checksums file of the release it downloads from,
@@ -71,7 +75,7 @@ jobs:
           ARCHIVE_SHA256: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
         run: |
           archive="trivy_${VERSION}_Linux-64bit.tar.gz"
-          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/$archive" \
+          curl --proto '=https' --fail --silent --show-error --location --output "$RUNNER_TEMP/$archive" \
             "https://github.com/aquasecurity/trivy/releases/download/v${VERSION}/${archive}"
           echo "${ARCHIVE_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
           mkdir "$RUNNER_TEMP/trivy"

@@ -22,9 +22,12 @@ RUN apk upgrade --no-cache
 WORKDIR /app
 
 # Dependencies are installed in their own layer so that a source change does not reinstall them.
+# `--ignore-scripts` keeps install scripts out of the image (docker:S6505); ci.yml's install step
+# says which two would run and why neither is needed. `prepare` could not do its job here anyway:
+# this layer holds no source for `svelte-kit sync` to read.
 FROM base AS deps
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+RUN bun install --frozen-lockfile --ignore-scripts
 
 # Development image. docker-compose.yml mounts the working tree over /app and keeps this
 # node_modules, so dependencies never have to be installed on the host.
@@ -80,5 +83,10 @@ COPY --from=build /app/dist/grant-superuser.js ./scripts/grant-superuser.js
 # grant-superuser: it imports nothing but pg, which node_modules above already carries, Bun runs
 # the .ts directly, and the path is the same as in a working tree. See the file's own comment.
 COPY scripts/migrate-preflight.ts ./scripts/migrate-preflight.ts
+# Not root (docker:S6471): `bun` is the image's own user, uid 1000. Everything above stays owned by
+# root, which `bun` can read but not change. The one place the app writes is /app/storage, the
+# server's /opt/komplek/storage mounted by docker-compose.prod.yml, which has to belong to uid 1000.
+# docs/deploy.md has the one-time `chown` that files written by the earlier root image need.
+USER bun
 EXPOSE 3000
 CMD ["bun", "./build/index.js"]

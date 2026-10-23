@@ -10,7 +10,9 @@ services:
       ORIGIN: ${ORIGIN:-http://localhost:5173}
       VITE_USE_POLLING: ${VITE_USE_POLLING:-false}
       BODY_SIZE_LIMIT: ${BODY_SIZE_LIMIT:-16M}
-      DATABASE_URL: postgres://${POSTGRES_USER:-komplek}:${POSTGRES_PASSWORD:-kata-sandi-lokal-ganti-saya}@db:5432/${POSTGRES_DB:-komplek}
+      # No default for the password, here or in `db` below: a default in this tracked file is a
+      # published database password (secrets:S6698). Compose stops with this message instead.
+      DATABASE_URL: postgres://${POSTGRES_USER:-komplek}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env, see .env.example}@db:5432/${POSTGRES_DB:-komplek}
       # Written here rather than forwarded from .env, for the same reason as DATABASE_URL above:
       # one value cannot describe two network viewpoints. Inside this network the mail server is
       # `mailpit` on the port it really listens on; from a process on the host machine it is
@@ -49,7 +51,7 @@ services:
     image: postgres:18-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-komplek}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kata-sandi-lokal-ganti-saya}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env, see .env.example}
       POSTGRES_DB: ${POSTGRES_DB:-komplek}
     ports:
       - '${POSTGRES_PORT:-5432}:5432'
