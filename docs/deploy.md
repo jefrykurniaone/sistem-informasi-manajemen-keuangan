@@ -163,6 +163,17 @@ ulang `caddy` bila `Caddyfile` berubah, lalu periksa `https://<ip-statis>.sslip.
 berulang tiap 5 detik sampai 90 detik. Setiap langkah bernomor dan menyebut namanya sendiri bila
 gagal.
 
+**Sekali, sebelum deploy pertama image non-root.** Image yang dibangun dari Dockerfile dengan
+`USER bun` menjalankan `app` dan `migrate` sebagai uid 1000, bukan root. Berkas dan folder di bawah
+`/opt/komplek/storage` yang ditulis image sebelumnya dimiliki root, dan menulis atau menghapus di
+sana akan gagal dengan `EACCES`. Jalankan ini sekali di VM sebelum deploy itu:
+
+```bash
+sudo chown -R 1000:1000 /opt/komplek/storage
+```
+
+Deploy berikutnya tidak memerlukannya lagi: semua yang ditulis sesudahnya sudah milik uid 1000.
+
 **Daemon Docker untuk login dan push.** Build memakai konteks docker aktif apa adanya. Login dan
 push berjalan dengan `DOCKER_CONFIG` sementara supaya token GHCR tidak tersimpan di
 `~/.docker/config.json`, dan direktori itu juga menyembunyikan penyimpanan konteks docker. Karena

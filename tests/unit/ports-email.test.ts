@@ -286,6 +286,22 @@ describe('smtpTransportOptions', () => {
 			requireTLS: true
 		});
 	});
+
+	it.each(['127.0.0.1', '::1', 'mailpit', ' LocalHost '])(
+		'leaves TLS optional for the local mail catcher at %j',
+		(host) => {
+			expect(smtpTransportOptions({ ...settings, host }).requireTLS).toBeUndefined();
+		}
+	);
+
+	it('requires TLS from a server that is not a local mail catcher, even without auth', () => {
+		expect(smtpTransportOptions({ ...settings, host: 'smtp.example.com', port: 587 })).toEqual({
+			host: 'smtp.example.com',
+			port: 587,
+			secure: false,
+			requireTLS: true
+		});
+	});
 });
 
 describe('SmtpEmailSender', () => {

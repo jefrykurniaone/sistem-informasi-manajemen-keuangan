@@ -25,16 +25,17 @@ jobs:
     env:
       PUBLIC_COMPLEX_NAME: ''
 
-    # The PostgreSQL service for the `test` step. The credentials below are single-use values for
-    # this container only: created and destroyed inside the same job, unreachable from outside the
-    # runner, and not a reference to a repository secret. This is not a hardcoded-credential
-    # finding — there is no real secret here to protect — so do not turn it into a secret.
+    # The PostgreSQL service for the `test` step. It has no password at all: `trust` accepts every
+    # connection, which is safe for a container created and destroyed inside this job and reachable
+    # only from the runner. A throwaway password written into the connection URLs below was still
+    # reported as a disclosed credential (secrets:S6698), and there is nothing for a repository
+    # secret to protect here either.
     services:
       postgres:
         image: postgres:18-alpine
         env:
           POSTGRES_USER: komplek_ci
-          POSTGRES_PASSWORD: kata-sandi-ci-sekali-pakai
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: komplek_ci
         ports:
           - 5432:5432
@@ -51,8 +52,13 @@ jobs:
         with:
           bun-version: 1.4.2
 
+      # `--ignore-scripts` keeps install scripts out of the runner (githubactions:S6505). Two would
+      # run without it. esbuild's `postinstall` checks the native binary of its platform package,
+      # which installs as an ordinary optional dependency, and swaps its JavaScript launcher for
+      # that binary. This package's own `prepare` runs `svelte-kit sync`, which `check` runs anyway.
+      # The same flag is in security.yml and the Dockerfile.
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: check
         run: bun run check
@@ -69,11 +75,11 @@ jobs:
           # rather than inside another container, so that service name cannot be resolved here.
           # Only this step touches the database, so the variables live here rather than at job
           # level.
-          DATABASE_URL: postgres://komplek_ci:kata-sandi-ci-sekali-pakai@localhost:5432/komplek_ci
+          DATABASE_URL: postgres://komplek_ci@localhost:5432/komplek_ci
           # A different database on the same server. The test harness refuses to run when this
           # value is identical to DATABASE_URL, and it creates this database itself on the first
           # connection, so it does not need to be declared through POSTGRES_DB above.
-          TEST_DATABASE_URL: postgres://komplek_ci:kata-sandi-ci-sekali-pakai@localhost:5432/komplek_ci_test
+          TEST_DATABASE_URL: postgres://komplek_ci@localhost:5432/komplek_ci_test
           # The notification services build every email link on `readOrigin()`, which throws when
           # `ORIGIN` is unset. Locally `vite.config.ts` copies `.env` into the process, so the unit
           # tests never noticed; the runner has no `.env`, and every gate since the first

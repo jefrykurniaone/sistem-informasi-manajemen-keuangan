@@ -19,6 +19,7 @@ import {
 	registrationApprovedPayload
 } from '../../email/templates/registration-approved';
 import type { Clock } from '../../ports/clock';
+import { withoutTrailingSlashes } from '../../url';
 import { findOverlappingOccupancy, lockUnit } from '../occupancy';
 import { currentDay } from '../occupancy/visibility';
 import { ensureDefaultSubscriptions } from '../subscription';
@@ -625,5 +626,5 @@ function claimKey(block: string, number: string): string {
 
 /** The link the approval email carries: this application's own sign-in page under `origin`. */
 function signInLink(origin: string): string {
-	return `${origin.replace(/\/+$/, '')}${AUTH_PATHS.login}`;
+	return `${withoutTrailingSlashes(origin)}${AUTH_PATHS.login}`;
 }

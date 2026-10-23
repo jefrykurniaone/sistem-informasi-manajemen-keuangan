@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readAuthSecret } from '../../auth';
+import { withoutTrailingSlashes } from '../../url';
 
 /**
  * The one-click unsubscribe token: what an email's "berhenti berlangganan" link carries, and the
@@ -140,7 +141,7 @@ export function unsubscribeLink(
 	subject: UnsubscribeSubject,
 	secret: string = unsubscribeTokenSecret()
 ): string {
-	return `${origin.replace(/\/+$/, '')}${UNSUBSCRIBE_BASE_PATH}/${buildUnsubscribeToken(subject, secret)}`;
+	return `${withoutTrailingSlashes(origin)}${UNSUBSCRIBE_BASE_PATH}/${buildUnsubscribeToken(subject, secret)}`;
 }
 
 /**

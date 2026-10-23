@@ -223,13 +223,13 @@ describe('assertSeedAllowed', () => {
 		).toThrow(/NODE_ENV is "production"/);
 	});
 
-	it('refuses a DATABASE_URL that is not on this machine, naming the host', () => {
-		expect(() =>
-			assertSeedAllowed(
-				{ DATABASE_URL: 'postgres://user:pw@db.example.com:5432/komplek' } as NodeJS.ProcessEnv,
-				['--yes']
-			)
-		).toThrow(/points at host "db\.example\.com"/);
+	it('refuses a DATABASE_URL that is not on this machine, without repeating its host', () => {
+		const refusal = messageOf({ DATABASE_URL: 'postgres://user:pw@db.example.com:5432/komplek' }, [
+			'--yes'
+		]);
+
+		expect(refusal).toMatch(/points at a host that is not this machine/);
+		expect(refusal).not.toMatch(/db\.example\.com/);
 	});
 
 	it('refuses a missing --yes, naming the flag', () => {

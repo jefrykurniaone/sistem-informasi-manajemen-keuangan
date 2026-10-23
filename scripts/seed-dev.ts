@@ -238,10 +238,18 @@ export function assertSeedAllowed(environment: NodeJS.ProcessEnv, argv: readonly
 		);
 	}
 
+	// Neither message repeats the host: it is parsed out of DATABASE_URL, which carries the
+	// database password, and the operator already has the value in their own .env
+	// (tssecurity:S8689).
 	const host = databaseHostOf(environment.DATABASE_URL);
-	if (!host || !LOCAL_HOSTS.includes(host)) {
+	if (!host) {
 		throw new Error(
-			`DATABASE_URL points at host "${host ?? '(unreadable)'}", and db:seed-dev only runs against ${LOCAL_HOSTS.join(', ')}. It deletes every row in the database it is pointed at, so a host it does not recognise as this machine is refused rather than emptied.`
+			`DATABASE_URL is missing or unreadable, and db:seed-dev only runs against ${LOCAL_HOSTS.join(', ')}. It deletes every row in the database it is pointed at, so it refuses rather than guess where that is.`
+		);
+	}
+	if (!LOCAL_HOSTS.includes(host)) {
+		throw new Error(
+			`DATABASE_URL points at a host that is not this machine, and db:seed-dev only runs against ${LOCAL_HOSTS.join(', ')}. It deletes every row in the database it is pointed at, so a host it does not recognise as this machine is refused rather than emptied.`
 		);
 	}
 

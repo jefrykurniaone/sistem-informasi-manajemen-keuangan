@@ -21,6 +21,7 @@ import {
 	invitationPayload
 } from '../../email/templates/invitation';
 import type { Clock } from '../../ports/clock';
+import { withoutTrailingSlashes } from '../../url';
 import { findOverlappingOccupancy, lockUnit } from '../occupancy';
 import { currentDay } from '../occupancy/visibility';
 import { ensureDefaultSubscriptions } from '../subscription';
@@ -743,7 +744,7 @@ async function hasCredentialAccount(transaction: Transaction, email: string): Pr
 
 /** The link the email carries: the accept page under `origin`, with the token as the path segment. */
 function invitationLink(origin: string, token: string): string {
-	return `${origin.replace(/\/+$/, '')}${ACCEPT_PATH}/${encodeURIComponent(token)}`;
+	return `${withoutTrailingSlashes(origin)}${ACCEPT_PATH}/${encodeURIComponent(token)}`;
 }
 
 /**
