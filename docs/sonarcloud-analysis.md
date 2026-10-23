@@ -61,7 +61,15 @@ exact peer.
 Neither SonarLint in the editor nor SonarQube Cloud is a superset of the other. Every
 `githubactions:*` rule is server-only, because SonarLint does not analyse workflow files; that is why
 `sonar.sources` is `.` rather than a list of source directories. The server also analyses the
-Dockerfile, the shell scripts and the SQL migrations.
+Dockerfile and the shell scripts.
+
+## The migrations are excluded
+
+`drizzle/**` is in `sonar.exclusions`. Sonar analyses `.sql` files as Oracle PL/SQL, and its
+`plsql:QuotedIdentifiersCheck` flags every quoted identifier drizzle-kit writes for PostgreSQL: six
+issues on the existing migrations, and more on every migration a pull request adds, because the
+generator quotes every identifier. The schema they come from, `src/lib/server/db/schema/`, is analysed as
+TypeScript.
 
 **CI is the authority.** The editor extension is a convenience. An empty diagnostics result from the
 editor proves nothing either way: it is the same for a clean file and for a file the editor has never
