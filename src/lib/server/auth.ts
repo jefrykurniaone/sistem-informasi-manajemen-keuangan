@@ -419,8 +419,10 @@ export function readAuthSecret(environment: NodeJS.ProcessEnv = process.env): st
 		);
 	}
 	if (secret.length < MINIMUM_SECRET_LENGTH) {
+		// The message never carries anything read from the secret, its length included: callers log
+		// this error, and CodeQL's js/clear-text-logging counts the length as part of the secret.
 		throw new Error(
-			`Environment variable BETTER_AUTH_SECRET is ${secret.length} characters long, and it has to be at least ${MINIMUM_SECRET_LENGTH}. Generate one with \`openssl rand -base64 32\`.`
+			`Environment variable BETTER_AUTH_SECRET is too short; it has to be at least ${MINIMUM_SECRET_LENGTH} characters. Generate one with \`openssl rand -base64 32\`.`
 		);
 	}
 	return secret;

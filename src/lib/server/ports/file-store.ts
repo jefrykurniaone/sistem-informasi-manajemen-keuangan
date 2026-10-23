@@ -312,8 +312,9 @@ export function readFileStoreSecret(environment: NodeJS.ProcessEnv = process.env
 		);
 	}
 	if (secret.length < MINIMUM_FILE_STORE_SECRET_LENGTH) {
+		// Nothing read from the secret goes into the message, its length included: see `readAuthSecret`.
 		throw new Error(
-			`Environment variable FILE_STORE_SECRET is ${secret.length} characters long; it must be at least ${MINIMUM_FILE_STORE_SECRET_LENGTH}. Generate one with \`openssl rand -base64 32\`.`
+			`Environment variable FILE_STORE_SECRET is too short; it must be at least ${MINIMUM_FILE_STORE_SECRET_LENGTH} characters. Generate one with \`openssl rand -base64 32\`.`
 		);
 	}
 	return secret;
