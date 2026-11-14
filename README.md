@@ -226,11 +226,27 @@ in the comment above that step.
 - Secret scanning, with push protection.
 - CodeQL, default setup.
 
-Dependabot security updates are off, because they do not support Bun.
+**Dependabot version updates** are set in `.github/dependabot.yml` for two ecosystems, `github-actions`
+and `bun`, monthly, with one grouped pull request per ecosystem. For `bun`, major upgrades are
+ignored, and so are the five exactly pinned packages (`better-auth`, `drizzle-orm`, `drizzle-kit`,
+`pg`, `@inlang/paraglide-js`): each one is bumped by its own ticket.
+
+**Left off on purpose:**
+
+- **Dependabot security updates.** GitHub does not support Bun for them yet (GitHub's documentation,
+  checked 2026-11-14). Turned on, Dependabot could open a pull request that changes `package.json`
+  without `bun.lock`, which fails on `--frozen-lockfile`. Review this again once GitHub supports Bun.
+- **The `docker` ecosystem.** The Bun version is pinned exactly (#223), and `image-scan` already
+  checks the OS packages of the image on every pull request.
+
+**Alerts reach the owner through the owner's own notification settings:** email for _Dependabot
+alerts_, and a repository watch set to _Custom → Security alerts_. No API exposes these settings, so
+this is a manual step.
 
 **What this cannot see.** There is no schedule, so a new advisory on a transitive package, or a new
 CVE in an Alpine package of the image, shows only when a pull request or a push to `main` runs the
-workflow.
+workflow. The monthly Dependabot pull request for `bun` also runs the Security workflow, but a month
+without updates opens no pull request and runs nothing.
 
 ## Conventions
 

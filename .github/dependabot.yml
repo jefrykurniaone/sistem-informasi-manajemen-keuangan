@@ -10,3 +10,36 @@ updates:
       github-actions:
         patterns:
           - '*'
+
+  # Bun dependencies. One grouped pull request per month at most, so the owner is not flooded and
+  # the pull request also runs the Security workflow (audit). A month without updates opens nothing.
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        patterns: ['*']
+        update-types: [minor, patch]
+    ignore:
+      # Major upgrades are decided by a person, never by a bot.
+      - dependency-name: '*'
+        update-types: [version-update:semver-major]
+      # These five are pinned exactly in package.json. Each bump needs its own review (auth schema,
+      # migration generator, database driver, compiled messages), and inside the group one failing
+      # package would hold back every routine update. The ignore uses update-types, not a bare
+      # dependency-name, so it does not also suppress security updates if GitHub ever supports Bun
+      # for them.
+      - dependency-name: better-auth
+        update-types: [version-update:semver-minor, version-update:semver-patch]
+      - dependency-name: drizzle-orm
+        update-types: [version-update:semver-minor, version-update:semver-patch]
+      - dependency-name: drizzle-kit
+        update-types: [version-update:semver-minor, version-update:semver-patch]
+      - dependency-name: pg
+        update-types: [version-update:semver-minor, version-update:semver-patch]
+      - dependency-name: '@inlang/paraglide-js'
+        update-types: [version-update:semver-minor, version-update:semver-patch]
+    commit-message:
+      prefix: chore
