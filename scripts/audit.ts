@@ -66,30 +66,12 @@ const IGNORED_ADVISORIES: readonly IgnoredAdvisory[] = [
 		removeWhen: '@tailwindcss/typography brings in postcss-selector-parser 7.1.6 or newer.'
 	},
 	{
-		id: 'GHSA-pfhg-q3qv-9q6r',
-		package: '@sveltejs/kit 2.70.4',
-		parent: 'direct dependency',
-		reason:
-			'The open redirect needs a use:enhance form on a page route that can match a path starting with //. The only catch-all routes, api/[...slugs] and files/[...key], hold a +server.ts and no page, no form action and no use:enhance, and none sits at the root. No reroute hook exists.',
-		removeWhen: 'The repository upgrades to SvelteKit 3.'
-	},
-	{
-		id: 'GHSA-27mw-82g8-phjj',
-		package: '@sveltejs/kit 2.70.4',
-		parent: 'direct dependency',
-		reason:
-			'The XSS needs a prerendered page whose cache-control header comes from setHeaders. No +page or +layout exports prerender, and the SvelteKit options in vite.config.ts set no kit.prerender, so the build prerenders no page.',
-		removeWhen: 'The repository upgrades to SvelteKit 3.'
-	},
-	{
 		id: 'GHSA-gcqx-w48m-w2h4',
 		package: 'deepmerge 4.3.1',
-		parent:
-			'@sveltejs/vite-plugin-svelte > deepmerge, and @sveltejs/adapter-node > @rollup/plugin-node-resolve > deepmerge',
+		parent: '@sveltejs/vite-plugin-svelte > deepmerge',
 		reason:
-			"Both parents are build tools that merge this repository's own configuration. The deepmerge package code is not in the production build output.",
-		removeWhen:
-			'A fixed deepmerge is published and @sveltejs/vite-plugin-svelte and @rollup/plugin-node-resolve depend on it.'
+			"The parent is a build tool that merges this repository's own configuration. The deepmerge package code is not in the production build output.",
+		removeWhen: 'A fixed deepmerge is published and @sveltejs/vite-plugin-svelte depends on it.'
 	},
 	{
 		id: 'GHSA-g3hv-75wg-m249',
