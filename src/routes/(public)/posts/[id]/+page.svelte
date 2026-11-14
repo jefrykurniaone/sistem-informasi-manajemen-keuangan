@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import PostPreview from '$lib/components/post/post-preview.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import PostPreview from '#lib/components/post/post-preview.svelte';
 	import type { PageProps } from './$types';
 
 	/**
@@ -30,7 +30,7 @@
 <main class="flex flex-col gap-6">
 	<a
 		class="flex h-11 min-w-24 items-center text-sm underline underline-offset-2"
-		href={resolve('/posts')}
+		href={resolve('posts')}
 	>
 		{m.postPublic_backLink()}
 	</a>

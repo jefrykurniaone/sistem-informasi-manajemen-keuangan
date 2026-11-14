@@ -13,8 +13,8 @@ import {
 	residents,
 	user,
 	type NewComplaint
-} from '$lib/server/db/schema';
-import { testDatabase } from '$lib/server/db/test-helpers';
+} from '#lib/server/db/schema/index.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 
 /**
  * The `complaints` schema (Keluhan, Lampiran, Riwayat Status, Tanggapan), tested against

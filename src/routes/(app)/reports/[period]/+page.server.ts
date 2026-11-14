@@ -1,10 +1,10 @@
 import { error, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { CASH_CATEGORY_TYPES, type CashCategoryType } from '$lib/server/db/schema/cash-category';
-import { CASH_BOOK_MONTH_PATTERN } from '$lib/server/services/cash/balance';
-import { reportForPeriod } from '$lib/server/services/report/resident-payload';
+import * as m from '#lib/paraglide/messages.js';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { CASH_CATEGORY_TYPES, type CashCategoryType } from '#lib/server/db/schema/cash-category.ts';
+import { CASH_BOOK_MONTH_PATTERN } from '#lib/server/services/cash/balance.ts';
+import { reportForPeriod } from '#lib/server/services/report/resident-payload.ts';
 import type { PageServerLoad } from './$types';
 
 /**

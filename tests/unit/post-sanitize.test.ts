@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { POST_TYPE } from '$lib/server/db/schema/post';
-import { residents } from '$lib/server/db/schema/resident';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { createPost, getPost, type PostContent } from '$lib/server/services/post';
-import { sanitizePostHtml } from '$lib/server/services/post/sanitize';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { POST_TYPE } from '#lib/server/db/schema/post.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { createPost, getPost, type PostContent } from '#lib/server/services/post/index.ts';
+import { sanitizePostHtml } from '#lib/server/services/post/sanitize.ts';
 
 /**
  * The security boundary of the announcement board: what `sanitizePostHtml` lets through and what it

@@ -1,21 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { auditEntriesFor } from '$lib/server/audit';
-import { auditLog } from '$lib/server/db/schema/audit';
-import { user } from '$lib/server/db/schema/auth';
-import { occupancies, OCCUPANCY_ROLE, type OccupancyRole } from '$lib/server/db/schema/occupancy';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { PRIMARY_OCCUPANT_MARKED_ACTION } from '$lib/server/services/occupancy';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { auditLog } from '#lib/server/db/schema/audit.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import {
+	occupancies,
+	OCCUPANCY_ROLE,
+	type OccupancyRole
+} from '#lib/server/db/schema/occupancy.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { PRIMARY_OCCUPANT_MARKED_ACTION } from '#lib/server/services/occupancy/index.ts';
 import {
 	DATA_FIX_ACTOR_ID,
 	fixDuplicateOccupancies,
 	OCCUPANCY_DUPLICATE_DELETED_ACTION,
 	type DuplicateFixOutcome
-} from '$lib/server/services/occupancy/duplicate-fix';
+} from '#lib/server/services/occupancy/duplicate-fix.ts';
 
 /**
  * The one-off clean-up of duplicate Masa Huni (#242), against a real PostgreSQL, the way

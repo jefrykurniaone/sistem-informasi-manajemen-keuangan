@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import InvoiceCard from '$lib/components/dues/invoice-card.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import InvoiceCard from '#lib/components/dues/invoice-card.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -17,7 +17,7 @@
 <main class="mx-auto flex w-full max-w-xl flex-col gap-6 px-4 py-10">
 	<a
 		class="flex min-h-11 w-fit items-center text-sm underline underline-offset-2"
-		href={resolve('/admin/overdue')}
+		href={resolve('admin/overdue')}
 	>
 		{m.adminOverdueUnit_backLink()}
 	</a>

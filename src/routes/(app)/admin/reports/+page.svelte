@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import CategoryTable from '$lib/components/report/category-table.svelte';
-	import ReportSummary from '$lib/components/report/report-summary.svelte';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import { formatDateTime } from '$lib/time';
+	import CategoryTable from '#lib/components/report/category-table.svelte';
+	import ReportSummary from '#lib/components/report/report-summary.svelte';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formatDateTime } from '#lib/time.ts';
 	import type { PageProps } from './$types';
 
 	/**
@@ -125,7 +125,7 @@
 			</ul>
 			<a
 				class="inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4"
-				href={resolve(`/reports/${data.period}`)}
+				href={resolve(`reports/${data.period}`)}
 			>
 				{m.adminReports_openReportLink()}
 			</a>
@@ -139,7 +139,7 @@
 			</p>
 			<a
 				class="inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4"
-				href={resolve('/admin/periods')}
+				href={resolve('admin/periods')}
 			>
 				{m.adminReports_periodsLink()}
 			</a>

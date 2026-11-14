@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
-	import CategoryFilter from '$lib/components/post/category-filter.svelte';
-	import PostCard from '$lib/components/post/post-card.svelte';
+	import CategoryFilter from '#lib/components/post/category-filter.svelte';
+	import PostCard from '#lib/components/post/post-card.svelte';
 	import type { PageProps } from './$types';
 
 	/**
 	 * The announcement board a visitor with no session opens. `data.when` is `'upcoming'` or
-	 * `'past'`, the two values `$lib/server/services/post/public.ts`'s `POST_WHEN` names — written
+	 * `'past'`, the two values `#lib/server/services/post/public.ts`'s `POST_WHEN` names — written
 	 * out as the literal `'past'` below rather than imported, because that module is under
-	 * `$lib/server/` and this component also runs in the browser, the same reasoning
+	 * `#lib/server/` and this component also runs in the browser, the same reasoning
 	 * `post-form.svelte`'s own `EVENT_TYPE` constant explains.
 	 */
 	let { data }: PageProps = $props();
@@ -61,7 +61,7 @@
 			class="flex h-11 min-w-24 items-center justify-center rounded-md border border-border px-4 text-sm font-medium"
 			class:bg-accent={data.when === 'upcoming'}
 			aria-current={data.when === 'upcoming' ? 'page' : undefined}
-			href={resolve(`/posts?${whenQuery('upcoming')}`)}
+			href={resolve(`posts?${whenQuery('upcoming')}`)}
 		>
 			{m.postPublic_whenUpcoming()}
 		</a>
@@ -69,7 +69,7 @@
 			class="flex h-11 min-w-24 items-center justify-center rounded-md border border-border px-4 text-sm font-medium"
 			class:bg-accent={data.when === 'past'}
 			aria-current={data.when === 'past' ? 'page' : undefined}
-			href={resolve(`/posts?${whenQuery('past')}`)}
+			href={resolve(`posts?${whenQuery('past')}`)}
 		>
 			{m.postPublic_whenPast()}
 		</a>
@@ -107,7 +107,7 @@
 				class="flex h-11 min-w-24 items-center justify-center rounded-md border border-border px-3"
 				class:pointer-events-none={data.page <= 1}
 				class:opacity-50={data.page <= 1}
-				href={resolve(`/posts?${pageQuery(Math.max(1, data.page - 1))}`)}
+				href={resolve(`posts?${pageQuery(Math.max(1, data.page - 1))}`)}
 			>
 				{m.postPublic_prevPage()}
 			</a>
@@ -118,7 +118,7 @@
 				class="flex h-11 min-w-24 items-center justify-center rounded-md border border-border px-3"
 				class:pointer-events-none={data.page >= totalPages}
 				class:opacity-50={data.page >= totalPages}
-				href={resolve(`/posts?${pageQuery(Math.min(totalPages, data.page + 1))}`)}
+				href={resolve(`posts?${pageQuery(Math.min(totalPages, data.page + 1))}`)}
 			>
 				{m.postPublic_nextPage()}
 			</a>

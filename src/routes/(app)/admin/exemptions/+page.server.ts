@@ -1,8 +1,8 @@
 import { error, fail, redirect, type ActionFailure } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
 import {
 	endExemption,
 	ExemptionActorNotRegisteredError,
@@ -11,9 +11,9 @@ import {
 	ExemptionOverlapError,
 	grantExemption,
 	listActiveExemptions
-} from '$lib/server/services/dues/exemption';
-import { systemClock } from '$lib/server/ports/clock';
-import { listUnits, UnitNotFoundError } from '$lib/server/services/unit';
+} from '#lib/server/services/dues/exemption.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { listUnits, UnitNotFoundError } from '#lib/server/services/unit/index.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -25,7 +25,7 @@ import type { Actions, PageServerLoad } from './$types';
  * read.
  *
  * This route decides nothing about exemptions. Which units are exempt today, and whether a period
- * overlaps one that already exists, are both answered in `$lib/server/services/dues/exemption` and
+ * overlaps one that already exists, are both answered in `#lib/server/services/dues/exemption.ts` and
  * travel here as data.
  *
  * The picker for "which unit" is every active unit, fetched with a page size large enough to be the

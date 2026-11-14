@@ -1,18 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah } from '$lib/money';
-import { auditEntriesFor } from '$lib/server/audit';
-import { createConnection, readDatabaseUrl } from '$lib/server/db';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { exemptions } from '$lib/server/db/schema/exemption';
-import { invoices } from '$lib/server/db/schema/invoice';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah } from '#lib/money.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { exemptions } from '#lib/server/db/schema/exemption.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	endExemption,
 	EXEMPTION_ENDED_ACTION,
@@ -24,8 +24,8 @@ import {
 	grantExemption,
 	isUnitExemptOn,
 	listActiveExemptions
-} from '$lib/server/services/dues/exemption';
-import { UnitNotFoundError } from '$lib/server/services/unit';
+} from '#lib/server/services/dues/exemption.ts';
+import { UnitNotFoundError } from '#lib/server/services/unit/index.ts';
 
 /**
  * The Pembebasan service: granting an exemption, ending one that is running, the admin list of

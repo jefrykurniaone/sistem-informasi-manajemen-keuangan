@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import type { Editor } from '@tiptap/core';
-	import * as m from '$lib/paraglide/messages.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * The Post body editor — `docs/spec-post-editor-v1.md`'s "admin mengetik, menebalkan lewat tombol

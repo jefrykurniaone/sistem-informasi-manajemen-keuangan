@@ -1,16 +1,19 @@
-import { building } from '$app/environment';
-import type { Handle } from '@sveltejs/kit';
-import { sequence } from '@sveltejs/kit/hooks';
+import { building } from '$app/env';
+import { sequence, type Handle } from '@sveltejs/kit/hooks';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
-import { auth } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { registerEmailJobs } from '$lib/server/email/jobs';
-import { systemClock } from '$lib/server/ports/clock';
-import { applicationJobs, isSchedulerProcess, startJobScheduler } from '$lib/server/scheduler';
-import { registerDuesJobs } from '$lib/server/services/dues/jobs';
-import { registerReportJobs } from '$lib/server/services/report/jobs';
-import { paraglideMiddleware } from '$lib/paraglide/server.js';
-import { getTextDirection } from '$lib/paraglide/runtime.js';
+import { auth } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { registerEmailJobs } from '#lib/server/email/jobs.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import {
+	applicationJobs,
+	isSchedulerProcess,
+	startJobScheduler
+} from '#lib/server/scheduler/index.ts';
+import { registerDuesJobs } from '#lib/server/services/dues/jobs.ts';
+import { registerReportJobs } from '#lib/server/services/report/jobs.ts';
+import { paraglideMiddleware } from '#lib/paraglide/server.js';
+import { getTextDirection } from '#lib/paraglide/runtime.js';
 
 /**
  * Where a request meets better-auth, then Paraglide. `sequence()` runs `authHandle` first and
@@ -100,11 +103,16 @@ const authHandle: Handle = async ({ event, resolve }) => {
 
 const localeHandle: Handle = ({ event, resolve }) =>
 	paraglideMiddleware(event.request, ({ request, locale }) => {
-		event.request = request;
-		return resolve(event, {
-			transformPageChunk: ({ html }) =>
-				html.replace('%lang%', locale).replace('%dir%', getTextDirection(locale))
-		});
+		// SvelteKit 3 types `event.request` as read-only, so Paraglide's request travels on a copy
+		// of the event, the form `sv add paraglide` writes for SvelteKit 3. `locals` is the same
+		// object on both, so what `authHandle` put there is still there.
+		return resolve(
+			{ ...event, request },
+			{
+				transformPageChunk: ({ html }) =>
+					html.replace('%lang%', locale).replace('%dir%', getTextDirection(locale))
+			}
+		);
 	});
 
 export const handle: Handle = sequence(authHandle, localeHandle);

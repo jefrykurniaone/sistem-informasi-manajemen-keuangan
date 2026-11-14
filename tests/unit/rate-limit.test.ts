@@ -1,8 +1,8 @@
 import { like, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { rateLimitBuckets } from '$lib/server/db/schema/rate-limit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+import { rateLimitBuckets } from '#lib/server/db/schema/rate-limit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	callerAddress,
 	clearEmailBucket,
@@ -14,7 +14,7 @@ import {
 	UNKNOWN_ADDRESS,
 	type RateLimitDecision,
 	type RateLimitPolicy
-} from '$lib/server/rate-limit';
+} from '#lib/server/rate-limit.ts';
 
 /**
  * The form-action rate limiter (#60), against a real PostgreSQL: the properties that matter are

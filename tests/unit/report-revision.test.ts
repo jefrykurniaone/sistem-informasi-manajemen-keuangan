@@ -2,27 +2,27 @@ import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah } from '$lib/money';
-import { auditEntriesFor } from '$lib/server/audit';
-import { createConnection, readDatabaseUrl } from '$lib/server/db';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { CASH_CATEGORY_TYPE, type CashCategoryType } from '$lib/server/db/schema/cash-category';
-import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
-import { monthlyReports } from '$lib/server/db/schema/monthly-report';
-import { PERIOD_STATUS, periods } from '$lib/server/db/schema/period';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
-import { createCashCategory } from '$lib/server/services/cash/category';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah } from '#lib/money.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { CASH_CATEGORY_TYPE, type CashCategoryType } from '#lib/server/db/schema/cash-category.ts';
+import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
+import { monthlyReports } from '#lib/server/db/schema/monthly-report.ts';
+import { PERIOD_STATUS, periods } from '#lib/server/db/schema/period.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
+import { createCashCategory } from '#lib/server/services/cash/category.ts';
 import {
 	PERIOD_LOCKED_ACTION,
 	PERIOD_RULE,
 	PeriodLockedError,
 	PeriodRuleError,
 	unlockPeriod
-} from '$lib/server/services/cash/period';
-import { recordCashTransaction } from '$lib/server/services/cash/transaction';
+} from '#lib/server/services/cash/period.ts';
+import { recordCashTransaction } from '#lib/server/services/cash/transaction.ts';
 import {
 	REPORT_PUBLISHED_ACTION,
 	REPORT_RULE,
@@ -31,7 +31,7 @@ import {
 	publishedReport,
 	listPublishedReports,
 	reportWorkbench
-} from '$lib/server/services/report/publication';
+} from '#lib/server/services/report/publication.ts';
 
 /**
  * Publishing a Laporan Bulanan and revising it — `docs/spec-kas-laporan-v1.md`'s own testing

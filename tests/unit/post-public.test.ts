@@ -1,25 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { posts, POST_TYPE } from '$lib/server/db/schema/post';
-import { residents } from '$lib/server/db/schema/resident';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { posts, POST_TYPE } from '#lib/server/db/schema/post.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	archivePost,
 	createPost,
 	publishPost,
 	PostNotFoundError,
 	type PostContent
-} from '$lib/server/services/post';
+} from '#lib/server/services/post/index.ts';
 import {
 	getPublishedPost,
 	listPublicPosts,
 	renderPublicPostBody,
 	POST_WHEN
-} from '$lib/server/services/post/public';
+} from '#lib/server/services/post/public.ts';
 
 /**
  * The announcement board's public reading side: what a visitor with no session may see through

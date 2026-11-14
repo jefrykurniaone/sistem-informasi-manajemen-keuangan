@@ -1,20 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { auditEntriesFor } from '$lib/server/audit';
-import { createAuth, MINIMUM_PASSWORD_LENGTH, type Auth } from '$lib/server/auth';
-import { account, user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { emailQueue } from '$lib/server/db/schema/email';
-import { invitations } from '$lib/server/db/schema/invitation';
-import { occupancies, OCCUPANCY_ROLE } from '$lib/server/db/schema/occupancy';
-import { residents } from '$lib/server/db/schema/resident';
-import { subscriptions } from '$lib/server/db/schema/subscription';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { INVITATION_KIND, invitationTemplate } from '$lib/server/email/templates/invitation';
-import { FakeClock } from '$lib/server/ports/fakes';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { createAuth, MINIMUM_PASSWORD_LENGTH, type Auth } from '#lib/server/auth.ts';
+import { account, user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { emailQueue } from '#lib/server/db/schema/email.ts';
+import { invitations } from '#lib/server/db/schema/invitation.ts';
+import { occupancies, OCCUPANCY_ROLE } from '#lib/server/db/schema/occupancy.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { subscriptions } from '#lib/server/db/schema/subscription.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { INVITATION_KIND, invitationTemplate } from '#lib/server/email/templates/invitation.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	acceptInvitation,
 	INVITATION_ACCEPTED_ACTION,
@@ -31,9 +31,9 @@ import {
 	resendInvitation,
 	sendInvitations,
 	type AcceptInvitationRequest
-} from '$lib/server/services/invitation';
-import { hashInvitationToken } from '$lib/server/services/invitation/token';
-import { UnitNotFoundError } from '$lib/server/services/unit';
+} from '#lib/server/services/invitation/index.ts';
+import { hashInvitationToken } from '#lib/server/services/invitation/token.ts';
+import { UnitNotFoundError } from '#lib/server/services/unit/index.ts';
 
 /**
  * The Undangan service, against a real PostgreSQL and better-auth's real hasher.

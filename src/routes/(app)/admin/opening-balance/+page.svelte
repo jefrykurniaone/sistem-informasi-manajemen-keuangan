@@ -1,17 +1,17 @@
 <script lang="ts">
-	import RupiahInput from '$lib/components/rupiah-input.svelte';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { formatRupiah } from '$lib/money';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import { formatDay } from '$lib/time';
+	import RupiahInput from '#lib/components/rupiah-input.svelte';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { formatRupiah } from '#lib/money.ts';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formatDay } from '#lib/time.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
 
 	const uid = $props.id();
 
-	/** A stored `YYYY-MM-DD` as a day a person reads — `$lib/time`'s `formatDay`. */
+	/** A stored `YYYY-MM-DD` as a day a person reads — `#lib/time.ts`'s `formatDay`. */
 	function asDay(day: string): string {
 		return formatDay(new Date(`${day}T00:00:00.000Z`));
 	}

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -47,7 +47,7 @@
 	-->
 	<a
 		class="inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4"
-		href={resolve('/')}
+		href={resolve('')}
 	>
 		{m.unsubscribe_homeLink()}
 	</a>

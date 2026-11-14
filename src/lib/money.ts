@@ -121,7 +121,7 @@ export function parseRupiah(text: string): Rupiah {
  *
  * Exported because the grouping in a nominal field and the grouping in a table have to be the same
  * shape, and the only way to guarantee that is for both to call this. `formatRupiah` uses it for the
- * display side and `$lib/components/rupiah-input.svelte` for the typing side.
+ * display side and `#lib/components/rupiah-input.svelte` for the typing side.
  *
  * The argument is digits, not a number: while somebody is typing, the value on screen is not yet a
  * number — it may be empty, and it keeps whatever leading zeros were typed until the server parses

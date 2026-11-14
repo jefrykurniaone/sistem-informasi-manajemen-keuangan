@@ -5,31 +5,31 @@ import type { PgTable } from 'drizzle-orm/pg-core';
 // A default import — see the note at the top of `src/lib/server/services/import/xlsx.ts`.
 import ExcelJS, { type CellValue } from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { auditEntriesFor } from '$lib/server/audit';
-import { auditLog } from '$lib/server/db/schema/audit';
-import { account, user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { OCCUPANCY_ROLE, occupancies } from '$lib/server/db/schema/occupancy';
-import { residents } from '$lib/server/db/schema/resident';
-import { subscriptions } from '$lib/server/db/schema/subscription';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import type { Clock } from '$lib/server/ports/clock';
-import { FakeClock } from '$lib/server/ports/fakes';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { auditLog } from '#lib/server/db/schema/audit.ts';
+import { account, user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { OCCUPANCY_ROLE, occupancies } from '#lib/server/db/schema/occupancy.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { subscriptions } from '#lib/server/db/schema/subscription.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import type { Clock } from '#lib/server/ports/clock.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	ImportRejectedError,
 	RESIDENTS_IMPORTED_ACTION,
 	importResidents,
 	previewResidentImport
-} from '$lib/server/services/import/resident-import';
-import { readResidentRows } from '$lib/server/services/import/xlsx';
+} from '#lib/server/services/import/resident-import.ts';
+import { readResidentRows } from '#lib/server/services/import/xlsx.ts';
 import {
 	IMPORT_HEADER,
 	IMPORT_PROBLEM,
 	ImportHeaderError
-} from '$lib/server/services/import/validation';
-import { SUBSCRIPTION_KINDS } from '$lib/server/services/subscription/kinds';
+} from '#lib/server/services/import/validation.ts';
+import { SUBSCRIPTION_KINDS } from '#lib/server/services/subscription/kinds.ts';
 
 /**
  * Reading an uploaded workbook, and the two-step import that follows it against a real PostgreSQL:

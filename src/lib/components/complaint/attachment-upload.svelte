@@ -15,7 +15,7 @@
 </script>
 
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * The Lampiran field of the "lapor keluhan" form: up to `maxCount` photographs, picked from one

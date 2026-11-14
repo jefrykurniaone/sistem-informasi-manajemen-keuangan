@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { Rupiah } from '$lib/money';
+	import type { Rupiah } from '#lib/money.ts';
 
 	/** Which way money moves on a category line: the stored type of a Kategori Kas. */
 	export type ReportDirection = 'income' | 'expense';
@@ -56,9 +56,9 @@
 
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { formatRupiah } from '$lib/money';
-	import * as m from '$lib/paraglide/messages.js';
-	import { formatDay } from '$lib/time';
+	import { formatRupiah } from '#lib/money.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formatDay } from '#lib/time.ts';
 
 	/**
 	 * The transactions behind one category line, drawn inside the detail row that
@@ -135,7 +135,7 @@
 			: m.reports_drilldown_otherDirectionExpense({ amount });
 	});
 
-	/** A stored `YYYY-MM-DD` as a day a person reads — `$lib/time`'s `formatDay`. */
+	/** A stored `YYYY-MM-DD` as a day a person reads — `#lib/time.ts`'s `formatDay`. */
 	function asDay(day: string): string {
 		return formatDay(new Date(`${day}T00:00:00.000Z`));
 	}

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { pageTitle } from '$lib/complex-name';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as m from '$lib/paraglide/messages.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { form }: PageProps = $props();
@@ -49,7 +49,7 @@
 	</form>
 
 	<p class="text-sm text-muted-foreground">
-		<a class="underline underline-offset-4" href={resolve('/login')}
+		<a class="underline underline-offset-4" href={resolve('login')}
 			>{m.forgotPassword_backToLoginLink()}</a
 		>
 	</p>

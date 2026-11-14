@@ -1,11 +1,11 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { OCCUPANCY_ROLES, type OccupancyRole } from '$lib/server/db/schema/occupancy';
-import { assertUuidParam } from '$lib/server/services/identifier';
-import { systemClock } from '$lib/server/ports/clock';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { OCCUPANCY_ROLES, type OccupancyRole } from '#lib/server/db/schema/occupancy.ts';
+import { assertUuidParam } from '#lib/server/services/identifier.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	endOccupancy,
 	listAssignableResidents,
@@ -19,8 +19,8 @@ import {
 	recordOccupancy,
 	ResidentNotFoundError,
 	setPrimaryOccupant
-} from '$lib/server/services/occupancy';
-import { getUnit, UnitNotFoundError } from '$lib/server/services/unit';
+} from '#lib/server/services/occupancy/index.ts';
+import { getUnit, UnitNotFoundError } from '#lib/server/services/unit/index.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -52,7 +52,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	if (!locals.user) {
 		redirect(303, AUTH_PATHS.login);
 	}
-	// `units.id` is a `uuid` column — see #111 and `$lib/server/services/identifier.ts`.
+	// `units.id` is a `uuid` column — see #111 and `#lib/server/services/identifier.ts`.
 	assertUuidParam(params.id, m.adminUnits_notFound());
 
 	const db = database();

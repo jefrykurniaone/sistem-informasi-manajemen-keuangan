@@ -1,5 +1,5 @@
-import { systemClock } from '$lib/server/ports/clock';
-import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import type { RequestHandler } from './$types';
 
 /**

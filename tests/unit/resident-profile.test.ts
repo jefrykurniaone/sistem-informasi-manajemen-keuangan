@@ -1,16 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { user } from '$lib/server/db/schema/auth';
-import { residents } from '$lib/server/db/schema/resident';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { residentProfileForUser, updateOwnProfile } from '$lib/server/services/resident/profile';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { residentProfileForUser, updateOwnProfile } from '#lib/server/services/resident/profile.ts';
 
 /**
  * A resident reading and correcting their own name and phone number, against a real PostgreSQL —
- * see `$lib/server/services/resident/profile.ts` for the shape of the guard and for why a
+ * see `#lib/server/services/resident/profile.ts` for the shape of the guard and for why a
  * `residents` row can legitimately be missing.
  */
 

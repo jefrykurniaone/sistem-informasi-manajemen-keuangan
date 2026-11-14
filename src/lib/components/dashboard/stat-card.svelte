@@ -1,15 +1,15 @@
 <script lang="ts" module>
-	import type { Pathname } from '$app/types';
+	import type { Path } from '$app/types';
 
 	/**
-	 * Narrows the `Pathname` union to one member so `resolve` has a single overload to pick.
+	 * Narrows the `Path` union to one member so `resolve` has a single overload to pick.
 	 *
 	 * The same workaround `app-shell/nav-group.svelte`'s `staticRoute` records, duplicated here
 	 * rather than imported: that function lives beside the sidebar for the sidebar's own reason, and
 	 * this component has nothing to do with it beyond needing the identical two-line cast.
 	 */
-	function asRoute(pathname: Pathname): '/' {
-		return pathname as '/';
+	function asRoute(pathname: Path): '' {
+		return pathname as '';
 	}
 </script>
 
@@ -32,7 +32,7 @@
 		readonly label: string;
 		/** A second line under `value`, for a figure this card carries but does not lead with. */
 		readonly detail?: string;
-		readonly href: Pathname;
+		readonly href: Path;
 		/** `'warning'` for the two cards the spec calls out by name: menunggak and pending. */
 		readonly variant?: 'warning';
 	}

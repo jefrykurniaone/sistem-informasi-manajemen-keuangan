@@ -9,8 +9,8 @@
 </script>
 
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as m from '$lib/paraglide/messages.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * The Tanggapan thread on a resident's own Keluhan detail screen — stories 6 and 7 — reading

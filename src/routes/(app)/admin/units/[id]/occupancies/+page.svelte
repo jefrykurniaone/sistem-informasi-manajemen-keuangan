@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import OccupancyForm from '$lib/components/occupancy/occupancy-form.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import OccupancyForm from '#lib/components/occupancy/occupancy-form.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -61,7 +61,7 @@
 <main class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10">
 	<a
 		class="text-sm text-muted-foreground underline underline-offset-2"
-		href={resolve('/admin/units')}
+		href={resolve('admin/units')}
 	>
 		{m.adminOccupancies_backToUnits()}
 	</a>

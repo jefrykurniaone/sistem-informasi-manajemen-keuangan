@@ -1,9 +1,9 @@
 import { fail } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
 import { verifyJWT } from 'better-auth/crypto';
-import * as m from '$lib/paraglide/messages';
-import { auth } from '$lib/server/auth';
-import { limitFormAction, RATE_LIMIT_POLICY } from '$lib/server/rate-limit';
+import * as m from '#lib/paraglide/messages.js';
+import { auth } from '#lib/server/auth.ts';
+import { limitFormAction, RATE_LIMIT_POLICY } from '#lib/server/rate-limit.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -24,12 +24,12 @@ import type { Actions, PageServerLoad } from './$types';
  * this action shows the same sentence.
  *
  * **Asking too often is refused before better-auth is asked anything**, by `limitFormAction` in
- * `$lib/server/rate-limit`, which counts the caller's address and the email typed without looking
+ * `#lib/server/rate-limit.ts`, which counts the caller's address and the email typed without looking
  * either up. Every post past the limit gets `TOO_MANY_REQUESTS` and a 429, whoever the address
  * belongs to, and queues nothing — the same reasoning as `/forgot-password`, because the two forms
  * are the same mail-sending lever with a different template behind it.
  *
- * Verifying does not sign anyone in — see the reasoning in `$lib/server/auth`. The page sends the
+ * Verifying does not sign anyone in — see the reasoning in `#lib/server/auth.ts`. The page sends the
  * person to the sign-in form afterwards.
  *
  * **The `load` below still changes something, on a GET, and still cannot revoke a token early.**

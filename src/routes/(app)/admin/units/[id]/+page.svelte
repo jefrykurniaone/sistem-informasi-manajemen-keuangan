@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import { formatDay } from '$lib/time';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formatDay } from '#lib/time.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -18,7 +18,7 @@
 <main class="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-10">
 	<a
 		class="text-sm text-muted-foreground underline underline-offset-2"
-		href={resolve('/admin/units')}
+		href={resolve('admin/units')}
 	>
 		{m.adminUnits_detailBack()}
 	</a>
@@ -55,7 +55,7 @@
 			{/if}
 			<a
 				class="text-muted-foreground underline underline-offset-2"
-				href={resolve(`/admin/units/${data.unit.id}/occupancies`)}
+				href={resolve(`admin/units/${data.unit.id}/occupancies`)}
 			>
 				{m.adminOccupancies_historyLink()}
 			</a>
@@ -67,7 +67,7 @@
 	<div>
 		<a
 			class="inline-flex h-11 items-center rounded-md border border-border px-4 text-sm font-medium"
-			href={resolve(`/admin/units/${data.unit.id}/finance`)}
+			href={resolve(`admin/units/${data.unit.id}/finance`)}
 		>
 			{m.unitFinance_linkFromUnit()}
 		</a>

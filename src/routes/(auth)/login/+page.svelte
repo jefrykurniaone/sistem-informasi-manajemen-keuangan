@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { pageTitle } from '$lib/complex-name';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as m from '$lib/paraglide/messages.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -25,7 +25,7 @@
 		<p class="rounded-md border border-destructive px-3 py-2 text-sm text-destructive" role="alert">
 			{form.message}
 			{#if form.unverified}
-				<a class="underline underline-offset-4" href={resolve('/verify')}>
+				<a class="underline underline-offset-4" href={resolve('verify')}>
 					{m.login_resendVerificationLink()}
 				</a>.
 			{/if}
@@ -63,10 +63,10 @@
 	</form>
 
 	<p class="text-sm text-muted-foreground">
-		<a class="underline underline-offset-4" href={resolve('/forgot-password')}
+		<a class="underline underline-offset-4" href={resolve('forgot-password')}
 			>{m.login_forgotPasswordLink()}</a
 		>
 		&middot;
-		<a class="underline underline-offset-4" href={resolve('/register')}>{m.login_registerLink()}</a>
+		<a class="underline underline-offset-4" href={resolve('register')}>{m.login_registerLink()}</a>
 	</p>
 </main>

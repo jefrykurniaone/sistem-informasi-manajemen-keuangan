@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import { formatDateTime } from '$lib/time';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formatDateTime } from '#lib/time.ts';
 	import type { PageProps } from './$types';
 
 	/**
@@ -44,7 +44,7 @@
 				{/if}
 				<a
 					class="inline-flex min-h-11 items-center self-start underline underline-offset-4"
-					href={resolve(`/reports/${report.period}`)}
+					href={resolve(`reports/${report.period}`)}
 				>
 					{m.reports_openLink({ period: report.period })}
 				</a>

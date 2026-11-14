@@ -1,25 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
 import {
 	COMPLAINT_STATUS,
 	COMPLAINT_VISIBILITY,
 	complaints,
 	type Complaint,
 	type ComplaintVisibility
-} from '$lib/server/db/schema/complaint';
-import { residents } from '$lib/server/db/schema/resident';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+} from '#lib/server/db/schema/complaint.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	addComplaintReply,
 	COMPLAINT_REPLY_RULE,
 	ComplaintReplyRuleError,
 	listComplaintReplies
-} from '$lib/server/services/complaint';
+} from '#lib/server/services/complaint/index.ts';
 
 /**
  * Tanggapan: the reply thread on one Keluhan. Story 6 (the reporter), story 17 (the pengurus), and

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { pageTitle } from '$lib/complex-name';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as m from '$lib/paraglide/messages.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -124,6 +124,6 @@
 
 	<p class="text-sm text-muted-foreground">
 		{m.register_hasAccountPrompt()}
-		<a class="underline underline-offset-4" href={resolve('/login')}>{m.register_loginLink()}</a>
+		<a class="underline underline-offset-4" href={resolve('login')}>{m.register_loginLink()}</a>
 	</p>
 </main>

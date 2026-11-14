@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, lt, lte, sql, type SQL } from 'drizzle-orm';
-import { rupiah, type Rupiah } from '$lib/money';
+import { rupiah, type Rupiah } from '#lib/money.ts';
 import { ACTION, requirePermission } from '../../authz';
 import type { Database } from '../../db';
 import { user } from '../../db/schema/auth';

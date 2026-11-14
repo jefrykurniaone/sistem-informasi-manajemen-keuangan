@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import { Button } from '$lib/components/ui/button/index.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { Button } from '#lib/components/ui/button/index.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
 
 	/**
 	 * Label and description per kind, on this page only — the kind string itself stays the value
-	 * `$lib/server/services/subscription/kinds.ts` names it, the same split
+	 * `#lib/server/services/subscription/kinds.ts` names it, the same split
 	 * `(app)/admin/roles/+page.svelte`'s `ROLE_LABEL` makes for role names.
 	 */
 	const KIND_LABEL: Record<string, () => string> = {
@@ -97,7 +97,7 @@
 			{/each}
 		</ul>
 
-		<a class="text-sm underline underline-offset-4" href={resolve('/profile')}>
+		<a class="text-sm underline underline-offset-4" href={resolve('profile')}>
 			{m.profile_notifications_backLink()}
 		</a>
 	{/if}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages.js';
+	import * as m from '#lib/paraglide/messages.js';
 	import { POST_CATEGORY_LABEL, POST_TYPE_LABEL } from './post-form.svelte';
 
 	/**

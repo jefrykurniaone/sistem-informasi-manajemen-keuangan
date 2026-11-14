@@ -109,7 +109,7 @@ import { withoutTrailingSlashes } from './url';
  * otherwise those addresses fall through to SvelteKit and 404. That is the same requirement
  * SvelteKit's own Node adapter already has for form posts, so there is one variable rather than
  * two that can disagree; but it does mean that serving the application on a port `ORIGIN` does
- * not name leaves `$lib/auth-client.ts` with nothing to call. The pages in this ticket are
+ * not name leaves `#lib/auth-client.ts` with nothing to call. The pages in this ticket are
  * unaffected: they use form actions and `auth().api.*` directly, neither of which goes through
  * that router.
  */

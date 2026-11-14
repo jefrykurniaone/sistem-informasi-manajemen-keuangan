@@ -31,7 +31,7 @@ import { Client, DatabaseError } from 'pg';
  * bundles `scripts/grant-superuser.ts`. That script needs a bundle because it imports from `src/`,
  * which the image does not carry. This one imports nothing but `pg`, which the image's
  * node_modules already holds, and Bun runs a `.ts` file directly, so a bundle would add a build
- * step and change nothing. The consequence is a rule: never import `$lib` or anything under
+ * step and change nothing. The consequence is a rule: never import `#lib` or anything under
  * `src/` here.
  */
 

@@ -10,10 +10,10 @@
 	import WrenchIcon from '@lucide/svelte/icons/wrench';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
-	import { useSidebar } from '$lib/components/ui/sidebar/index.js';
-	import { complexName } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
+	import { useSidebar } from '#lib/components/ui/sidebar/index.js';
+	import { complexName } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import LanguageSwitcher from './language-switcher.svelte';
 	import NavGroup, { staticRoute } from './nav-group.svelte';
 	import type { GroupKey, MenuGroup, MenuItem } from './menu.js';
@@ -24,7 +24,7 @@
 	 * no sidebar at all (#170); the signed-out branch below is only ever seen on an `(app)` error page
 	 * reached without a session, since every page of the group sends such a visitor to `/login`.
 	 *
-	 * The brand is `complexName` from `$lib/complex-name`, the installation's `PUBLIC_COMPLEX_NAME`,
+	 * The brand is `complexName` from `#lib/complex-name.ts`, the installation's `PUBLIC_COMPLEX_NAME`,
 	 * rather than a message: a complex's name does not change with the interface language.
 	 *
 	 * It renders only what `(app)/+layout.server.ts` already decided a visitor may see: `menu` is the
@@ -64,12 +64,17 @@
 
 	const sidebar = useSidebar();
 
-	/** Whether `href` is the current address or an ancestor of it. `/` only ever matches itself. */
+	/**
+	 * Whether a menu `href` is the current address or an ancestor of it. The root only ever matches
+	 * itself. A menu `href` is a SvelteKit 3 `Path`, written without the leading slash that
+	 * `pathname` carries, so the slash goes back on before comparing.
+	 */
 	function covers(pathname: string, href: string): boolean {
-		if (href === '/') {
+		const address = `/${href}`;
+		if (address === '/') {
 			return pathname === '/';
 		}
-		return pathname === href || pathname.startsWith(`${href}/`);
+		return pathname === address || pathname.startsWith(`${address}/`);
 	}
 
 	/**
@@ -144,7 +149,7 @@
 						     `display: none` in icon mode (`sidebar-menu-button.svelte`'s `lg` variant), so
 						     without it the link would have no accessible name at all when collapsed. The
 						     text is identical to what the wide sidebar shows, so WCAG 2.5.3 still holds. -->
-						<a {...props} href={resolve('/')} aria-label={complexName}>
+						<a {...props} href={resolve('')} aria-label={complexName}>
 							<BuildingIcon />
 							<span class="truncate font-semibold tracking-tight">{complexName}</span>
 						</a>
@@ -205,7 +210,7 @@
 									class={TOUCH_TARGET_CLASS}
 								>
 									{#snippet child({ props })}
-										<a {...props} href={resolve('/')} onclick={handleNavigate}>
+										<a {...props} href={resolve('')} onclick={handleNavigate}>
 											<LayoutDashboardIcon />
 											<span>{m.appShell_navHome()}</span>
 										</a>
@@ -218,7 +223,7 @@
 									class={TOUCH_TARGET_CLASS}
 								>
 									{#snippet child({ props })}
-										<a {...props} href={resolve('/posts')} onclick={handleNavigate}>
+										<a {...props} href={resolve('posts')} onclick={handleNavigate}>
 											<MegaphoneIcon />
 											<span>{m.appShell_navPosts()}</span>
 										</a>
@@ -231,7 +236,7 @@
 									class={TOUCH_TARGET_CLASS}
 								>
 									{#snippet child({ props })}
-										<a {...props} href={resolve('/login')} onclick={handleNavigate}>
+										<a {...props} href={resolve('login')} onclick={handleNavigate}>
 											<CircleUserIcon />
 											<span>{m.appShell_navLogin()}</span>
 										</a>
@@ -244,7 +249,7 @@
 									class={TOUCH_TARGET_CLASS}
 								>
 									{#snippet child({ props })}
-										<a {...props} href={resolve('/register')} onclick={handleNavigate}>
+										<a {...props} href={resolve('register')} onclick={handleNavigate}>
 											<UsersIcon />
 											<span>{m.appShell_navRegister()}</span>
 										</a>
@@ -266,7 +271,7 @@
 		{#if signedIn}
 			<Sidebar.Menu>
 				<Sidebar.MenuItem>
-					<form method="POST" action={resolve('/logout')}>
+					<form method="POST" action={resolve('logout')}>
 						<Sidebar.MenuButton tooltipContent={m.appShell_navLogout()} class={TOUCH_TARGET_CLASS}>
 							{#snippet child({ props })}
 								<!-- The generated `Sidebar.MenuButton` types no `type` attribute, and a button

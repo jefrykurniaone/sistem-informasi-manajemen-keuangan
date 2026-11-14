@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import StatusBadge from '$lib/components/complaint/status-badge.svelte';
-	import StatCard from '$lib/components/dashboard/stat-card.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import StatusBadge from '#lib/components/complaint/status-badge.svelte';
+	import StatCard from '#lib/components/dashboard/stat-card.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -35,10 +35,10 @@
 		</header>
 
 		<div class="flex flex-wrap gap-3">
-			<Button href={resolve('/payments/new')} class="min-h-11">
+			<Button href={resolve('payments/new')} class="min-h-11">
 				{m.dashboard_residentPaymentButton()}
 			</Button>
-			<Button href={resolve('/complaints/new')} variant="outline" class="min-h-11">
+			<Button href={resolve('complaints/new')} variant="outline" class="min-h-11">
 				{m.dashboard_residentComplaintButton()}
 			</Button>
 		</div>

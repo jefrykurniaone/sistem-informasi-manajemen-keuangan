@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import PreviewTable from '$lib/components/import/preview-table.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import PreviewTable from '#lib/components/import/preview-table.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -48,7 +48,7 @@
 			<li>{m.adminImport_guideStep3()}</li>
 		</ol>
 		<p class="text-sm text-muted-foreground">{m.adminImport_rowLimit({ maximum: data.maxRows })}</p>
-		<Button href={resolve('/admin/import/template')} variant="secondary" class="h-11 w-fit">
+		<Button href={resolve('admin/import/template')} variant="secondary" class="h-11 w-fit">
 			{m.adminImport_downloadTemplate()}
 		</Button>
 	</section>

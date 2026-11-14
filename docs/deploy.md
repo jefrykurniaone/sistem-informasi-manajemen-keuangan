@@ -297,7 +297,7 @@ foto komplek, lalu deploy ulang seperti bagian 3.
 ## 7. Mengubah nama komplek berarti deploy ulang
 
 `PUBLIC_COMPLEX_NAME` dibekukan ke dalam image saat build (build arg, dibaca lewat
-`$env/static/public`), bukan dibaca dari `.env` di server. Mengubah nilainya di `.env.deploy` tidak
+`$app/env/public` dan dideklarasikan `static` di `src/env.ts`), bukan dibaca dari `.env` di server. Mengubah nilainya di `.env.deploy` tidak
 berpengaruh sampai `scripts/deploy.sh` dijalankan lagi, karena itulah yang membangun ulang image
 dengan nilai barunya.
 

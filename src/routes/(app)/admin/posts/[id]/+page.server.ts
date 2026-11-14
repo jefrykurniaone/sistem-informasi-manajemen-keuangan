@@ -1,13 +1,13 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { civilDayOf, formatDateTime, formatTime } from '$lib/time';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { POST_STATUS, POST_TYPES, type PostType } from '$lib/server/db/schema/post';
-import { assertUuidParam } from '$lib/server/services/identifier';
-import { systemClock } from '$lib/server/ports/clock';
-import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
+import * as m from '#lib/paraglide/messages.js';
+import { civilDayOf, formatDateTime, formatTime } from '#lib/time.ts';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { POST_STATUS, POST_TYPES, type PostType } from '#lib/server/db/schema/post.ts';
+import { assertUuidParam } from '#lib/server/services/identifier.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import {
 	archivePost,
 	assertAcceptableCoverImage,
@@ -25,8 +25,8 @@ import {
 	updatePost,
 	type CoverImageUpload,
 	type PostRule
-} from '$lib/server/services/post';
-import { combineCivilDateTime } from '$lib/server/services/post/time';
+} from '#lib/server/services/post/index.ts';
+import { combineCivilDateTime } from '#lib/server/services/post/time.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -51,7 +51,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 		redirect(303, AUTH_PATHS.login);
 	}
 	// `posts.id` is a `uuid` column, and a non-uuid `params.id` must be refused here rather than
-	// reach `getPost`'s comparison — see #111 and `$lib/server/services/identifier.ts`.
+	// reach `getPost`'s comparison — see #111 and `#lib/server/services/identifier.ts`.
 	assertUuidParam(params.id, m.adminPosts_notFound());
 
 	try {
@@ -122,7 +122,7 @@ export const actions: Actions = {
 		}
 
 		// Checked before anything is written, for the same reason the write screen checks it there —
-		// see `assertAcceptableCoverImage` in `$lib/server/services/post`.
+		// see `assertAcceptableCoverImage` in `#lib/server/services/post/index.ts`.
 		const coverImage = await readCoverImage(form);
 		const coverRefusal = coverImage && coverImageRefusal(coverImage);
 		if (coverRefusal) {
@@ -300,7 +300,7 @@ function civilDateAndTimeOf(instant: Date | null): { date: string; time: string 
 
 /**
  * An instant as a sentence, labelled with the WIB zone, or `null` when there is no instant —
- * `formatDateTime` from `$lib/time`. The copy on `(app)/admin/posts/+page.server.ts` carries the
+ * `formatDateTime` from `#lib/time.ts`. The copy on `(app)/admin/posts/+page.server.ts` carries the
  * note about why the formatting happens here rather than in the page.
  */
 function formatInstant(instant: Date | null): string | null {

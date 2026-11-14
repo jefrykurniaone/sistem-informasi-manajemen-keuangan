@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { formatRupiah } from '$lib/money';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import { formatRupiah } from '#lib/money.ts';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -24,7 +24,7 @@
 		<div class="flex flex-col gap-3">
 			{#each data.overdue as row (row.unitId)}
 				<a
-					href={resolve(`/admin/overdue/${row.unitId}`)}
+					href={resolve(`admin/overdue/${row.unitId}`)}
 					class="flex min-h-11 flex-col gap-2 rounded-lg border border-border p-4"
 				>
 					<div class="flex flex-wrap items-center justify-between gap-2">

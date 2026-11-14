@@ -7,7 +7,7 @@ import {
 	formatDay,
 	formatMonthLabel,
 	formatTime
-} from '$lib/time';
+} from '#lib/time.ts';
 
 /**
  * The complex's calendar. Every instant below is chosen to sit on a different side of midnight

@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { jobRuns, JOB_RUN_STATUS, type JobRun } from '$lib/server/db/schema/scheduler';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { jobRuns, JOB_RUN_STATUS, type JobRun } from '#lib/server/db/schema/scheduler.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	BACKOFF_DELAY_FACTOR,
 	BACKOFF_FIRST_DELAY_MILLISECONDS,
@@ -24,9 +24,9 @@ import {
 	type JobIncident,
 	type JobOutcome,
 	type Schedule
-} from '$lib/server/scheduler';
-import { COMPLEX_TIME_ZONE } from '$lib/time';
-import { invoiceIssuanceJob } from '$lib/server/services/dues/jobs';
+} from '#lib/server/scheduler/index.ts';
+import { COMPLEX_TIME_ZONE } from '#lib/time.ts';
+import { invoiceIssuanceJob } from '#lib/server/services/dues/jobs.ts';
 import { _describeRunError, _formatPeriod } from '../../src/routes/(app)/admin/jobs/+page.server';
 
 /**

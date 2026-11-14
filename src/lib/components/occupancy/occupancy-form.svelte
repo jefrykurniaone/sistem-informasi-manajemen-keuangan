@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as m from '$lib/paraglide/messages.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * The "record a stay" form on `src/routes/(app)/admin/units/[id]/occupancies/+page.svelte`. It
@@ -8,7 +8,7 @@
 	 * the four fields the action reads and the message its last result carried, if any. Same shape as
 	 * `src/lib/components/unit/unit-form.svelte`, which #17 left behind.
 	 *
-	 * **The lists come in as props, including the occupancy roles.** Nothing under `$lib/server` may
+	 * **The lists come in as props, including the occupancy roles.** Nothing under `#lib/server` may
 	 * be imported from a component — that is the boundary SvelteKit enforces — so `OCCUPANCY_ROLES`
 	 * is read in `+page.server.ts` and handed down, rather than the two role values being spelled a
 	 * second time here where they could quietly drift from the check constraint.

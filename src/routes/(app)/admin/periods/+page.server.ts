@@ -1,11 +1,11 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { ACTION, isAllowed, rolesOf } from '$lib/server/authz';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { PERIOD_STATUS } from '$lib/server/db/schema/period';
-import { systemClock } from '$lib/server/ports/clock';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { ACTION, isAllowed, rolesOf } from '#lib/server/authz.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { PERIOD_STATUS } from '#lib/server/db/schema/period.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	listPeriods,
 	PERIOD_RULE,
@@ -13,7 +13,7 @@ import {
 	PeriodRuleError,
 	unlockPeriod,
 	type PeriodRule
-} from '$lib/server/services/cash/period';
+} from '#lib/server/services/cash/period.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -27,7 +27,7 @@ import type { Actions, PageServerLoad } from './$types';
  *
  * This route decides nothing about periods. Which months exist, whether a month with no row is
  * open, and whether this caller may reopen one are all answered in
- * `$lib/server/services/cash/period` and travel here as data — including `mayUnlock`, which only
+ * `#lib/server/services/cash/period.ts` and travel here as data — including `mayUnlock`, which only
  * decides whether the button is drawn. `unlockPeriod` refuses an admin on its own, so a hand-posted
  * form gains nothing by the button being absent.
  *

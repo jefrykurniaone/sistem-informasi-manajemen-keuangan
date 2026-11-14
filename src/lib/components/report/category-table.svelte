@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { Rupiah } from '$lib/money';
+	import type { Rupiah } from '#lib/money.ts';
 	import type { ReportCategoryDetail, ReportDirection } from './category-drilldown.svelte';
 	import { oppositeDirection } from './category-drilldown.svelte';
 
@@ -56,8 +56,8 @@
 
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { formatRupiah, rupiah } from '$lib/money';
-	import * as m from '$lib/paraglide/messages.js';
+	import { formatRupiah, rupiah } from '#lib/money.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import CategoryDrilldown from './category-drilldown.svelte';
 
 	/**
@@ -77,21 +77,24 @@
 	 * `mayDrillDown`, so a link this component failed to draw would still be refused if somebody
 	 * typed its address.
 	 *
-	 * ## Why every open, close and other-direction link carries `noscroll` and `keepfocus`
+	 * ## Why every open, close and other-direction link carries `data-sveltekit-reset="false"`
 	 *
 	 * Opening or closing a detail is a navigation, because the address is what makes it work
 	 * without JavaScript and what a reader shares. The other-direction sentence's link is the same
 	 * kind of navigation: it opens the category's other line, in whichever table that is, which is
 	 * why `otherDirectionLinkFor` below opens the *opposite* of this table's own direction rather than
-	 * reusing `openQuery`'s default. `noscroll` keeps the screen where it was instead of jumping to
-	 * the top. `keepfocus` stops SvelteKit resetting focus: in the installed 2.70, `reset_focus` in
-	 * `@sveltejs/kit/src/runtime/client/client.js` sets the focus starting point to the `#` with
-	 * `location.replace` inside a `setTimeout` and then scrolls back, which can flicker, and lands
-	 * after the report page's own `afterNavigate` has moved focus to the heading or back to "Lihat
-	 * transaksi", undoing it. The page does the focusing; see its `afterNavigate`, which needs no
-	 * change for the other-direction link: it opens a new category line exactly as "Lihat transaksi"
-	 * does, in whichever table it belongs to. Without JavaScript neither attribute means anything and
-	 * the browser jumps to the `#` row, which is where the reader was.
+	 * reusing `openQuery`'s default. `reset="false"` does two things, which SvelteKit 2 spelled as
+	 * the separate `noscroll` and `keepfocus` attributes. It keeps the screen where it was instead of
+	 * jumping to the top. And it stops SvelteKit resetting focus: `finish_navigation` in
+	 * `@sveltejs/kit/src/runtime/client/client.js` calls `reset_focus` only when `reset` is true, and
+	 * that function sets the focus starting point to the `#` with `location.replace` inside a
+	 * `setTimeout` and then scrolls back, which can flicker, and lands after the report page's own
+	 * `afterNavigate` has moved focus to the heading or back to "Lihat transaksi", undoing it. The
+	 * page does the focusing; see its `afterNavigate`, which needs no change for the other-direction
+	 * link: it opens a new category line exactly as "Lihat transaksi" does, in whichever table it
+	 * belongs to. SvelteKit 3 ignores the old attributes without an error, so a leftover one would
+	 * silently bring the jump back. Without JavaScript the attribute means nothing and the browser
+	 * jumps to the `#` row, which is where the reader was.
 	 *
 	 * `total` is the sum of the lines rather than a figure passed in beside them, because the two
 	 * would be free to disagree; the report's own headline totals come from the same breakdown
@@ -178,11 +181,10 @@
 	<a
 		class={linkClass}
 		href={resolve(
-			`/reports/${target.period}?${closeQuery(target)}#${categoryRowId(target.direction, line.categoryId)}`
+			`reports/${target.period}?${closeQuery(target)}#${categoryRowId(target.direction, line.categoryId)}`
 		)}
 		aria-label={m.reports_drilldown_closeLabel({ category: line.name })}
-		data-sveltekit-noscroll
-		data-sveltekit-keepfocus
+		data-sveltekit-reset="false"
 	>
 		{m.reports_drilldown_closeLink()}
 	</a>
@@ -203,10 +205,9 @@
 	<a
 		class={OTHER_DIRECTION_LINK_CLASS}
 		href={resolve(
-			`/reports/${target.period}?${openQuery(target, line.categoryId, other)}#${categoryRowId(other, line.categoryId)}`
+			`reports/${target.period}?${openQuery(target, line.categoryId, other)}#${categoryRowId(other, line.categoryId)}`
 		)}
-		data-sveltekit-noscroll
-		data-sveltekit-keepfocus
+		data-sveltekit-reset="false"
 	>
 		{isOwnDirection
 			? m.reports_drilldown_otherDirectionCorrectionLink()
@@ -263,10 +264,9 @@
 										id={drilldownOpenLinkId(drilldown.direction, line.categoryId)}
 										class={ROW_LINK_CLASS}
 										href={resolve(
-											`/reports/${drilldown.period}?${openQuery(drilldown, line.categoryId)}#${categoryRowId(drilldown.direction, line.categoryId)}`
+											`reports/${drilldown.period}?${openQuery(drilldown, line.categoryId)}#${categoryRowId(drilldown.direction, line.categoryId)}`
 										)}
-										data-sveltekit-noscroll
-										data-sveltekit-keepfocus
+										data-sveltekit-reset="false"
 									>
 										{m.reports_categories_drilldownLink()}
 									</a>

@@ -10,7 +10,7 @@ import {
 	uniqueIndex,
 	uuid
 } from 'drizzle-orm/pg-core';
-import type { Rupiah } from '$lib/money';
+import type { Rupiah } from '#lib/money.ts';
 import { user } from './auth';
 import type { CashCategoryType } from './cash-category';
 import { periods } from './period';

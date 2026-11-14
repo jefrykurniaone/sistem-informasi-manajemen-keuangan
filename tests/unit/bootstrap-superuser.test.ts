@@ -1,15 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { auditEntriesFor } from '$lib/server/audit';
-import { rolesOf } from '$lib/server/authz';
-import { auditLog } from '$lib/server/db/schema/audit';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { bootstrapSuperuser, MACHINE_OPERATOR_ACTOR_ID } from '$lib/server/services/user/bootstrap';
-import { grantRole, ROLE_CHANGE_ACTION } from '$lib/server/services/user/roles';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { rolesOf } from '#lib/server/authz.ts';
+import { auditLog } from '#lib/server/db/schema/audit.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import {
+	bootstrapSuperuser,
+	MACHINE_OPERATOR_ACTOR_ID
+} from '#lib/server/services/user/bootstrap.ts';
+import { grantRole, ROLE_CHANGE_ACTION } from '#lib/server/services/user/roles.ts';
 
 /**
  * The way the first superuser comes into being, against a real PostgreSQL — with the trigger from

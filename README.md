@@ -267,9 +267,8 @@ The decisions below were set by the scaffolding ticket and are followed by all l
 The outbound ports `EmailSender`, `FileStore`, and `Clock` live under `src/lib/server/ports/`,
 next to the service layer, and are faked in tests.
 
-**Tooling configuration.** From SvelteKit 2.63 with `@sveltejs/vite-plugin-svelte` 7, SvelteKit's
-configuration no longer lives in `svelte.config.js` but inside the `sveltekit()` plugin's options
-in `vite.config.ts`. That file also holds the Tailwind CSS v4 plugin and the Vitest configuration,
+**Tooling configuration.** SvelteKit 3's configuration does not live in a `svelte.config.js` but
+inside the `sveltekit()` plugin's options in `vite.config.ts`. That file also holds the Tailwind CSS v4 plugin and the Vitest configuration,
 so it is the one place to add the next Vite plugin. Tailwind v4 uses the `@tailwindcss/vite`
 plugin with its configuration inside CSS (`src/app.css`), not `tailwind.config.js`.
 

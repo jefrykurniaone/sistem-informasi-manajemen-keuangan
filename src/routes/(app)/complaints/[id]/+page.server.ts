@@ -1,13 +1,13 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { COMPLAINT_STATUS } from '$lib/server/db/schema/complaint';
-import { systemClock } from '$lib/server/ports/clock';
-import type { FileStore } from '$lib/server/ports/file-store';
-import { assertUuidParam } from '$lib/server/services/identifier';
-import { formatDateTime } from '$lib/time';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { COMPLAINT_STATUS } from '#lib/server/db/schema/complaint.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import type { FileStore } from '#lib/server/ports/file-store.ts';
+import { assertUuidParam } from '#lib/server/services/identifier.ts';
+import { formatDateTime } from '#lib/time.ts';
 import {
 	addComplaintReply,
 	COMPLAINT_REPLY_RULE,
@@ -19,11 +19,11 @@ import {
 	withdrawComplaint,
 	type ComplaintAttachmentSummary,
 	type ComplaintReplyRule
-} from '$lib/server/services/complaint';
-import { complaintStatusHistory } from '$lib/server/services/complaint/history';
-import { ComplaintTransitionError } from '$lib/server/services/complaint/state-machine';
-import { reporterIdForUser } from '$lib/server/services/complaint/visibility';
-import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
+} from '#lib/server/services/complaint/index.ts';
+import { complaintStatusHistory } from '#lib/server/services/complaint/history.ts';
+import { ComplaintTransitionError } from '#lib/server/services/complaint/state-machine.ts';
+import { reporterIdForUser } from '#lib/server/services/complaint/visibility.ts';
+import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -59,7 +59,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		redirect(303, AUTH_PATHS.login);
 	}
 	// `complaints.id` is a `uuid` column; a non-uuid `params.id` must be refused here, before it
-	// reaches `getComplaint`'s comparison — see #111 and `$lib/server/services/identifier.ts`.
+	// reaches `getComplaint`'s comparison — see #111 and `#lib/server/services/identifier.ts`.
 	assertUuidParam(params.id, m.complaintDetail_notFound());
 
 	try {
@@ -164,7 +164,7 @@ async function toLink(attachment: ComplaintAttachmentSummary, fileStore: FileSto
 	return { id: attachment.id, url: await fileStore.signedLink(attachment.fileKey) };
 }
 
-/** An instant as a sentence, in the complex's own zone — `$lib/time`'s `formatDateTime`. */
+/** An instant as a sentence, in the complex's own zone — `#lib/time.ts`'s `formatDateTime`. */
 function formatInstant(instant: Date): string {
 	return formatDateTime(instant);
 }

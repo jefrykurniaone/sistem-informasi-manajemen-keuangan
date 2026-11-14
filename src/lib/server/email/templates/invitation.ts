@@ -1,4 +1,4 @@
-import type { EmailPayload, EmailTemplate, EmailTemplates } from '$lib/server/ports/email';
+import type { EmailPayload, EmailTemplate, EmailTemplates } from '#lib/server/ports/email.ts';
 
 /**
  * The email that invites someone to become a resident: it carries the one link that lets them set

@@ -1,20 +1,20 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { PermissionDeniedError } from '$lib/errors';
-import { systemClock } from '$lib/server/ports/clock';
-import { residentProfileForUser } from '$lib/server/services/resident/profile';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { residentProfileForUser } from '#lib/server/services/resident/profile.ts';
 import {
 	MandatorySubscriptionKindError,
 	setSubscriptionPreference,
 	subscriptionPreferencesFor
-} from '$lib/server/services/subscription';
+} from '#lib/server/services/subscription/index.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
  * A resident's own notification preferences — Langganan. Every known kind is listed, mandatory ones
- * shown as such with no control to switch them off; see `$lib/server/services/subscription/kinds.ts`
- * for the registry and `$lib/server/services/subscription/index.ts` for the guard.
+ * shown as such with no control to switch them off; see `#lib/server/services/subscription/kinds.ts`
+ * for the registry and `#lib/server/services/subscription/index.ts` for the guard.
  *
  * **A signed-in account with no `residents` row is expected, not an error** — the same state
  * `(app)/profile/+page.server.ts` handles, and for the same reason. `load` returns an empty

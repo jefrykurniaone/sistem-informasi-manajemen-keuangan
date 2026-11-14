@@ -1,15 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah, type Rupiah } from '$lib/money';
-import { auditEntriesFor } from '$lib/server/audit';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { duesRates } from '$lib/server/db/schema/dues-rate';
-import { invoices } from '$lib/server/db/schema/invoice';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { duesRates } from '#lib/server/db/schema/dues-rate.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	createDuesRate,
 	deleteDuesRate,
@@ -24,7 +24,7 @@ import {
 	DUES_RATE_CREATED_ACTION,
 	DUES_RATE_DELETED_ACTION,
 	DUES_RATE_UPDATED_ACTION
-} from '$lib/server/services/dues/rate';
+} from '#lib/server/services/dues/rate.ts';
 
 /**
  * The Tarif service: the rate in force on a day, the history screen's list, and the rule that a rate

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import * as m from '$lib/paraglide/messages.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * One row of the public board's list — `(public)/posts/+page.svelte`'s per-Post card. It shows
@@ -90,7 +90,7 @@
 
 	<a
 		class="flex h-11 min-w-24 items-center text-sm underline underline-offset-2"
-		href={resolve(`/posts/${id}`)}
+		href={resolve(`posts/${id}`)}
 	>
 		{m.postPublic_readMoreLink()}
 	</a>

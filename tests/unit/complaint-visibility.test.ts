@@ -1,20 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { auditEntriesFor } from '$lib/server/audit';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
 import {
 	COMPLAINT_STATUS,
 	COMPLAINT_VISIBILITY,
 	complaints,
 	type Complaint,
 	type ComplaintVisibility
-} from '$lib/server/db/schema/complaint';
-import { residents } from '$lib/server/db/schema/resident';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+} from '#lib/server/db/schema/complaint.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	COMPLAINT_RULE,
 	COMPLAINT_VISIBILITY_CHANGED_ACTION,
@@ -22,14 +22,14 @@ import {
 	getComplaint,
 	listComplaints,
 	setComplaintVisibility
-} from '$lib/server/services/complaint';
+} from '#lib/server/services/complaint/index.ts';
 import {
 	COMPLAINT_SCOPE_ALL,
 	COMPLAINT_SCOPE_NONE,
 	complaintReadScopeFor,
 	complaintScopeFilter,
 	mayReadComplaint
-} from '$lib/server/services/complaint/visibility';
+} from '#lib/server/services/complaint/visibility.ts';
 
 /**
  * Who may read which Keluhan. `docs/spec-keluhan-v1.md` asks for this as "tabel kasus antara peran

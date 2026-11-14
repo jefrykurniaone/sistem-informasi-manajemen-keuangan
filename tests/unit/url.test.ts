@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { withoutTrailingSlashes } from '$lib/server/url';
+import { withoutTrailingSlashes } from '#lib/server/url.ts';
 
 describe('withoutTrailingSlashes', () => {
 	it.each([

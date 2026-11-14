@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import PaymentQueueTable from '$lib/components/dues/payment-queue-table.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import PaymentQueueTable from '#lib/components/dues/payment-queue-table.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -19,7 +19,7 @@
 	</header>
 
 	<a
-		href={resolve('/admin/payments/cash')}
+		href={resolve('admin/payments/cash')}
 		class="inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4"
 	>
 		{m.adminPayments_cashLink()}

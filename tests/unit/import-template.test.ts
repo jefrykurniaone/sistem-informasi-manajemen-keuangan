@@ -5,13 +5,13 @@ import {
 	IMPORT_TEMPLATE_CONTENT_TYPE,
 	IMPORT_TEMPLATE_FILENAME,
 	buildImportTemplate
-} from '$lib/server/services/import/template';
-import { readResidentRows } from '$lib/server/services/import/xlsx';
+} from '#lib/server/services/import/template.ts';
+import { readResidentRows } from '#lib/server/services/import/xlsx.ts';
 import {
 	IMPORT_HEADER,
 	IMPORT_ROLE_WORDS,
 	validateImportRows
-} from '$lib/server/services/import/validation';
+} from '#lib/server/services/import/validation.ts';
 
 /**
  * The Template Impor, proved by reading it back with the same library that wrote it.

@@ -1,21 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah, type Rupiah } from '$lib/money';
-import { auditEntriesFor } from '$lib/server/audit';
-import { allocations } from '$lib/server/db/schema/allocation';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { invoices } from '$lib/server/db/schema/invoice';
-import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '$lib/server/db/schema/payment';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { openInvoicesOfUnit } from '$lib/server/services/dues/allocation';
-import { releaseAllocation } from '$lib/server/services/dues/allocation-release';
-import { creditBalanceOfUnit } from '$lib/server/services/dues/credit-balance';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { allocations } from '#lib/server/db/schema/allocation.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '#lib/server/db/schema/payment.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { openInvoicesOfUnit } from '#lib/server/services/dues/allocation.ts';
+import { releaseAllocation } from '#lib/server/services/dues/allocation-release.ts';
+import { creditBalanceOfUnit } from '#lib/server/services/dues/credit-balance.ts';
 import {
 	INVOICE_VOIDED_ACTION,
 	InvoiceNotFoundError,
@@ -23,8 +23,8 @@ import {
 	VoidRefusedAllocatedError,
 	VoidRuleError,
 	voidInvoice
-} from '$lib/server/services/dues/invoice-void';
-import { INVOICE_STATUS, invoiceStatus } from '$lib/server/services/dues/queries';
+} from '#lib/server/services/dues/invoice-void.ts';
+import { INVOICE_STATUS, invoiceStatus } from '#lib/server/services/dues/queries.ts';
 
 /**
  * Pembatalan Tagihan — user stories 20 and 21 of `docs/spec-iuran-v1.md`, and #30's first

@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { auditEntriesFor } from '$lib/server/audit';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
 import {
 	COMPLAINT_STATUS,
 	COMPLAINT_STATUSES,
@@ -13,10 +13,10 @@ import {
 	complaints,
 	type Complaint,
 	type ComplaintStatus
-} from '$lib/server/db/schema/complaint';
-import { residents } from '$lib/server/db/schema/resident';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+} from '#lib/server/db/schema/complaint.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	changeComplaintStatus,
 	COMPLAINT_RULE,
@@ -24,7 +24,7 @@ import {
 	ComplaintNotFoundError,
 	ComplaintRuleError,
 	withdrawComplaint
-} from '$lib/server/services/complaint';
+} from '#lib/server/services/complaint/index.ts';
 import {
 	COMPLAINT_ACTOR,
 	ComplaintTransitionError,
@@ -33,7 +33,7 @@ import {
 	isTerminalComplaintStatus,
 	OPEN_COMPLAINT_STATUSES,
 	type ComplaintActor
-} from '$lib/server/services/complaint/state-machine';
+} from '#lib/server/services/complaint/state-machine.ts';
 
 /**
  * The Keluhan state machine: the table of legal moves, and the service layer that is the only way

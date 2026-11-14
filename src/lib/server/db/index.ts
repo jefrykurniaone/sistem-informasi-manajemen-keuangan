@@ -17,9 +17,9 @@ import * as schema from './schema';
  *    into the import graph of pure unit tests and command-line tooling that never touch the
  *    database at all; building a connection pool at import time would make them fail for reasons
  *    unrelated to what is under test.
- * 3. **`process.env`, not `$env/dynamic/private`.** This file is read from three places with
+ * 3. **`process.env`, not `$app/env/private`.** This file is read from three places with
  *    different module loaders: the SvelteKit server, Vitest, and `drizzle-kit`. Only the first
- *    can resolve the `$env` alias. `process.env` works in all three, and `bun run` has already
+ *    can resolve the `$app/env` modules. `process.env` works in all three, and `bun run` has already
  *    loaded `.env` into it before any command runs.
  * 4. **Errors that name the variable.** An empty URL is rejected here with a message naming its
  *    environment variable, rather than being passed to the driver and surfacing a dozen frames

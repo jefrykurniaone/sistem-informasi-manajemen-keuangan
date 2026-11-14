@@ -10,7 +10,7 @@ import {
 	readAuthSecret,
 	readOrigin,
 	type Auth
-} from '$lib/server/auth';
+} from '#lib/server/auth.ts';
 import {
 	account,
 	emailQueue,
@@ -18,15 +18,18 @@ import {
 	user,
 	verification,
 	type QueuedEmail
-} from '$lib/server/db/schema';
-import { testDatabase } from '$lib/server/db/test-helpers';
+} from '#lib/server/db/schema/index.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import {
 	PASSWORD_RESET_KIND,
 	passwordResetTemplates
-} from '$lib/server/email/templates/password-reset';
-import { VERIFY_EMAIL_KIND, verifyEmailTemplates } from '$lib/server/email/templates/verify-email';
-import { processEmailQueue } from '$lib/server/email/worker';
-import { FakeClock, FakeEmailSender } from '$lib/server/ports/fakes';
+} from '#lib/server/email/templates/password-reset.ts';
+import {
+	VERIFY_EMAIL_KIND,
+	verifyEmailTemplates
+} from '#lib/server/email/templates/verify-email.ts';
+import { processEmailQueue } from '#lib/server/email/worker.ts';
+import { FakeClock, FakeEmailSender } from '#lib/server/ports/fakes.ts';
 
 /**
  * Authentication, against a real PostgreSQL and the real better-auth.

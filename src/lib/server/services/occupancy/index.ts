@@ -1093,7 +1093,7 @@ async function findNextOccupancy(
 }
 
 /** `day` plus one calendar day, both as `YYYY-MM-DD`. A calendar day has no time-zone component, so
- * doing the arithmetic in UTC cannot shift it — unlike `civilDayOf` in `$lib/time`, which reads an
+ * doing the arithmetic in UTC cannot shift it — unlike `civilDayOf` in `#lib/time.ts`, which reads an
  * instant, this reads and returns a day and never touches `Clock`.
  */
 function nextDay(day: string): string {

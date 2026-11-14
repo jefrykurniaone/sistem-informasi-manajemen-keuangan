@@ -1,5 +1,5 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * What one CSV import would do, and every row of it that cannot be imported — the whole of the
@@ -12,7 +12,7 @@
 	 * can read is bad, and a refused row with no reason at all is worse.
 	 */
 	interface ProblemReason {
-		/** One of `IMPORT_PROBLEM` in `$lib/server/services/import/validation`. */
+		/** One of `IMPORT_PROBLEM` in `#lib/server/services/import/validation.ts`. */
 		readonly code: string;
 		/** The block and number, the address, or the word the row carried. May be empty. */
 		readonly value: string;

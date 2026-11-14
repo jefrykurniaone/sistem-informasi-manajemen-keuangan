@@ -32,9 +32,9 @@
 </script>
 
 <script lang="ts">
-	import RupiahInput from '$lib/components/rupiah-input.svelte';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as m from '$lib/paraglide/messages.js';
+	import RupiahInput from '#lib/components/rupiah-input.svelte';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * The form an admin records one Transaksi Kas on, used by

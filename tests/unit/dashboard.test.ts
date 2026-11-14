@@ -1,34 +1,34 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { rupiah, type Rupiah } from '$lib/money';
-import { civilDayOf } from '$lib/time';
-import { allocations } from '$lib/server/db/schema/allocation';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { CASH_CATEGORY_TYPE } from '$lib/server/db/schema/cash-category';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { civilDayOf } from '#lib/time.ts';
+import { allocations } from '#lib/server/db/schema/allocation.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { CASH_CATEGORY_TYPE } from '#lib/server/db/schema/cash-category.ts';
 import {
 	COMPLAINT_STATUS,
 	COMPLAINT_VISIBILITY,
 	complaints,
 	type ComplaintStatus
-} from '$lib/server/db/schema/complaint';
-import { duesRates } from '$lib/server/db/schema/dues-rate';
-import { invoices } from '$lib/server/db/schema/invoice';
-import { OCCUPANCY_ROLE, occupancies } from '$lib/server/db/schema/occupancy';
-import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '$lib/server/db/schema/payment';
-import { POST_STATUS, POST_TYPE, posts, type PostStatus } from '$lib/server/db/schema/post';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
-import { JOB_RUN_PRUNE_JOB_NAME } from '$lib/server/scheduler';
-import { createCashCategory } from '$lib/server/services/cash/category';
-import { recordOpeningBalance } from '$lib/server/services/cash/opening-balance';
-import { recordCashTransaction } from '$lib/server/services/cash/transaction';
-import { adminDashboard, residentDashboard } from '$lib/server/services/dashboard';
-import { issueInvoicesForPeriod } from '$lib/server/services/dues/issuance';
-import { INVOICE_STATUS, invoiceStatus } from '$lib/server/services/dues/queries';
+} from '#lib/server/db/schema/complaint.ts';
+import { duesRates } from '#lib/server/db/schema/dues-rate.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { OCCUPANCY_ROLE, occupancies } from '#lib/server/db/schema/occupancy.ts';
+import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '#lib/server/db/schema/payment.ts';
+import { POST_STATUS, POST_TYPE, posts, type PostStatus } from '#lib/server/db/schema/post.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
+import { JOB_RUN_PRUNE_JOB_NAME } from '#lib/server/scheduler/index.ts';
+import { createCashCategory } from '#lib/server/services/cash/category.ts';
+import { recordOpeningBalance } from '#lib/server/services/cash/opening-balance.ts';
+import { recordCashTransaction } from '#lib/server/services/cash/transaction.ts';
+import { adminDashboard, residentDashboard } from '#lib/server/services/dashboard/index.ts';
+import { issueInvoicesForPeriod } from '#lib/server/services/dues/issuance.ts';
+import { INVOICE_STATUS, invoiceStatus } from '#lib/server/services/dues/queries.ts';
 
 /**
  * The Beranda service over a database seeded once: two houses billed for `2026-09` through the real

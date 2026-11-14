@@ -1,7 +1,6 @@
 {
-	"extends": "./.svelte-kit/tsconfig.json",
+	"extends": "$app/tsconfig",
 	"compilerOptions": {
-		"rewriteRelativeImportExtensions": true,
 		"allowJs": true,
 		"checkJs": true,
 		"esModuleInterop": true,
@@ -11,10 +10,11 @@
 		"sourceMap": true,
 		"strict": true,
 		"moduleResolution": "bundler"
-	}
-	// Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias
-	// except $lib which is handled by https://svelte.dev/docs/kit/configuration#files
-	//
-	// To make changes to top-level options such as include and exclude, we recommend extending
-	// the generated config; see https://svelte.dev/docs/kit/configuration#typescript
+	},
+	// `$app/tsconfig` is written into node_modules by `svelte-kit sync` and carries no `include`, so
+	// this file names what gets checked: the same set SvelteKit 2's generated
+	// `.svelte-kit/tsconfig.json` covered. `allowImportingTsExtensions`, which every `#lib/....ts`
+	// specifier needs, comes from `$app/tsconfig` itself.
+	"include": ["src", "tests", "vite.config.ts"],
+	"exclude": ["node_modules", "src/service-worker", "src/service-worker.*"]
 }

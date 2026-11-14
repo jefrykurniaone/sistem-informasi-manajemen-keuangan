@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { pageTitle } from '$lib/complex-name';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as m from '$lib/paraglide/messages.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -24,7 +24,7 @@
 	{#if data.token === ''}
 		<p class="text-sm">
 			{m.setPassword_noTokenIntro()}
-			<a class="underline underline-offset-4" href={resolve('/forgot-password')}>
+			<a class="underline underline-offset-4" href={resolve('forgot-password')}>
 				{m.setPassword_forgotPasswordLinkText()}
 			</a>.
 		</p>

@@ -1,13 +1,13 @@
 import { error, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { ACTION, requirePermission } from '$lib/server/authz';
-import { database } from '$lib/server/db';
-import type { ComplaintStatus } from '$lib/server/db/schema/complaint';
-import { systemClock } from '$lib/server/ports/clock';
-import { complaintWorklistSummary, listComplaints } from '$lib/server/services/complaint';
-import { OPEN_COMPLAINT_STATUSES } from '$lib/server/services/complaint/state-machine';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { ACTION, requirePermission } from '#lib/server/authz.ts';
+import { database } from '#lib/server/db/index.ts';
+import type { ComplaintStatus } from '#lib/server/db/schema/complaint.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { complaintWorklistSummary, listComplaints } from '#lib/server/services/complaint/index.ts';
+import { OPEN_COMPLAINT_STATUSES } from '#lib/server/services/complaint/state-machine.ts';
 import type { PageServerLoad } from './$types';
 
 /**

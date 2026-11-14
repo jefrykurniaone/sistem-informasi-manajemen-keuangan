@@ -1,7 +1,7 @@
 import { and, count, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah, type Rupiah } from '$lib/money';
-import { civilDayOf, civilMonthOf } from '$lib/time';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { civilDayOf, civilMonthOf } from '#lib/time.ts';
 import type { Database } from '../../db';
 import { allocations } from '../../db/schema/allocation';
 import { CASH_CATEGORY_TYPE } from '../../db/schema/cash-category';

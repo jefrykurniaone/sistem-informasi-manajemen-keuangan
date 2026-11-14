@@ -24,7 +24,7 @@
  * `./auth.ts` would stop building. An import attribute (`with { type: 'text' }`) fails the other
  * way round: Bun reads it, and Vite ignores it and hands back a `data:` URL instead of the text.
  *
- * The list never reaches a browser: this module sits under `$lib/server`, which SvelteKit refuses to
+ * The list never reaches a browser: this module sits under `#lib/server`, which SvelteKit refuses to
  * let client code import.
  *
  * ## Where the list comes from

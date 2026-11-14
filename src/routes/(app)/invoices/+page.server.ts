@@ -1,8 +1,8 @@
 import { redirect } from '@sveltejs/kit';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
-import { invoicesForUser } from '$lib/server/services/dues/queries';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { invoicesForUser } from '#lib/server/services/dues/queries.ts';
 import type { PageServerLoad } from './$types';
 
 /**

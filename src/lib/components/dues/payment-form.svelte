@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { Rupiah } from '$lib/money';
+	import type { Rupiah } from '#lib/money.ts';
 
 	/**
 	 * What the recording form holds, as the strings a form really carries.
@@ -43,11 +43,11 @@
 
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import RupiahInput from '$lib/components/rupiah-input.svelte';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import ProofUpload from '$lib/components/dues/proof-upload.svelte';
-	import { formatRupiah, rupiah } from '$lib/money';
-	import * as m from '$lib/paraglide/messages.js';
+	import RupiahInput from '#lib/components/rupiah-input.svelte';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import ProofUpload from '#lib/components/dues/proof-upload.svelte';
+	import { formatRupiah, rupiah } from '#lib/money.ts';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * The form a Warga records one Pembayaran on, used by

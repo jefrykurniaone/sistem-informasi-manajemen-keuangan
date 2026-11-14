@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -40,7 +40,7 @@
 		<p class="text-sm">
 			<a
 				class="inline-flex min-h-11 items-center underline underline-offset-4"
-				href={resolve('/register')}
+				href={resolve('register')}
 			>
 				{m.pendingApproval_registerAgain()}
 			</a>
@@ -53,7 +53,7 @@
 		<p class="text-sm">
 			<a
 				class="inline-flex min-h-11 items-center underline underline-offset-4"
-				href={resolve('/my-unit')}
+				href={resolve('my-unit')}
 			>
 				{m.pendingApproval_toMyUnit()}
 			</a>
@@ -66,7 +66,7 @@
 		<p class="text-sm">
 			<a
 				class="inline-flex min-h-11 items-center underline underline-offset-4"
-				href={resolve('/register')}
+				href={resolve('register')}
 			>
 				{m.pendingApproval_registerAgain()}
 			</a>

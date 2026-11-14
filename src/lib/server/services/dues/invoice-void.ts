@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import type { Rupiah } from '$lib/money';
+import type { Rupiah } from '#lib/money.ts';
 import { recordAuditEntry } from '../../audit';
 import { ACTION, requirePermission, type Transaction } from '../../authz';
 import type { Database } from '../../db';

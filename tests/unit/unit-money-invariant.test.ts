@@ -1,28 +1,28 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { rupiah, type Rupiah } from '$lib/money';
-import { allocations } from '$lib/server/db/schema/allocation';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { duesRates } from '$lib/server/db/schema/dues-rate';
-import { invoices } from '$lib/server/db/schema/invoice';
-import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '$lib/server/db/schema/payment';
-import { refunds } from '$lib/server/db/schema/refund';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
-import { creditBalanceOfUnit } from '$lib/server/services/dues/credit-balance';
-import { refundCredit } from '$lib/server/services/dues/credit-refund';
-import { issueInvoicesForPeriod } from '$lib/server/services/dues/issuance';
-import { cancelOwnPayment } from '$lib/server/services/dues/payment';
-import { openInvoicesOfUnit } from '$lib/server/services/dues/allocation';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { allocations } from '#lib/server/db/schema/allocation.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { duesRates } from '#lib/server/db/schema/dues-rate.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '#lib/server/db/schema/payment.ts';
+import { refunds } from '#lib/server/db/schema/refund.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
+import { creditBalanceOfUnit } from '#lib/server/services/dues/credit-balance.ts';
+import { refundCredit } from '#lib/server/services/dues/credit-refund.ts';
+import { issueInvoicesForPeriod } from '#lib/server/services/dues/issuance.ts';
+import { cancelOwnPayment } from '#lib/server/services/dues/payment.ts';
+import { openInvoicesOfUnit } from '#lib/server/services/dues/allocation.ts';
 import {
 	recordCashPayment,
 	rejectPayment,
 	verifyPayment
-} from '$lib/server/services/dues/verification';
+} from '#lib/server/services/dues/verification.ts';
 
 /**
  * The unit money invariant, run the way the spec asks — "diuji sebagai pernyataan yang dijalankan

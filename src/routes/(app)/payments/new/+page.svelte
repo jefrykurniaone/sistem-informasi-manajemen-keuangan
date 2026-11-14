@@ -3,9 +3,9 @@
 	import PaymentForm, {
 		EMPTY_PAYMENT_FORM_VALUES,
 		type PaymentFormValues
-	} from '$lib/components/dues/payment-form.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	} from '#lib/components/dues/payment-form.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -40,10 +40,7 @@
 		/>
 	{/if}
 
-	<a
-		class="flex h-11 items-center text-sm underline underline-offset-4"
-		href={resolve('/payments')}
-	>
+	<a class="flex h-11 items-center text-sm underline underline-offset-4" href={resolve('payments')}>
 		{m.payments_new_backLink()}
 	</a>
 </main>

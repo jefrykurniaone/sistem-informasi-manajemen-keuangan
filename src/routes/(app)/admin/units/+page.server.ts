@@ -1,16 +1,16 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	createUnit,
 	DEFAULT_UNIT_PAGE_SIZE,
 	listUnits,
 	needsPrimaryOccupant,
 	UnitConflictError
-} from '$lib/server/services/unit';
+} from '#lib/server/services/unit/index.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -41,8 +41,8 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			includeInactive
 		});
 		// `needsPrimaryOccupant` is decided here rather than in the template because it is a rule, not
-		// a rendering choice — see the function's own comment in `$lib/server/services/unit`. A
-		// component may not import from `$lib/server` at all, so the answer travels as data.
+		// a rendering choice — see the function's own comment in `#lib/server/services/unit/index.ts`. A
+		// component may not import from `#lib/server` at all, so the answer travels as data.
 		return {
 			...result,
 			units: result.units.map((unit) => ({

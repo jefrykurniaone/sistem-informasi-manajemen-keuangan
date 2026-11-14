@@ -5,7 +5,7 @@
  * ## Why this file has to exist
  *
  * `$app/server` is a *virtual* module. Only SvelteKit's own module loader resolves it, and
- * `.svelte-kit/tsconfig.json` maps `$lib` and `$app/types` and nothing else — so a plain
+ * `.svelte-kit/tsconfig.json` maps `$app/types` and nothing else (`#lib` comes from the `imports` field of package.json) — so a plain
  * `bun run` that reaches `src/lib/server/auth.ts` fails outright:
  *
  * ```

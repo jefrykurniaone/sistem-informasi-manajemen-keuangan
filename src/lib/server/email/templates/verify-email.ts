@@ -1,4 +1,4 @@
-import type { EmailPayload, EmailTemplate, EmailTemplates } from '$lib/server/ports/email';
+import type { EmailPayload, EmailTemplate, EmailTemplates } from '#lib/server/ports/email.ts';
 
 /**
  * The email that proves an address belongs to the person who typed it.

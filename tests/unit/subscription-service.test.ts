@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { user } from '$lib/server/db/schema/auth';
-import { residents } from '$lib/server/db/schema/resident';
-import { subscriptions } from '$lib/server/db/schema/subscription';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { SUBSCRIPTION_KIND, SUBSCRIPTION_KINDS } from '$lib/server/services/subscription/kinds';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { subscriptions } from '#lib/server/db/schema/subscription.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { SUBSCRIPTION_KIND, SUBSCRIPTION_KINDS } from '#lib/server/services/subscription/kinds.ts';
 import {
 	MandatorySubscriptionKindError,
 	UnsubscribeTokenError,
@@ -16,14 +16,14 @@ import {
 	residentsSubscribedTo,
 	setSubscriptionPreference,
 	subscriptionPreferencesFor
-} from '$lib/server/services/subscription';
-import { buildUnsubscribeToken } from '$lib/server/services/subscription/unsubscribe-token';
+} from '#lib/server/services/subscription/index.ts';
+import { buildUnsubscribeToken } from '#lib/server/services/subscription/unsubscribe-token.ts';
 
 /**
  * Langganan: the registry of kinds, the default a fresh resident starts with, the rule that a
  * mandatory kind cannot be switched off, and the "who is subscribed" contract every later spec
- * reads — against a real PostgreSQL. See `$lib/server/services/subscription/kinds.ts` and
- * `$lib/server/services/subscription/index.ts`.
+ * reads — against a real PostgreSQL. See `#lib/server/services/subscription/kinds.ts` and
+ * `#lib/server/services/subscription/index.ts`.
  */
 
 const testDb = testDatabase();

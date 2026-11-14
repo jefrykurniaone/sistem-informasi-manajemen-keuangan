@@ -1,6 +1,6 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages.js';
-	import { cn, type WithElementRef } from '$lib/utils.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import { cn, type WithElementRef } from '#lib/utils.js';
 	import { useSidebar } from './context.svelte.js';
 	import type { HTMLAttributes } from 'svelte/elements';
 

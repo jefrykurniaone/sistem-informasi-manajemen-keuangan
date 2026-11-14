@@ -104,10 +104,10 @@ const MONTH_NAMES_ID = [
 ];
 
 /**
- * `"2026-09"` read as `"September 2026"` — the same text `$lib/time`'s `formatMonthLabel` writes
+ * `"2026-09"` read as `"September 2026"` — the same text `#lib/time.ts`'s `formatMonthLabel` writes
  * for the `id` locale, reimplemented here rather than imported: this file runs outside Vite, with
- * no `$lib` alias, the same reason `todayInComplexZone` below does its own zone arithmetic instead
- * of importing `$lib/time`.
+ * no `#lib` alias, the same reason `todayInComplexZone` below does its own zone arithmetic instead
+ * of importing `#lib/time.ts`.
  */
 function monthLabel(period: string): string {
 	const [year, month] = period.split('-').map(Number);

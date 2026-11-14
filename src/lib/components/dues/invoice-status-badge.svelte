@@ -1,11 +1,11 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages.js';
-	import type { InvoiceStatus } from '$lib/server/services/dues/queries';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { InvoiceStatus } from '#lib/server/services/dues/queries.ts';
 
 	/**
 	 * One Tagihan's computed status, read either way: `warga` sees `paid`, `partial`, `unpaid` or
 	 * `overdue` on their own list, and admin's unit history additionally sees `void`. The status
-	 * itself is decided once, in `$lib/server/services/dues/queries.ts`'s `invoiceStatus` — this
+	 * itself is decided once, in `#lib/server/services/dues/queries.ts`'s `invoiceStatus` — this
 	 * component only ever renders the answer.
 	 */
 	interface Props {

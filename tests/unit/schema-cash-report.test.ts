@@ -3,7 +3,7 @@ import path from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { describe, expect, it } from 'vitest';
-import { rupiah } from '$lib/money';
+import { rupiah } from '#lib/money.ts';
 import {
 	CASH_CATEGORY_TYPE,
 	cashCategories,
@@ -19,8 +19,8 @@ import {
 	type NewCashTransaction,
 	type NewMonthlyReport,
 	type NewPeriod
-} from '$lib/server/db/schema';
-import { testDatabase } from '$lib/server/db/test-helpers';
+} from '#lib/server/db/schema/index.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 
 /**
  * The kas-laporan schema (Kategori Kas, Transaksi Kas, Periode, Laporan Bulanan), tested against

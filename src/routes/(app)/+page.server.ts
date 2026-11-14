@@ -1,15 +1,15 @@
 import { redirect } from '@sveltejs/kit';
-import type { Pathname } from '$app/types';
-import { MENU } from '$lib/components/app-shell/menu';
-import { formatRupiah } from '$lib/money';
-import * as m from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime.js';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { isAllowed, rolesOf } from '$lib/server/authz';
-import { database } from '$lib/server/db';
-import type { Role } from '$lib/server/db/schema/authz';
-import type { JobRunStatus } from '$lib/server/db/schema/scheduler';
-import { systemClock } from '$lib/server/ports/clock';
+import type { Path } from '$app/types';
+import { MENU } from '#lib/components/app-shell/menu.ts';
+import { formatRupiah } from '#lib/money.ts';
+import * as m from '#lib/paraglide/messages.js';
+import { getLocale } from '#lib/paraglide/runtime.js';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { isAllowed, rolesOf } from '#lib/server/authz.ts';
+import { database } from '#lib/server/db/index.ts';
+import type { Role } from '#lib/server/db/schema/authz.ts';
+import type { JobRunStatus } from '#lib/server/db/schema/scheduler.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	adminDashboard,
 	residentDashboard,
@@ -22,9 +22,9 @@ import {
 	type PendingPaymentsSummary,
 	type ResidentDashboard,
 	type ResidentUnitSummary
-} from '$lib/server/services/dashboard';
-import { residentProfileForUser } from '$lib/server/services/resident/profile';
-import { formatDateTime, formatMonthLabel } from '$lib/time';
+} from '#lib/server/services/dashboard/index.ts';
+import { residentProfileForUser } from '#lib/server/services/resident/profile.ts';
+import { formatDateTime, formatMonthLabel } from '#lib/time.ts';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -34,10 +34,10 @@ import type { PageServerLoad } from './$types';
  *
  * **Admin or resident is decided the same way the sidebar decides what to show**, not by a role
  * name: `holdsAnyGatedMenuAction` reads `MENU` and calls `isAllowed` exactly as `visibleMenu` in
- * `$lib/components/app-shell/menu.ts` does, because "pemegang izin mengelola apa pun" is the same
+ * `#lib/components/app-shell/menu.ts` does, because "pemegang izin mengelola apa pun" is the same
  * question the sidebar already answers for every gated item at once.
  *
- * **The figures come from `$lib/server/services/dashboard`, never recomputed here.** That module's
+ * **The figures come from `#lib/server/services/dashboard/index.ts`, never recomputed here.** That module's
  * own doc comment settles why: "Beranda harus memakai definisi yang sama, bukan menghitung ulang di
  * rute." One consequence worth naming: `AdminDashboard.invoices.overdueCount` is this WIB month's
  * overdue Tagihan, the same figure `monthInvoiceSummary` computes for "Tagihan terbit, lunas,
@@ -54,7 +54,7 @@ interface StatCard {
 	readonly value: string;
 	readonly label: string;
 	readonly detail?: string;
-	readonly href: Pathname;
+	readonly href: Path;
 	readonly variant?: 'warning';
 }
 
@@ -104,7 +104,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		hasUnit: dashboard.hasUnit,
 		units: dashboard.units.map((unit) => residentUnitCards(unit, dashboard.units.length > 1)),
 		complaints: dashboard.complaints,
-		postsCard: postsCard(dashboard.latestPosts, '/posts')
+		postsCard: postsCard(dashboard.latestPosts, 'posts')
 	};
 };
 
@@ -130,7 +130,7 @@ function adminCards(dashboard: AdminDashboard): readonly StatCard[] {
 		cards.push(cashCard(dashboard.cash));
 	}
 	cards.push(complaintsCard(dashboard.complaints));
-	cards.push(postsCard(dashboard.latestPosts, '/admin/posts'));
+	cards.push(postsCard(dashboard.latestPosts, 'admin/posts'));
 	if (dashboard.jobs) {
 		cards.push(jobsCard(dashboard.jobs));
 	}
@@ -148,7 +148,7 @@ function invoicesCard(invoices: DashboardInvoiceSummary): StatCard {
 			paidCount: invoices.paidCount,
 			paidAmount: formatRupiah(invoices.paidAmount)
 		}),
-		href: '/admin/overdue',
+		href: 'admin/overdue',
 		variant: invoices.overdueCount > 0 ? 'warning' : undefined
 	};
 }
@@ -159,7 +159,7 @@ function pendingPaymentsCard(pending: PendingPaymentsSummary): StatCard {
 		value: formatRupiah(pending.amount),
 		label: m.dashboard_adminPendingLabel(),
 		detail: m.dashboard_adminPendingDetail({ count: pending.count }),
-		href: '/admin/payments',
+		href: 'admin/payments',
 		variant: pending.count > 0 ? 'warning' : undefined
 	};
 }
@@ -173,7 +173,7 @@ function cashCard(cash: CashSummary): StatCard {
 			income: formatRupiah(cash.incomeThisMonth),
 			expense: formatRupiah(cash.expenseThisMonth)
 		}),
-		href: '/admin/cash'
+		href: 'admin/cash'
 	};
 }
 
@@ -188,12 +188,12 @@ function complaintsCard(complaints: OpenComplaintCounts): StatCard {
 			reviewingCount: complaints.reviewing,
 			workingCount: complaints.working
 		}),
-		href: '/admin/complaints'
+		href: 'admin/complaints'
 	};
 }
 
 /** The "3 Post terbaru" card, shared by both roles — only the destination link differs. */
-function postsCard(posts: readonly LatestPost[], href: Pathname): StatCard {
+function postsCard(posts: readonly LatestPost[], href: Path): StatCard {
 	const [latest, ...rest] = posts;
 	return {
 		key: 'posts',
@@ -221,7 +221,7 @@ function jobsCard(jobs: readonly JobStatusSummary[]): StatCard {
 			key: 'jobs',
 			value: m.dashboard_adminJobsEmptyValue(),
 			label: m.dashboard_adminJobsEmptyLabel(),
-			href: '/admin/jobs'
+			href: 'admin/jobs'
 		};
 	}
 
@@ -231,7 +231,7 @@ function jobsCard(jobs: readonly JobStatusSummary[]): StatCard {
 			key: 'jobs',
 			value: m.dashboard_adminJobsNeverRun(),
 			label: m.dashboard_adminJobsEmptyLabel(),
-			href: '/admin/jobs'
+			href: 'admin/jobs'
 		};
 	}
 
@@ -240,7 +240,7 @@ function jobsCard(jobs: readonly JobStatusSummary[]): StatCard {
 		value: formatDateTime(latest.lastRunAt),
 		label: m.dashboard_adminJobsLabel({ name: latest.name }),
 		detail: latest.status ? JOB_STATUS_LABEL[latest.status]() : undefined,
-		href: '/admin/jobs'
+		href: 'admin/jobs'
 	};
 }
 
@@ -272,7 +272,7 @@ function residentUnitCards(unit: ResidentUnitSummary, showLabel: boolean): Resid
 			value: formatRupiah(unit.openInvoices.amount),
 			label: m.dashboard_residentInvoicesLabel(),
 			detail: m.dashboard_residentInvoicesDetail({ count: unit.openInvoices.count }),
-			href: '/invoices',
+			href: 'invoices',
 			variant: unit.openInvoices.overdueCount > 0 ? 'warning' : undefined
 		},
 		creditCard: {
@@ -281,7 +281,7 @@ function residentUnitCards(unit: ResidentUnitSummary, showLabel: boolean): Resid
 			label: m.dashboard_residentCreditLabel(),
 			// No dedicated Saldo Titipan screen exists yet, so this points at the one resident-facing
 			// finance screen there is — the same house's Tagihan.
-			href: '/invoices'
+			href: 'invoices'
 		}
 	};
 }

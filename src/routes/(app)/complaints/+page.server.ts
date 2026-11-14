@@ -1,9 +1,9 @@
 import { redirect } from '@sveltejs/kit';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
-import { listComplaints, type ComplaintWithAge } from '$lib/server/services/complaint';
-import { reporterIdForUser } from '$lib/server/services/complaint/visibility';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { listComplaints, type ComplaintWithAge } from '#lib/server/services/complaint/index.ts';
+import { reporterIdForUser } from '#lib/server/services/complaint/visibility.ts';
 import type { PageServerLoad } from './$types';
 
 /**

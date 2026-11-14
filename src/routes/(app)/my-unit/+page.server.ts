@@ -1,12 +1,12 @@
 import { redirect } from '@sveltejs/kit';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	occupiedUnitsForUserGrouped,
 	type OwnOccupancyGroups
-} from '$lib/server/services/occupancy';
-import { residentProfileForUser } from '$lib/server/services/resident/profile';
+} from '#lib/server/services/occupancy/index.ts';
+import { residentProfileForUser } from '#lib/server/services/resident/profile.ts';
 import type { PageServerLoad } from './$types';
 
 /** An empty `current`/`upcoming`/`history` split, for an account with no `residents` row yet. */

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import { Button } from '$lib/components/ui/button/index.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { Button } from '#lib/components/ui/button/index.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -75,7 +75,7 @@
 			<Button type="submit" class="h-11">{m.profile_saveButton()}</Button>
 		</form>
 
-		<a class="text-sm underline underline-offset-4" href={resolve('/profile/notifications')}>
+		<a class="text-sm underline underline-offset-4" href={resolve('profile/notifications')}>
 			{m.profile_notificationsLink()}
 		</a>
 	{/if}

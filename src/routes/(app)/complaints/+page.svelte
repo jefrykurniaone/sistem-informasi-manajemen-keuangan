@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import StatusBadge from '$lib/components/complaint/status-badge.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { ComplaintStatus } from '$lib/server/db/schema/complaint';
+	import StatusBadge from '#lib/components/complaint/status-badge.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { ComplaintStatus } from '#lib/server/db/schema/complaint.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -26,7 +26,7 @@
 			{#each rows as row (row.id)}
 				<li>
 					<a
-						href={resolve(`/complaints/${row.id}`)}
+						href={resolve(`complaints/${row.id}`)}
 						class="flex min-h-11 flex-col gap-2 rounded-lg border border-border p-4"
 					>
 						<div class="flex flex-wrap items-center gap-2">
@@ -58,7 +58,7 @@
 
 	<a
 		class="flex h-11 items-center text-sm underline underline-offset-4"
-		href={resolve('/complaints/new')}
+		href={resolve('complaints/new')}
 	>
 		{m.complaints_newLink()}
 	</a>

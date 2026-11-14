@@ -1,8 +1,8 @@
 <script lang="ts">
-	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import { AppSidebar } from '$lib/components/app-shell/index.js';
-	import { complexName } from '$lib/complex-name';
+	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import { AppSidebar } from '#lib/components/app-shell/index.js';
+	import { complexName } from '#lib/complex-name.ts';
 	import type { LayoutProps } from './$types';
 
 	// The app shell every page of the application sits inside: a sidebar on the left carrying the

@@ -1,9 +1,9 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS, readOrigin } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS, readOrigin } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	approveRegistration,
 	RegistrationAccountMissingError,
@@ -11,8 +11,8 @@ import {
 	RegistrationNotFoundError,
 	listPendingRegistrations,
 	rejectRegistration
-} from '$lib/server/services/registration';
-import { listUnits, UnitNotFoundError } from '$lib/server/services/unit';
+} from '#lib/server/services/registration/index.ts';
+import { listUnits, UnitNotFoundError } from '#lib/server/services/unit/index.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**

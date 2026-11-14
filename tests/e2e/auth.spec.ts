@@ -49,7 +49,7 @@ const LOGIN_PATH = '/login';
 /**
  * The complex name the server under test was built with, worked out the way `src/lib/complex-name.ts`
  * does: trimmed, and "Komplek" when nothing is left. Restated rather than imported for the reason
- * `tests/e2e/layout.spec.ts` gives: `$env/static/public` only resolves inside a SvelteKit build.
+ * `tests/e2e/layout.spec.ts` gives: `$app/env/public` only resolves inside a SvelteKit build.
  */
 function expectedComplexName(): string {
 	const trimmed = process.env.PUBLIC_COMPLEX_NAME?.trim() ?? '';

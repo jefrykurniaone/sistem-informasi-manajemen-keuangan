@@ -1,10 +1,10 @@
 import { redirect } from '@sveltejs/kit';
-import { visibleMenu, type MenuGroup } from '$lib/components/app-shell/menu';
-import { SIDEBAR_COOKIE_NAME } from '$lib/components/ui/sidebar/constants';
-import { database, type Database } from '$lib/server/db';
-import { rolesOf } from '$lib/server/authz';
-import { ROLE, type Role } from '$lib/server/db/schema/authz';
-import { residentProfileForUser } from '$lib/server/services/resident/profile';
+import { visibleMenu, type MenuGroup } from '#lib/components/app-shell/menu.ts';
+import { SIDEBAR_COOKIE_NAME } from '#lib/components/ui/sidebar/constants.ts';
+import { database, type Database } from '#lib/server/db/index.ts';
+import { rolesOf } from '#lib/server/authz.ts';
+import { ROLE, type Role } from '#lib/server/db/schema/authz.ts';
+import { residentProfileForUser } from '#lib/server/services/resident/profile.ts';
 import type { LayoutServerLoad } from './$types';
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { systemClock } from '$lib/server/ports/clock';
-import { DEFAULT_FAKE_INSTANT, FakeClock } from '$lib/server/ports/fakes';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { DEFAULT_FAKE_INSTANT, FakeClock } from '#lib/server/ports/fakes.ts';
 
 /** One minute, as the tests below count time. */
 const MINUTE = 60 * 1000;

@@ -154,7 +154,7 @@ async function signUpResident(page: Page, email: string, name: string): Promise<
  *
  * Nothing needed that second session. Roles are read out of `user_roles` on every request — by
  * `(app)/+layout.server.ts` and by `requirePermission` — and `session.cookieCache` is deliberately
- * off in `$lib/server/auth`, so a grant takes effect on the next request whether the session that
+ * off in `#lib/server/auth.ts`, so a grant takes effect on the next request whether the session that
  * carries it is new or not.
  */
 async function signUpAdmin(page: Page, email: string, name: string): Promise<void> {

@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { getLocale, locales, setLocale, type Locale } from '$lib/paraglide/runtime.js';
-	import * as m from '$lib/paraglide/messages.js';
+	import { getLocale, locales, setLocale, type Locale } from '#lib/paraglide/runtime.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * A real `<select>`, labelled, so it is keyboard- and screen-reader-usable without any extra

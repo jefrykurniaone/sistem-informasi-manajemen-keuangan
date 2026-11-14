@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { Button } from '$lib/components/ui/button/index.js';
+	import { Button } from '#lib/components/ui/button/index.js';
 	import {
 		POST_CATEGORY_LABEL,
 		POST_STATUS_LABEL,
 		POST_TYPE_LABEL
-	} from '$lib/components/post/post-form.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	} from '#lib/components/post/post-form.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import type { PageProps } from './$types';
 
@@ -47,7 +47,7 @@
 
 	<a
 		class="flex h-11 w-full items-center justify-center rounded-md border border-border px-4 text-sm font-medium sm:w-auto sm:self-start"
-		href={resolve('/admin/posts/new')}
+		href={resolve('admin/posts/new')}
 	>
 		{m.adminPosts_newLink()}
 	</a>
@@ -144,7 +144,7 @@
 
 				<a
 					class="flex h-11 items-center text-sm underline underline-offset-2"
-					href={resolve(`/admin/posts/${post.id}`)}
+					href={resolve(`admin/posts/${post.id}`)}
 				>
 					{m.adminPosts_editLink()}
 				</a>
@@ -165,7 +165,7 @@
 				class="flex h-11 items-center rounded-md border border-border px-3"
 				class:pointer-events-none={data.page <= 1}
 				class:opacity-50={data.page <= 1}
-				href={resolve(`/admin/posts?${pageQuery(Math.max(1, data.page - 1))}`)}
+				href={resolve(`admin/posts?${pageQuery(Math.max(1, data.page - 1))}`)}
 			>
 				{m.adminPosts_prevPage()}
 			</a>
@@ -176,7 +176,7 @@
 				class="flex h-11 items-center rounded-md border border-border px-3"
 				class:pointer-events-none={data.page >= totalPages}
 				class:opacity-50={data.page >= totalPages}
-				href={resolve(`/admin/posts?${pageQuery(Math.min(totalPages, data.page + 1))}`)}
+				href={resolve(`admin/posts?${pageQuery(Math.min(totalPages, data.page + 1))}`)}
 			>
 				{m.adminPosts_nextPage()}
 			</a>

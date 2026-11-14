@@ -1,27 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { rupiah } from '$lib/money';
-import { allocations } from '$lib/server/db/schema/allocation';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
+import { rupiah } from '#lib/money.ts';
+import { allocations } from '#lib/server/db/schema/allocation.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
 import {
 	CASH_CATEGORY_TYPE,
 	SYSTEM_CATEGORY_KEY,
 	cashCategories,
 	type CashCategoryType
-} from '$lib/server/db/schema/cash-category';
-import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
-import { invoices } from '$lib/server/db/schema/invoice';
-import { payments, PAYMENT_METHOD, PAYMENT_STATUS } from '$lib/server/db/schema/payment';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
-import { recordCashCorrection } from '$lib/server/services/cash/correction';
-import { recordCashTransaction } from '$lib/server/services/cash/transaction';
-import { publishReport } from '$lib/server/services/report/publication';
-import { reportForPeriod } from '$lib/server/services/report/resident-payload';
+} from '#lib/server/db/schema/cash-category.ts';
+import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { payments, PAYMENT_METHOD, PAYMENT_STATUS } from '#lib/server/db/schema/payment.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
+import { recordCashCorrection } from '#lib/server/services/cash/correction.ts';
+import { recordCashTransaction } from '#lib/server/services/cash/transaction.ts';
+import { publishReport } from '#lib/server/services/report/publication.ts';
+import { reportForPeriod } from '#lib/server/services/report/resident-payload.ts';
 
 /**
  * "Pengujian berparameter membuktikan muatan laporan untuk peran `warga` tidak pernah memuat nama

@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import CashBookTable from '$lib/components/cash/cash-book-table.svelte';
+	import CashBookTable from '#lib/components/cash/cash-book-table.svelte';
 	import CorrectionDialog, {
 		type CorrectableCashTransaction
-	} from '$lib/components/cash/correction-dialog.svelte';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { formatRupiah } from '$lib/money';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	} from '#lib/components/cash/correction-dialog.svelte';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { formatRupiah } from '#lib/money.ts';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -61,7 +61,7 @@
 	<div>
 		<a
 			class="inline-flex h-11 items-center rounded-md border border-border px-4 text-sm font-medium"
-			href={resolve('/admin/cash/new')}
+			href={resolve('admin/cash/new')}
 		>
 			{m.adminCash_newLink()}
 		</a>

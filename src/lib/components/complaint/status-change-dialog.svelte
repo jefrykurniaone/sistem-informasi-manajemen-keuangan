@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { ComplaintStatus } from '$lib/server/db/schema/complaint';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { ComplaintStatus } from '#lib/server/db/schema/complaint.ts';
 
 	/**
 	 * The one status this dialog treats specially, as the value itself rather than as a type: it
-	 * cannot be imported from `$lib/server/db/schema/complaint` here, because that module is
+	 * cannot be imported from `#lib/server/db/schema/complaint.ts` here, because that module is
 	 * server-only and this component ships to the browser. `'rejected'` is not a guess — it is the
 	 * literal `COMPLAINT_STATUS.rejected` already names in that schema.
 	 */

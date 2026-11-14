@@ -12,7 +12,7 @@
  *
  * 1. **`COMPLEX_TIME_ZONE` lives here** and nowhere else. `src/lib/server/services/dues/issuance.ts`
  *    re-exports it under the same name so that its existing callers keep compiling; a new caller
- *    imports it from `$lib/time`.
+ *    imports it from `#lib/time.ts`.
  * 2. **The formatting locale is `id-ID`, whatever the interface language.** The label the spec
  *    wants on every clock time is `WIB`, and only the Indonesian locale prints it —
  *    `en-US` prints `GMT+7` for the same zone (`docs/research-ui-ux-v1.md` §8). Paraglide still
@@ -135,7 +135,7 @@ export function formatTime(instant: Date): string {
 
 /**
  * The interface languages `formatMonthLabel` spells a month name in — the same two `locales` the
- * Paraglide runtime carries. Declared locally, not imported from `$lib/paraglide/runtime`, so this
+ * Paraglide runtime carries. Declared locally, not imported from `#lib/paraglide/runtime.js`, so this
  * module keeps taking no imports (see the module doc, point 5); the two literal types are
  * structurally identical, so a `Locale` from that runtime is accepted here without a cast.
  */

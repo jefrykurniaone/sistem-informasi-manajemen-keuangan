@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { pageTitle } from '$lib/complex-name';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as m from '$lib/paraglide/messages.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -23,12 +23,12 @@
 		<p class="rounded-md border border-border px-3 py-2 text-sm">
 			{m.verify_verifiedBody()}
 		</p>
-		<Button href={resolve('/login')}>{m.verify_loginButton()}</Button>
+		<Button href={resolve('login')}>{m.verify_loginButton()}</Button>
 	{:else if data.state === 'used'}
 		<p class="rounded-md border border-border px-3 py-2 text-sm">
 			{m.verify_usedBody()}
 		</p>
-		<Button href={resolve('/login')}>{m.verify_loginButton()}</Button>
+		<Button href={resolve('login')}>{m.verify_loginButton()}</Button>
 	{:else if data.state === 'sent'}
 		<p class="text-sm">
 			{m.verify_sentBody()}
@@ -72,7 +72,7 @@
 		</form>
 
 		<p class="text-sm text-muted-foreground">
-			<a class="underline underline-offset-4" href={resolve('/login')}
+			<a class="underline underline-offset-4" href={resolve('login')}
 				>{m.verify_backToLoginLink()}</a
 			>
 		</p>
