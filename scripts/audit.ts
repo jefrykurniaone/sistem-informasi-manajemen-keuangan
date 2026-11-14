@@ -64,6 +64,41 @@ const IGNORED_ADVISORIES: readonly IgnoredAdvisory[] = [
 		reason:
 			"The package runs only at build time and reads this repository's own CSS, never input from a visitor.",
 		removeWhen: '@tailwindcss/typography brings in postcss-selector-parser 7.1.6 or newer.'
+	},
+	{
+		id: 'GHSA-pfhg-q3qv-9q6r',
+		package: '@sveltejs/kit 2.70.4',
+		parent: 'direct dependency',
+		reason:
+			'The open redirect needs a use:enhance form on a page route that can match a path starting with //. The only catch-all routes, api/[...slugs] and files/[...key], hold a +server.ts and no page, no form action and no use:enhance, and none sits at the root. No reroute hook exists.',
+		removeWhen: 'The repository upgrades to SvelteKit 3.'
+	},
+	{
+		id: 'GHSA-27mw-82g8-phjj',
+		package: '@sveltejs/kit 2.70.4',
+		parent: 'direct dependency',
+		reason:
+			'The XSS needs a prerendered page whose cache-control header comes from setHeaders. No +page or +layout exports prerender, and the SvelteKit options in vite.config.ts set no kit.prerender, so the build prerenders no page.',
+		removeWhen: 'The repository upgrades to SvelteKit 3.'
+	},
+	{
+		id: 'GHSA-gcqx-w48m-w2h4',
+		package: 'deepmerge 4.3.1',
+		parent:
+			'@sveltejs/vite-plugin-svelte > deepmerge, and @sveltejs/adapter-node > @rollup/plugin-node-resolve > deepmerge',
+		reason:
+			"Both parents are build tools that merge this repository's own configuration. The deepmerge package code is not in the production build output.",
+		removeWhen:
+			'A fixed deepmerge is published and @sveltejs/vite-plugin-svelte and @rollup/plugin-node-resolve depend on it.'
+	},
+	{
+		id: 'GHSA-g3hv-75wg-m249',
+		package: 'minimatch 10.2.6',
+		parent:
+			'eslint > @eslint/config-array > minimatch, and typescript-eslint > @typescript-eslint/utils > @typescript-eslint/typescript-estree > minimatch',
+		reason:
+			"It is the only copy in the affected range (>=7.0.0 <11.0.1), and ESLint and typescript-eslint run it at lint time on glob patterns from this repository's own configuration. The other copies, 3.1.5 and 5.1.9 under exceljs > archiver, are outside the range.",
+		removeWhen: 'ESLint and typescript-eslint accept minimatch 11.0.1 or newer.'
 	}
 ];
 

@@ -37,10 +37,13 @@ import { withoutTrailingSlashes } from './url';
  *    `enqueueEmail`. Nothing here awaits `processEmailQueue`, and nothing here talks to a mail
  *    server: an unreachable SMTP host must not be able to fail a registration. The one part of
  *    `../email/queue.ts`'s contract that cannot be honoured here is the transaction: better-auth
- *    hands its callbacks no transaction handle, so the writer passed below is the pool. In 1.7.5
- *    the callback runs after the sign-up has already committed, so nothing can roll back under
- *    it — and the dependency is pinned to that exact version rather than a range, because a minor
- *    release that moved the callback inside the transaction would change that silently.
+ *    hands its callbacks no transaction handle, so the writer passed below is the pool. From
+ *    1.7.23, better-auth runs the sign-up `sendVerificationEmail` callback only after the sign-up
+ *    transaction has committed (`queueAfterTransactionHook`), so nothing can roll back under it.
+ *    If the enqueue fails there, better-auth logs the error and the account still exists; the
+ *    person asks for a new link on `/verify`. In 1.7.5 the same callback was awaited inside the
+ *    transaction. The dependency is pinned to an exact version rather than a range, because a
+ *    release that moved the callback back inside the transaction would change this silently.
  * 4. **The links in those emails point at this application's own pages**, not at better-auth's
  *    endpoints. better-auth offers a `url` built from its own `/verify-email` and
  *    `/reset-password/:token` routes; it is ignored in favour of `/verify?token=` and
