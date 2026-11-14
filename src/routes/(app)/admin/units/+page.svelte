@@ -17,7 +17,7 @@
 	 * The query string for this same screen with `page` replaced, keeping the current search and
 	 * filter. Returns only the query string, not the full href — `resolve()` has to be called
 	 * directly at each `href={…}` for `eslint-plugin-svelte`'s `no-navigation-without-resolve` to see
-	 * it, so the templates below wrap this in `resolve(\`/admin/units?${pageQuery(…)}\`)` themselves.
+	 * it, so the templates below wrap this in `resolve(\`admin/units?${pageQuery(…)}\`)` themselves.
 	 */
 	function pageQuery(page: number): string {
 		const params = new SvelteURLSearchParams();
