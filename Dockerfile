@@ -38,8 +38,9 @@ EXPOSE 5173
 CMD ["bun", "run", "dev"]
 
 FROM deps AS build
-# The complex name is read through `$env/static/public`, which Vite inlines into the bundle at
-# build time: setting it on the running container changes nothing. It is therefore a build arg,
+# The complex name is read through `$app/env/public` and declared `static` in src/env.ts, so its
+# value is inlined into the bundle at build time: setting it on the running container changes
+# nothing. It is therefore a build arg,
 # exported before `bun run build`, and changing the name means building and deploying again.
 # `.env` is kept out of the build context by .dockerignore, so this is the only value the build sees.
 ARG PUBLIC_COMPLEX_NAME=Komplek
