@@ -16,6 +16,19 @@ tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
 
 ---
 
+## Catatan penyerahan
+
+Lintasan penutup run `aman-v2` (peta #291) menambahkan penanda *Sesudah run* pada setiap klaim yang dibalik
+atau diubah bentuknya oleh tiket run ini. Tidak ada teks yang dihapus. Klaim yang ditandai:
+
+- jumlah advisory dan keadaan `audit`, alert, dan Dependabot `bun` di *Problem statement* (#288, #289, #290);
+- skema, catatan perilaku, dan versi transitif di keputusan 1 (#288);
+- versi terpasang di keputusan 2 dan 3 (#288);
+- bukti keempat entri ignore di keputusan 4 (#290);
+- bentuk konfigurasi di keputusan 5 (#289);
+- pengantaran di keputusan 9;
+- hasil seam di *Testing decisions* dan hasil di *Success criteria*.
+
 ## Problem statement
 
 Per 2026-11-14 (`main` di `c45c594`), check `audit` gagal di `main` sendiri, apa pun yang diubah sebuah
@@ -41,6 +54,13 @@ build`, `image-scan` dan `SonarQube Cloud`, jadi tidak ada pull request yang bis
 - `minimatch` 10.2.6: GHSA-g3hv-75wg-m249 (moderate), diperbaiki di 11.0.1. Salinan yang masuk
   rentang hanya dibawa ESLint dan typescript-eslint.
 
+> *Sesudah run (2026-11-14):* sebelum upgrade, `bun audit` terukur memuat 17 GHSA: dua yang sudah di-ignore dan 15
+> di luar daftar ignore. Daftar di atas memang berisi 15 (3 + 1 + 5 + 3 + 1 + 1 + 1), jadi angka 14
+> adalah salah hitung. Sebelas tertutup oleh upgrade #288, dan empat masuk daftar ignore beralasan
+> oleh #290. Di ujung `chore/aman-v2` (`a2dd212`) `bun run audit` keluar dengan 0, dan `bun audit` tanpa
+> flag hanya melaporkan enam GHSA di daftar ignore. Check `audit` di `main` hijau lagi setelah pemilik
+> me-merge PR integrasi #293.
+
 Pull request Dependabot #286 (`actions/checkout` 5.1.0 → 7.0.1 dan `sonarqube-scan-action` di job
 sonar) menunggu sejak 2026-11-01 dan hanya gagal di `audit`.
 
@@ -53,11 +73,19 @@ Alert critical terbuka sebelas hari tanpa ada yang bertindak. Workflow Security 
 (keputusan run `aman-v1`, #273), dan tidak ada push ke `main` sejak 2026-10-23, jadi audit tidak
 berjalan. Dependabot alerts menyala, tetapi tidak ada yang membacanya.
 
+> *Sesudah run (2026-11-14):* alert `better-auth`, `zod`, `nodemailer`, `@sveltejs/kit` 2.70.3 dan `adapter-node` 5.5.7
+> tertutup begitu #288 sampai di `main` lewat PR #293. Email untuk *Dependabot alerts* tetap langkah
+> pemilik (keputusan 8). Workflow Security tetap tanpa jadwal.
+
 Dependabot version updates hanya berjalan untuk `github-actions`. Ekosistem `bun` sengaja tidak
 dimasukkan di `aman-v1`. Dependabot security updates dibiarkan mati karena tidak mendukung Bun, dan
 per 2026-11-14 keadaannya masih sama. Dokumentasi GitHub menandai Bun *supported* untuk version
 updates dan *not supported* untuk security updates, dan tabel ekosistem dependency graph tidak memuat
 Bun sama sekali.
+
+> *Sesudah run (2026-11-14):* `.github/dependabot.yml` kini juga memuat entri `bun`, bulanan dengan satu grup
+> `minor-and-patch` (#289). Security updates tetap mati, dengan alasan yang kini tertulis di README
+> bagian *Security checks*. Run pertamanya adalah seam S5, milik pemilik setelah merge ke `main`.
 
 SonarQube Cloud sudah menganalisis setiap pull request dan push ke `main`, dan sudah jadi required
 check. Per 2026-11-14 quality gate-nya OK, dengan 0 issue dan 0 hotspot. Tidak ada yang perlu
@@ -136,6 +164,11 @@ dinyalakan.
   migrasi yang diperkirakan. Executor tetap membandingkan skema inti (`user`, `session`, `account`,
   `verification`) dari paket 1.7.5 dan 1.7.23 yang terpasang. **Perubahan skema apa pun berada di
   luar tiket.** Executor berhenti dan melapor, dan orchestrator yang memutuskan.
+
+  > *Sesudah run (2026-11-14):* definisi tabel `user`, `session`, `account` dan `verification` di `@better-auth/core`
+  > 1.7.5 dan 1.7.23 hanya berbeda di komentar bundler, dan keduanya cocok dengan
+  > `src/lib/server/db/schema/auth.ts`. Tidak ada kolom `issuer` dan tidak ada migrasi. Verifikasi kedua
+  > (Fable) menjalankan `diffSchema` 1.7.23 terhadap skema repo dengan hasil nol temuan (#288).
 - **Catatan perilaku yang diperiksa, bukan diubah:**
   - Sejak 1.7.6, kata sandi yang melebihi panjang maksimum ditolak dengan `400 PASSWORD_TOO_LONG`
     sebelum di-hash. Aplikasi ini menetapkan panjang maksimumnya sendiri.
@@ -144,7 +177,21 @@ dinyalakan.
   - Sejak 1.7.16, `set-phone` masuk ke statement default plugin admin. Plugin itu tidak dipakai di
     sini.
   - `sveltekitCookies` harus tetap menjadi plugin terakhir.
+
+  > *Sesudah run (2026-11-14):* `PASSWORD_TOO_LONG` hanya baru di sign-in, dan dicek sebelum lookup email. Halaman masuk
+  > memetakannya ke kalimat dan status yang sama (`login_wrongCredentials`, 400), dan limiter form action
+  > tetap menghitungnya. Atribut cookie sesi tidak berubah untuk konfigurasi ini, dan penandatanganan
+  > cookie identik, jadi sesi yang ada tetap berlaku. `sveltekitCookies` tetap satu-satunya plugin.
+  > Temuan tambahan: sejak 1.7.23 callback `sendVerificationEmail` saat sign-up berjalan sesudah
+  > transaksi commit (`queueAfterTransactionHook`), dan error-nya hanya di-log. Di 1.7.5 callback itu
+  > di-await di dalam transaksi. Komentar keputusan 3 di `src/lib/server/auth.ts` diperbarui. Kodenya
+  > tidak berubah (#288).
 - `zod` naik ke 4.6.6 atau lebih baru lewat lockfile, sebagai dependency transitif `@better-auth/core`.
+
+  > *Sesudah run (2026-11-14):* `zod` 4.6.7, hanya lewat lockfile. `@better-auth/utils` tidak ikut ke 1.7.23: paket itu
+  > diberi versi sendiri, dan better-auth 1.7.23 mem-pin-nya exact ke 0.5.1. Hash kata sandi tetap
+  > kompatibel, karena parameter scrypt dan format `salt:key` sama. `better-call` naik ke 1.4.5 dan
+  > `@better-fetch/fetch` ke 1.3.3 (#288).
 
 ### 2. `nodemailer` `^10.0.10` → `^10.5.0`
 
@@ -154,10 +201,16 @@ dinyalakan.
   inilah perbaikan keamanannya. Penerima email di aplikasi ini berasal dari alamat email pengguna,
   bukan dari display name.
 
+  > *Sesudah run (2026-11-14):* `nodemailer` 10.5.0. Pada walk S3, email atur ulang sampai di Mailpit dengan header `To`
+  > tepat alamat pengguna (#288).
+
 ### 3. `@sveltejs/kit` `^2.70.4` dan `@sveltejs/adapter-node` `^5.5.8`
 
 Keduanya masih dalam major yang sama. Override `cookie` milik `@sveltejs/kit` yang sudah ada tetap
 dipertahankan.
+
+> *Sesudah run (2026-11-14):* terpasang `@sveltejs/kit` 2.70.4 dan `@sveltejs/adapter-node` 5.5.8. Override `cookie`
+> tidak berubah (#288).
 
 ### 4. Empat advisory masuk daftar ignore, dengan bukti
 
@@ -170,6 +223,16 @@ dan syarat pencabutan. Bukti awal per 2026-11-14:
 | GHSA-27mw-82g8-phjj | `@sveltejs/kit` 2.x | Advisory ini butuh halaman yang di-prerender dengan `cache-control` dari sumber tak tepercaya. Tidak ada halaman yang di-prerender. | Upgrade ke SvelteKit 3. |
 | GHSA-gcqx-w48m-w2h4 | `deepmerge` 4.3.1 | Dibawa plugin Vite Svelte dan plugin node-resolve milik adapter-node. Keduanya berjalan saat build dan hanya menggabungkan konfigurasi repo ini sendiri. | Ada versi `deepmerge` yang diperbaiki, dan induknya memakainya. |
 | GHSA-g3hv-75wg-m249 | `minimatch` 10.2.6 | Hanya ESLint dan typescript-eslint yang membawa salinan dalam rentang. Keduanya alat dev yang membaca pola glob dari konfigurasi repo ini. Salinan 3.1.5 dan 5.1.9 milik `exceljs` berada di luar rentang. | Induknya menerima `minimatch` 11.0.1 atau lebih baru. |
+
+> *Sesudah run (2026-11-14):* keempat bukti diperiksa ulang terhadap kode di ujung `chore/aman-v2`, dan keempat entri
+> ditulis di `scripts/audit.ts` (#290).
+>
+> - Repo ini tidak punya `svelte.config.js`. Opsi SvelteKit ada inline di `vite.config.ts`, tanpa
+>   `prerender`.
+> - Satu-satunya kecocokan literal `deepmerge` di keluaran build adalah helper `deepmerge` milik
+>   `@better-auth/core` di sebuah source map, bukan paket npm. Identifier khas paket tidak ada di
+>   keluaran build.
+> - Salinan `minimatch` 3.1.5 dan 5.1.9 dibawa `glob` dan `readdir-glob` di bawah `exceljs > archiver`.
 
 **Kalau salah satu bukti gagal,** executor berhenti dan melapor. Ia tidak memasang guard dan tidak
 menaikkan major. Orchestrator yang memutuskan.
@@ -209,6 +272,10 @@ menaikkan major. Orchestrator yang memutuskan.
 - Updater Bun di Dependabot memakai Bun 1.4.2 dan bisa membaca `lockfileVersion` sampai 3. Lockfile
   repo ini per 2026-11-14 memakai `lockfileVersion` 3.
 
+> *Sesudah run (2026-11-14):* entri `bun` ditulis dengan bentuk ini. Kelima paket ber-pin exact masing-masing menjadi
+> entri `ignore` sendiri, dengan komentar berbahasa Inggris di atas setiap blok (#289). Check validasi
+> `.github/dependabot.yml` milik GitHub lulus di PR #293.
+
 ### 6. Yang tetap mati, beserta alasannya
 
 - **Dependabot security updates.** Bun belum didukung (dokumentasi GitHub, dicek 2026-11-14). Kalau
@@ -234,6 +301,10 @@ sendiri: email untuk *Dependabot alerts*, dan watch repositori dengan *Custom �
   `CLAUDE.md`.
 - Orchestrator me-merge setiap branch tiket ke branch integrasi dengan merge commit.
 
+> *Sesudah run (2026-11-14):* PR integrasi adalah #293. GitHub menolak PR tanpa commit, jadi draft-nya baru dibuka
+> setelah merge pertama. Merge commit di `chore/aman-v2`: `0d3e6f2` (#288), `35fff86` (#289) dan
+> `a2dd212` (#290).
+
 ## Testing decisions
 
 Tes yang baik di sini mengamati produk dari luar: hasil `bun audit`, check di pull request, halaman
@@ -251,6 +322,17 @@ Seam yang dikonfirmasi pemilik pada 2026-11-14:
 | S4: `bun run test:e2e` | alur auth, pendaftaran, undangan dan halaman lain dari ujung ke ujung | email yang benar-benar terkirim |
 | S5: run "Dependabot Updates" pertama untuk `bun` setelah merge ke `main` | konfigurasi Dependabot yang benar-benar dibaca GitHub | terjadi setelah run ditutup, jadi diserahkan ke pemilik |
 
+> *Sesudah run (2026-11-14):*
+>
+> - **S1:** gate empat perintah hijau di setiap gelombang (2375 tes), dan `bun run audit` keluar
+>   dengan 0 sejak `a2dd212`.
+> - **S2:** CI di #293 pada `a2dd212`: keempat required check (`check, lint, test, build`, `audit`, `image-scan`, `SonarQube Cloud`) hijau. Setelah Gelombang 1 (`35fff86`) semuanya hijau kecuali `audit`, sesuai harapan peta.
+> - **S3:** lulus. Email atur ulang pertama tertahan di belakang backlog email Data Contoh yang dikuras
+>   20 per menit. Setelah antrean kosong, email tiba dalam 29,7 s. Satu entri console `400` berasal
+>   dari login yang memang sengaja ditolak.
+> - **S4:** `bun run test:e2e` lulus 48 setelah Gelombang 1 dan di tail.
+> - **S5:** diserahkan ke pemilik.
+
 Prior art: walk S4 pada #274 (run `aman-v1`) dan suite e2e di repo ini.
 
 ## Success criteria
@@ -266,6 +348,15 @@ Prior art: walk S4 pada #274 (run `aman-v1`) dan suite e2e di repo ini.
   tetap mati, dan batas yang masih berlaku.
 - Setelah pemilik me-merge (di luar run): run "Dependabot Updates" untuk `bun` selesai dengan
   `success`, dan alert `better-auth` serta `@sveltejs/kit` 2.70.x tertutup.
+
+> *Sesudah run (2026-11-14):* kriteria di dalam run tercapai.
+>
+> - `bun run audit` keluar dengan 0, dan `bun audit` hanya melaporkan enam GHSA yang di-ignore.
+> - Keempat required check hijau di #293.
+> - Walk S3 dan e2e lulus.
+> - Konfigurasi Dependabot dan README sesuai.
+>
+> Kriteria sesudah merge (S5 dan penutupan alert) milik pemilik.
 
 ## Out of scope
 
@@ -288,4 +379,3 @@ Prior art: walk S4 pada #274 (run `aman-v1`) dan suite e2e di repo ini.
   3. deploy produksi lewat `docs/deploy.md`, karena bundle produksi berubah;
   4. notifikasi alert (keputusan 8);
   5. seam S5 dengan `gh run list --workflow "Dependabot Updates"`.
-
