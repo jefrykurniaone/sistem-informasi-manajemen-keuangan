@@ -1,6 +1,5 @@
-import { building } from '$app/environment';
-import type { Handle } from '@sveltejs/kit';
-import { sequence } from '@sveltejs/kit/hooks';
+import { building } from '$app/env';
+import { sequence, type Handle } from '@sveltejs/kit/hooks';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
 import { auth } from '#lib/server/auth.ts';
 import { database } from '#lib/server/db/index.ts';
@@ -104,11 +103,16 @@ const authHandle: Handle = async ({ event, resolve }) => {
 
 const localeHandle: Handle = ({ event, resolve }) =>
 	paraglideMiddleware(event.request, ({ request, locale }) => {
-		event.request = request;
-		return resolve(event, {
-			transformPageChunk: ({ html }) =>
-				html.replace('%lang%', locale).replace('%dir%', getTextDirection(locale))
-		});
+		// SvelteKit 3 types `event.request` as read-only, so Paraglide's request travels on a copy
+		// of the event, the form `sv add paraglide` writes for SvelteKit 3. `locals` is the same
+		// object on both, so what `authHandle` put there is still there.
+		return resolve(
+			{ ...event, request },
+			{
+				transformPageChunk: ({ html }) =>
+					html.replace('%lang%', locale).replace('%dir%', getTextDirection(locale))
+			}
+		);
 	});
 
 export const handle: Handle = sequence(authHandle, localeHandle);

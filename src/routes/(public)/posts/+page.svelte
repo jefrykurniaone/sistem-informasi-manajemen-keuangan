@@ -61,7 +61,7 @@
 			class="flex h-11 min-w-24 items-center justify-center rounded-md border border-border px-4 text-sm font-medium"
 			class:bg-accent={data.when === 'upcoming'}
 			aria-current={data.when === 'upcoming' ? 'page' : undefined}
-			href={resolve(`/posts?${whenQuery('upcoming')}`)}
+			href={resolve(`posts?${whenQuery('upcoming')}`)}
 		>
 			{m.postPublic_whenUpcoming()}
 		</a>
@@ -69,7 +69,7 @@
 			class="flex h-11 min-w-24 items-center justify-center rounded-md border border-border px-4 text-sm font-medium"
 			class:bg-accent={data.when === 'past'}
 			aria-current={data.when === 'past' ? 'page' : undefined}
-			href={resolve(`/posts?${whenQuery('past')}`)}
+			href={resolve(`posts?${whenQuery('past')}`)}
 		>
 			{m.postPublic_whenPast()}
 		</a>
@@ -107,7 +107,7 @@
 				class="flex h-11 min-w-24 items-center justify-center rounded-md border border-border px-3"
 				class:pointer-events-none={data.page <= 1}
 				class:opacity-50={data.page <= 1}
-				href={resolve(`/posts?${pageQuery(Math.max(1, data.page - 1))}`)}
+				href={resolve(`posts?${pageQuery(Math.max(1, data.page - 1))}`)}
 			>
 				{m.postPublic_prevPage()}
 			</a>
@@ -118,7 +118,7 @@
 				class="flex h-11 min-w-24 items-center justify-center rounded-md border border-border px-3"
 				class:pointer-events-none={data.page >= totalPages}
 				class:opacity-50={data.page >= totalPages}
-				href={resolve(`/posts?${pageQuery(Math.min(totalPages, data.page + 1))}`)}
+				href={resolve(`posts?${pageQuery(Math.min(totalPages, data.page + 1))}`)}
 			>
 				{m.postPublic_nextPage()}
 			</a>

@@ -48,7 +48,7 @@ export default defineConfig(({ mode }) => {
 			// `vite dev`. `svelte-check`, `eslint`/`prettier` and `vitest` never touch Vite, so `bun run
 			// check`, `bun run lint` and `bun run test` in package.json each run the `paraglide:compile`
 			// script first — the same `project`/`outdir`/`strategy` as here, kept in sync by hand — or a
-			// clean checkout fails every one of those with "Cannot find module '$lib/paraglide/...'"
+			// clean checkout fails every one of those with "Cannot find module '#lib/paraglide/...'"
 			// before this plugin ever gets a chance to run.
 			paraglideVitePlugin({
 				project: './project.inlang',

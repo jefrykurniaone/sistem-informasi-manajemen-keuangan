@@ -90,7 +90,7 @@
 
 	<a
 		class="flex h-11 min-w-24 items-center text-sm underline underline-offset-2"
-		href={resolve(`/posts/${id}`)}
+		href={resolve(`posts/${id}`)}
 	>
 		{m.postPublic_readMoreLink()}
 	</a>

@@ -19,7 +19,7 @@
 	</header>
 
 	<a
-		href={resolve('/admin/payments/cash')}
+		href={resolve('admin/payments/cash')}
 		class="inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4"
 	>
 		{m.adminPayments_cashLink()}

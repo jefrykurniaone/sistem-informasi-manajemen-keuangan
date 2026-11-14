@@ -44,7 +44,7 @@
 				{/if}
 				<a
 					class="inline-flex min-h-11 items-center self-start underline underline-offset-4"
-					href={resolve(`/reports/${report.period}`)}
+					href={resolve(`reports/${report.period}`)}
 				>
 					{m.reports_openLink({ period: report.period })}
 				</a>

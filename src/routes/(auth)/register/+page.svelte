@@ -124,6 +124,6 @@
 
 	<p class="text-sm text-muted-foreground">
 		{m.register_hasAccountPrompt()}
-		<a class="underline underline-offset-4" href={resolve('/login')}>{m.register_loginLink()}</a>
+		<a class="underline underline-offset-4" href={resolve('login')}>{m.register_loginLink()}</a>
 	</p>
 </main>

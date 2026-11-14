@@ -59,7 +59,8 @@
 
 	/**
 	 * Focus follows what just opened or closed, because the links that open and close a detail carry
-	 * `data-sveltekit-keepfocus` and SvelteKit leaves focus alone; `category-table.svelte` records why.
+	 * `data-sveltekit-reset="false"` and SvelteKit leaves focus alone; `category-table.svelte` records
+	 * why.
 	 * Without this, the clicked link is replaced by the render and focus falls to the `<body>`.
 	 *
 	 * `afterNavigate` runs once the new DOM is in place and after SvelteKit's own scroll handling,
@@ -114,7 +115,7 @@
 <main class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10">
 	<a
 		class="inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4"
-		href={resolve('/reports')}
+		href={resolve('reports')}
 	>
 		{m.reports_detail_backLink()}
 	</a>
@@ -169,7 +170,7 @@
 					{:else}
 						<a
 							class="inline-flex min-h-11 items-center underline underline-offset-4"
-							href={resolve(`/reports/${data.report.period}?revision=${revision.revision}`)}
+							href={resolve(`reports/${data.report.period}?revision=${revision.revision}`)}
 						>
 							{m.reports_detail_revisionLink({
 								revision: revision.revision,

@@ -1,4 +1,4 @@
-import { PUBLIC_COMPLEX_NAME } from '$env/static/public';
+import { PUBLIC_COMPLEX_NAME } from '$app/env/public';
 
 /**
  * The name of the housing complex this installation serves, and the tab title built from it
@@ -7,14 +7,15 @@ import { PUBLIC_COMPLEX_NAME } from '$env/static/public';
  * kosong." It replaced the `appShell_brand` message, because a complex's name is configuration of
  * one installation rather than text that changes with the interface language.
  *
- * **`$env/static/public`, not `$env/dynamic/public`.** The value is inlined at build time, so the
- * sidebar, the public header and every tab title render it on the server and in the browser with no
- * request to fetch it, and a page never flashes a placeholder before the real name arrives. The
- * price is that changing the name means building again, which `docs/spec-deploy-uji-v1.md` records
- * for the deploy runbook. It also means the name has to be *declared* wherever a build or a check
- * runs, even if empty: SvelteKit generates the module's exports from the environment it sees, and a
- * name it did not see is "not exported", and `svelte-check` and `vite build` both refuse. That is why
- * `.env.example` carries the line and the CI workflow declares it at job level.
+ * **Static, not dynamic.** `src/env.ts` declares the variable `public` and `static`, so its value
+ * is inlined at build time and `$app/env/public` hands it to the server and the browser alike (the
+ * spec's `$env/static/public` is the SvelteKit 2 name for the same thing). The sidebar, the public
+ * header and every tab title render it with no request to fetch it, and a page never flashes a
+ * placeholder before the real name arrives. The price is that changing the name means building
+ * again, which `docs/spec-deploy-uji-v1.md` records for the deploy runbook. A build that sees no
+ * value at all still succeeds: the declaration's `schema` turns a missing variable into the empty
+ * string, which `normalizeComplexName` below turns into "Komplek". `.env.example` and the CI
+ * workflow still carry the line, so the name a build uses is a visible choice.
  *
  * The two pure functions below carry all of the behaviour, so `tests/unit/complex-name.test.ts`
  * proves them with whatever raw value it likes instead of depending on the one this build saw.

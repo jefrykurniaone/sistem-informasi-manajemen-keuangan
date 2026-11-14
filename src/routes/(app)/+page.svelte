@@ -35,10 +35,10 @@
 		</header>
 
 		<div class="flex flex-wrap gap-3">
-			<Button href={resolve('/payments/new')} class="min-h-11">
+			<Button href={resolve('payments/new')} class="min-h-11">
 				{m.dashboard_residentPaymentButton()}
 			</Button>
-			<Button href={resolve('/complaints/new')} variant="outline" class="min-h-11">
+			<Button href={resolve('complaints/new')} variant="outline" class="min-h-11">
 				{m.dashboard_residentComplaintButton()}
 			</Button>
 		</div>

@@ -34,8 +34,8 @@
 		"@internationalized/date": "^3.12.0",
 		"@lucide/svelte": "^1.72.0",
 		"@playwright/test": "^1.65.0",
-		"@sveltejs/adapter-node": "^5.5.8",
-		"@sveltejs/kit": "^2.70.4",
+		"@sveltejs/adapter-node": "^6.0.2",
+		"@sveltejs/kit": "^3.2.0",
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
 		"@tailwindcss/typography": "^0.5.20",
 		"@tailwindcss/vite": "^4.3.5",
@@ -66,9 +66,6 @@
 		"vitest": "^4.1.12"
 	},
 	"overrides": {
-		"@sveltejs/kit": {
-			"cookie": "^0.7.0"
-		},
 		"exceljs": {
 			"uuid": "^11.1.1"
 		}

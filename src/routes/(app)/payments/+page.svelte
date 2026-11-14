@@ -49,7 +49,7 @@
 	{#if data.canRecord}
 		<a
 			class="flex h-11 items-center text-sm underline underline-offset-4"
-			href={resolve('/payments/new')}
+			href={resolve('payments/new')}
 		>
 			{m.payments_newLink()}
 		</a>

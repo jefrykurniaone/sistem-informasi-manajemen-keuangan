@@ -40,10 +40,7 @@
 		/>
 	{/if}
 
-	<a
-		class="flex h-11 items-center text-sm underline underline-offset-4"
-		href={resolve('/payments')}
-	>
+	<a class="flex h-11 items-center text-sm underline underline-offset-4" href={resolve('payments')}>
 		{m.payments_new_backLink()}
 	</a>
 </main>

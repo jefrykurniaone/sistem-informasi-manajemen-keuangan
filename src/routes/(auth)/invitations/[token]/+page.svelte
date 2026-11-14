@@ -31,7 +31,7 @@
 
 	{#if data.inspection.status !== 'valid'}
 		<p class="text-sm">{refusalFor(data.inspection.status)}</p>
-		<a class="text-sm underline underline-offset-4" href={resolve('/login')}>
+		<a class="text-sm underline underline-offset-4" href={resolve('login')}>
 			{m.invitationAccept_goToLogin()}
 		</a>
 	{:else}

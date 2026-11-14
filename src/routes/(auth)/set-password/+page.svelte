@@ -24,7 +24,7 @@
 	{#if data.token === ''}
 		<p class="text-sm">
 			{m.setPassword_noTokenIntro()}
-			<a class="underline underline-offset-4" href={resolve('/forgot-password')}>
+			<a class="underline underline-offset-4" href={resolve('forgot-password')}>
 				{m.setPassword_forgotPasswordLinkText()}
 			</a>.
 		</p>

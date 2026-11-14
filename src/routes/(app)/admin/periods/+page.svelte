@@ -93,7 +93,7 @@
 				{#if data.mayPublish && !summary.isLocked}
 					<a
 						class="inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4"
-						href={resolve(`/admin/reports?period=${summary.period}`)}
+						href={resolve(`admin/reports?period=${summary.period}`)}
 					>
 						{m.adminPeriods_publishReportLink()}
 					</a>
