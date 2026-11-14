@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { auditEntriesFor } from '$lib/server/audit';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { occupancies, OCCUPANCY_ROLE } from '$lib/server/db/schema/occupancy';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { occupancies, OCCUPANCY_ROLE } from '#lib/server/db/schema/occupancy.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	createUnit,
 	deactivateUnit,
@@ -21,8 +21,8 @@ import {
 	UNIT_CREATED_ACTION,
 	UNIT_DEACTIVATED_ACTION,
 	UNIT_REACTIVATED_ACTION
-} from '$lib/server/services/unit';
-import { splitAtLetterToDigitBoundary } from '$lib/server/services/unit/queries';
+} from '#lib/server/services/unit/index.ts';
+import { splitAtLetterToDigitBoundary } from '#lib/server/services/unit/queries.ts';
 
 /**
  * The Unit service: the admin list with search and pagination, creating a house, and switching one

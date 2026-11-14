@@ -5,8 +5,8 @@ import {
 	buildUnsubscribeToken,
 	unsubscribeLink,
 	verifyUnsubscribeToken
-} from '$lib/server/services/subscription/unsubscribe-token';
-import { SUBSCRIPTION_KIND } from '$lib/server/services/subscription/kinds';
+} from '#lib/server/services/subscription/unsubscribe-token.ts';
+import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
 
 /**
  * The unsubscribe token on its own — the acceptance criterion "tautan berhenti berlangganan tidak

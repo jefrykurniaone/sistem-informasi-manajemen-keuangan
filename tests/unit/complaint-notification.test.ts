@@ -1,45 +1,45 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { readOrigin } from '$lib/server/auth';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
+import { readOrigin } from '#lib/server/auth.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
 import {
 	COMPLAINT_STATUS,
 	COMPLAINT_VISIBILITY,
 	complaints,
 	type Complaint
-} from '$lib/server/db/schema/complaint';
-import { emailQueue } from '$lib/server/db/schema/email';
-import { residents } from '$lib/server/db/schema/resident';
-import { testDatabase } from '$lib/server/db/test-helpers';
+} from '#lib/server/db/schema/complaint.ts';
+import { emailQueue } from '#lib/server/db/schema/email.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import {
 	complaintStatusChangedPayload,
 	complaintStatusChangedTemplate,
 	COMPLAINT_STATUS_CHANGED_KIND
-} from '$lib/server/email/templates/complaint-status-changed';
+} from '#lib/server/email/templates/complaint-status-changed.ts';
 import {
 	newComplaintPayload,
 	newComplaintTemplate,
 	NEW_COMPLAINT_KIND
-} from '$lib/server/email/templates/new-complaint';
-import type { Clock } from '$lib/server/ports/clock';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
+} from '#lib/server/email/templates/new-complaint.ts';
+import type { Clock } from '#lib/server/ports/clock.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
 import {
 	changeComplaintStatus,
 	createComplaint,
 	withdrawComplaint,
 	type CreateComplaintRequest
-} from '$lib/server/services/complaint';
+} from '#lib/server/services/complaint/index.ts';
 import {
 	notifyComplaintStatusChanged,
 	notifyNewComplaint
-} from '$lib/server/services/complaint/notification';
+} from '#lib/server/services/complaint/notification.ts';
 import {
 	MandatorySubscriptionKindError,
 	setSubscriptionPreference
-} from '$lib/server/services/subscription';
-import { SUBSCRIPTION_KIND } from '$lib/server/services/subscription/kinds';
+} from '#lib/server/services/subscription/index.ts';
+import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
 
 /**
  * `./notification.ts` — the two emails #46 adds — and the templates they render through.

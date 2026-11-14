@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
 import {
 	isStorageKey,
 	readFileStoreSecret,
@@ -11,8 +11,8 @@ import {
 	DEFAULT_SIGNED_LINK_LIFETIME_MILLISECONDS,
 	MINIMUM_FILE_STORE_SECRET_LENGTH,
 	type ServedFileStore
-} from '$lib/server/ports/file-store';
-import { LocalFileStore } from '$lib/server/storage/local-file-store';
+} from '#lib/server/ports/file-store.ts';
+import { LocalFileStore } from '#lib/server/storage/local-file-store.ts';
 
 /**
  * The `FileStore` port, its local implementation, and what a signed link is worth.

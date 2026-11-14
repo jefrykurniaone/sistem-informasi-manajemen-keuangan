@@ -1,4 +1,4 @@
-import type { EmailPayload, EmailTemplate, EmailTemplates } from '$lib/server/ports/email';
+import type { EmailPayload, EmailTemplate, EmailTemplates } from '#lib/server/ports/email.ts';
 
 /**
  * The email that tells a self-registrant a superuser let them in: which house they were attached to,

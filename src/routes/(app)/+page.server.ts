@@ -1,15 +1,15 @@
 import { redirect } from '@sveltejs/kit';
 import type { Pathname } from '$app/types';
-import { MENU } from '$lib/components/app-shell/menu';
-import { formatRupiah } from '$lib/money';
-import * as m from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime.js';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { isAllowed, rolesOf } from '$lib/server/authz';
-import { database } from '$lib/server/db';
-import type { Role } from '$lib/server/db/schema/authz';
-import type { JobRunStatus } from '$lib/server/db/schema/scheduler';
-import { systemClock } from '$lib/server/ports/clock';
+import { MENU } from '#lib/components/app-shell/menu.ts';
+import { formatRupiah } from '#lib/money.ts';
+import * as m from '#lib/paraglide/messages.js';
+import { getLocale } from '#lib/paraglide/runtime.js';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { isAllowed, rolesOf } from '#lib/server/authz.ts';
+import { database } from '#lib/server/db/index.ts';
+import type { Role } from '#lib/server/db/schema/authz.ts';
+import type { JobRunStatus } from '#lib/server/db/schema/scheduler.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	adminDashboard,
 	residentDashboard,
@@ -22,9 +22,9 @@ import {
 	type PendingPaymentsSummary,
 	type ResidentDashboard,
 	type ResidentUnitSummary
-} from '$lib/server/services/dashboard';
-import { residentProfileForUser } from '$lib/server/services/resident/profile';
-import { formatDateTime, formatMonthLabel } from '$lib/time';
+} from '#lib/server/services/dashboard/index.ts';
+import { residentProfileForUser } from '#lib/server/services/resident/profile.ts';
+import { formatDateTime, formatMonthLabel } from '#lib/time.ts';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -34,10 +34,10 @@ import type { PageServerLoad } from './$types';
  *
  * **Admin or resident is decided the same way the sidebar decides what to show**, not by a role
  * name: `holdsAnyGatedMenuAction` reads `MENU` and calls `isAllowed` exactly as `visibleMenu` in
- * `$lib/components/app-shell/menu.ts` does, because "pemegang izin mengelola apa pun" is the same
+ * `#lib/components/app-shell/menu.ts` does, because "pemegang izin mengelola apa pun" is the same
  * question the sidebar already answers for every gated item at once.
  *
- * **The figures come from `$lib/server/services/dashboard`, never recomputed here.** That module's
+ * **The figures come from `#lib/server/services/dashboard/index.ts`, never recomputed here.** That module's
  * own doc comment settles why: "Beranda harus memakai definisi yang sama, bukan menghitung ulang di
  * rute." One consequence worth naming: `AdminDashboard.invoices.overdueCount` is this WIB month's
  * overdue Tagihan, the same figure `monthInvoiceSummary` computes for "Tagihan terbit, lunas,

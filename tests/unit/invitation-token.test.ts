@@ -4,7 +4,7 @@ import {
 	createInvitationToken,
 	hashInvitationToken,
 	INVITATION_TOKEN_BYTES
-} from '$lib/server/services/invitation/token';
+} from '#lib/server/services/invitation/token.ts';
 
 /**
  * The invitation token itself: enough entropy, URL-safe, and stored only as a digest. No database —

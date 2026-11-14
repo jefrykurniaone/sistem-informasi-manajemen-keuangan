@@ -1,6 +1,6 @@
 import { and, asc, eq, gte, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import { civilDayOf } from '$lib/time';
+import { civilDayOf } from '#lib/time.ts';
 import { ACTION, isAllowed, rolesOf, type DatabaseWriter } from '../../authz';
 import { occupancies } from '../../db/schema/occupancy';
 import { residents } from '../../db/schema/resident';

@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import * as m from '$lib/paraglide/messages.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * The label a person reads for a Post's type, status and category.
@@ -8,7 +8,7 @@
 	 * `(app)/profile/notifications/+page.svelte` copies its `KIND_LABEL`: this ticket's three screens
 	 * and its preview component all need the same three maps, and four copies of the same five rows
 	 * is four places to forget a category. The stored value stays exactly what
-	 * `$lib/server/services/post` and `$lib/server/db/schema/post` name it — only the sentence
+	 * `#lib/server/services/post/index.ts` and `#lib/server/db/schema/post.ts` name it — only the sentence
 	 * changes here.
 	 */
 	export const POST_TYPE_LABEL: Record<string, () => string> = {
@@ -39,7 +39,7 @@
 	 * `startsAtTime`, `endsAtDate` / `endsAtTime` — the shape `date-time-fields.svelte` posts and
 	 * reads back: a `YYYY-MM-DD` date and an `HH:mm` time that always means WIB. Turning the pair into
 	 * a `Date` is the server's job, next to the code that knows which zone it means — see
-	 * `combineCivilDateTime` in `$lib/server/services/post/time`.
+	 * `combineCivilDateTime` in `#lib/server/services/post/time.ts`.
 	 */
 	export interface PostFormValues {
 		readonly type: string;
@@ -55,7 +55,7 @@
 	}
 
 	/**
-	 * The `type` value that means a kegiatan, as `$lib/server/db/schema/post` stores it.
+	 * The `type` value that means a kegiatan, as `#lib/server/db/schema/post.ts` stores it.
 	 *
 	 * Written out rather than imported: everything under `src/lib/server/` is server-only and
 	 * SvelteKit refuses to pull it into a component. `tests/unit/post-service.test.ts` walks the same
@@ -79,15 +79,15 @@
 </script>
 
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button/index.js';
-	import DateTimeFields from '$lib/components/date-time-fields.svelte';
-	import RichTextEditor from '$lib/components/post/rich-text-editor.svelte';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import DateTimeFields from '#lib/components/date-time-fields.svelte';
+	import RichTextEditor from '#lib/components/post/rich-text-editor.svelte';
 
 	/**
 	 * The write form for a Post, shared by `(app)/admin/posts/new` and `(app)/admin/posts/[id]`. It
 	 * holds no logic of its own beyond showing and hiding the three fields only a kegiatan has: the
 	 * rules about which type may carry which field are enforced in
-	 * `$lib/server/services/post`, and this form hiding them is a convenience, never the check.
+	 * `#lib/server/services/post/index.ts`, and this form hiding them is a convenience, never the check.
 	 *
 	 * It posts to whichever action the screen around it names, so the same component serves "save a
 	 * draft" and "save changes".

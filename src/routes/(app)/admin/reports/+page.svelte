@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import CategoryTable from '$lib/components/report/category-table.svelte';
-	import ReportSummary from '$lib/components/report/report-summary.svelte';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import { formatDateTime } from '$lib/time';
+	import CategoryTable from '#lib/components/report/category-table.svelte';
+	import ReportSummary from '#lib/components/report/report-summary.svelte';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formatDateTime } from '#lib/time.ts';
 	import type { PageProps } from './$types';
 
 	/**

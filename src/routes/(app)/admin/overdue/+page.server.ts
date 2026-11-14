@@ -1,10 +1,10 @@
 import { error, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
-import { listOverdueUnits } from '$lib/server/services/dues/queries';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { listOverdueUnits } from '#lib/server/services/dues/queries.ts';
 import type { PageServerLoad } from './$types';
 
 /**

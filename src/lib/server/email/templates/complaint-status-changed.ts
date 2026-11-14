@@ -1,12 +1,12 @@
-import * as m from '$lib/paraglide/messages';
-import { baseLocale, locales, type Locale } from '$lib/paraglide/runtime';
+import * as m from '#lib/paraglide/messages.js';
+import { baseLocale, locales, type Locale } from '#lib/paraglide/runtime.js';
 import {
 	COMPLAINT_STATUS,
 	COMPLAINT_STATUSES,
 	type ComplaintStatus
-} from '$lib/server/db/schema/complaint';
-import type { EmailPayload, EmailTemplate, EmailTemplates } from '$lib/server/ports/email';
-import { SUBSCRIPTION_KIND } from '$lib/server/services/subscription/kinds';
+} from '#lib/server/db/schema/complaint.ts';
+import type { EmailPayload, EmailTemplate, EmailTemplates } from '#lib/server/ports/email.ts';
+import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
 
 /**
  * The email that tells a Keluhan's reporter that it moved: the new status, and the note or

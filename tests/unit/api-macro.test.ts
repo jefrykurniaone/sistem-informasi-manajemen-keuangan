@@ -1,15 +1,15 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { Elysia } from 'elysia';
 import { describe, expect, it } from 'vitest';
-import { createApiApp } from '$lib/server/api/app';
-import { createAuthMacro } from '$lib/server/api/auth-macro';
-import { createAuth, type Auth } from '$lib/server/auth';
-import { ACTION, type Action } from '$lib/server/authz';
-import { emailQueue, user } from '$lib/server/db/schema';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { VERIFY_EMAIL_KIND } from '$lib/server/email/templates/verify-email';
-import { systemClock } from '$lib/server/ports/clock';
+import { createApiApp } from '#lib/server/api/app.ts';
+import { createAuthMacro } from '#lib/server/api/auth-macro.ts';
+import { createAuth, type Auth } from '#lib/server/auth.ts';
+import { ACTION, type Action } from '#lib/server/authz.ts';
+import { emailQueue, user } from '#lib/server/db/schema/index.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { VERIFY_EMAIL_KIND } from '#lib/server/email/templates/verify-email.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 
 /**
  * The Elysia surface, against a real PostgreSQL and a real better-auth, without a browser:

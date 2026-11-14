@@ -1,9 +1,9 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { PermissionDeniedError } from '$lib/errors';
-import { systemClock } from '$lib/server/ports/clock';
-import { residentProfileForUser, updateOwnProfile } from '$lib/server/services/resident/profile';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { residentProfileForUser, updateOwnProfile } from '#lib/server/services/resident/profile.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**

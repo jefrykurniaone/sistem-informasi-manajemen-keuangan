@@ -3,7 +3,7 @@ import path from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { describe, expect, it } from 'vitest';
-import { createConnection, readDatabaseUrl } from '$lib/server/db';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
 import {
 	invitations,
 	occupancies,
@@ -15,8 +15,8 @@ import {
 	units,
 	user,
 	type NewOccupancy
-} from '$lib/server/db/schema';
-import { testDatabase } from '$lib/server/db/test-helpers';
+} from '#lib/server/db/schema/index.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 
 /**
  * The warga-unit schema, tested against PostgreSQL rather than against the code that will later

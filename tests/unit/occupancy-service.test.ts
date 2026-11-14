@@ -1,22 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah } from '$lib/money';
-import { auditEntriesFor } from '$lib/server/audit';
-import { createConnection, readDatabaseUrl } from '$lib/server/db';
-import { auditLog } from '$lib/server/db/schema/audit';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { emailQueue } from '$lib/server/db/schema/email';
-import { occupancies, OCCUPANCY_ROLE } from '$lib/server/db/schema/occupancy';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { INVOICE_ISSUED_KIND } from '$lib/server/email/templates/invoice-issued';
-import type { Clock } from '$lib/server/ports/clock';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { notifyInvoiceIssued } from '$lib/server/services/dues/notification';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah } from '#lib/money.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
+import { auditLog } from '#lib/server/db/schema/audit.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { emailQueue } from '#lib/server/db/schema/email.ts';
+import { occupancies, OCCUPANCY_ROLE } from '#lib/server/db/schema/occupancy.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { INVOICE_ISSUED_KIND } from '#lib/server/email/templates/invoice-issued.ts';
+import type { Clock } from '#lib/server/ports/clock.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { notifyInvoiceIssued } from '#lib/server/services/dues/notification.ts';
 import {
 	endOccupancy,
 	listAssignableResidents,
@@ -36,13 +36,13 @@ import {
 	recordOccupancy,
 	ResidentNotFoundError,
 	setPrimaryOccupant
-} from '$lib/server/services/occupancy';
+} from '#lib/server/services/occupancy/index.ts';
 import {
 	getUnit,
 	listUnits,
 	needsPrimaryOccupant,
 	UnitNotFoundError
-} from '$lib/server/services/unit';
+} from '#lib/server/services/unit/index.ts';
 
 /**
  * The Masa Huni service: recording a stay, ending one, and moving the Penanggung Jawab flag.

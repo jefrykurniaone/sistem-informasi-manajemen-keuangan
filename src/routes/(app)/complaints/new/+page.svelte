@@ -1,9 +1,9 @@
 <script lang="ts">
 	import ComplaintForm, {
 		type ComplaintFormValues
-	} from '$lib/components/complaint/complaint-form.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	} from '#lib/components/complaint/complaint-form.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();

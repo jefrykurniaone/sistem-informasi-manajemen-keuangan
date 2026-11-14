@@ -1,7 +1,7 @@
-import * as m from '$lib/paraglide/messages';
-import { baseLocale, locales, type Locale } from '$lib/paraglide/runtime';
-import { formatRupiah, rupiah } from '$lib/money';
-import type { EmailPayload, EmailTemplate, EmailTemplates } from '$lib/server/ports/email';
+import * as m from '#lib/paraglide/messages.js';
+import { baseLocale, locales, type Locale } from '#lib/paraglide/runtime.js';
+import { formatRupiah, rupiah } from '#lib/money.ts';
+import type { EmailPayload, EmailTemplate, EmailTemplates } from '#lib/server/ports/email.ts';
 
 /**
  * The email that tells a Pembayaran's recorder that it was turned down, and why.

@@ -3,9 +3,9 @@
 	import TransactionForm, {
 		EMPTY_CASH_TRANSACTION_FORM_VALUES,
 		type CashTransactionFormValues
-	} from '$lib/components/cash/transaction-form.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	} from '#lib/components/cash/transaction-form.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();

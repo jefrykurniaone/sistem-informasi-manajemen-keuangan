@@ -1,13 +1,13 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
-import * as m from '$lib/paraglide/messages';
+import * as m from '#lib/paraglide/messages.js';
 import {
 	AUTH_PATHS,
 	MAXIMUM_PASSWORD_LENGTH,
 	MINIMUM_PASSWORD_LENGTH,
 	auth,
 	checkPassword
-} from '$lib/server/auth';
+} from '#lib/server/auth.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -25,7 +25,7 @@ import type { Actions, PageServerLoad } from './$types';
  * against.
  *
  * Every other session belonging to this person is revoked as part of the reset; see
- * `$lib/server/auth`.
+ * `#lib/server/auth.ts`.
  */
 
 /** Where a finished reset lands, with a note for the sign-in page to show. */

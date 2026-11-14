@@ -1,14 +1,14 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { formatRupiah, parseRupiah, type Rupiah } from '$lib/money';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { formatRupiah, parseRupiah, type Rupiah } from '#lib/money.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	CashCategoryNotFoundError,
 	listActiveCashCategories
-} from '$lib/server/services/cash/category';
+} from '#lib/server/services/cash/category.ts';
 import {
 	assertMayRecordCashTransactions,
 	CASH_RULE,
@@ -17,9 +17,9 @@ import {
 	recordCashTransaction,
 	type CashReceiptUpload,
 	type CashRule
-} from '$lib/server/services/cash/transaction';
-import { PeriodLockedError } from '$lib/server/services/cash/period';
-import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
+} from '#lib/server/services/cash/transaction.ts';
+import { PeriodLockedError } from '#lib/server/services/cash/period.ts';
+import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**

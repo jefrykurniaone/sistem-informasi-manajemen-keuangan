@@ -1,10 +1,10 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { ROLES, type Role } from '$lib/server/db/schema/authz';
-import { systemClock } from '$lib/server/ports/clock';
-import { grantRole, listUsersWithRoles, revokeRole } from '$lib/server/services/user/roles';
-import { LastSuperuserError, PermissionDeniedError } from '$lib/errors';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { ROLES, type Role } from '#lib/server/db/schema/authz.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { grantRole, listUsersWithRoles, revokeRole } from '#lib/server/services/user/roles.ts';
+import { LastSuperuserError, PermissionDeniedError } from '#lib/errors.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**

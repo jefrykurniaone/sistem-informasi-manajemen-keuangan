@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { PermissionDeniedError } from '$lib/errors';
+import { PermissionDeniedError } from '#lib/errors.ts';
 import type { Database } from '../../db';
 import type { DatabaseWriter } from '../../authz';
 import { user } from '../../db/schema/auth';

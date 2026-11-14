@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { rupiah, type Rupiah } from '$lib/money';
+import { rupiah, type Rupiah } from '#lib/money.ts';
 import { recordAuditEntry } from '../../audit';
 import { ACTION, requirePermission, type Transaction } from '../../authz';
 import type { Database } from '../../db';

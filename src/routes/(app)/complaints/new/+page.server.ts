@@ -1,10 +1,10 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { COMPLAINT_VISIBILITY } from '$lib/server/db/schema/complaint';
-import { systemClock } from '$lib/server/ports/clock';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { COMPLAINT_VISIBILITY } from '#lib/server/db/schema/complaint.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	ATTACHMENT_CONTENT_TYPES,
 	COMPLAINT_ATTACHMENT_RULE,
@@ -18,8 +18,8 @@ import {
 	type ComplaintAttachmentRule,
 	type ComplaintAttachmentUpload,
 	type ComplaintRule
-} from '$lib/server/services/complaint';
-import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
+} from '#lib/server/services/complaint/index.ts';
+import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**

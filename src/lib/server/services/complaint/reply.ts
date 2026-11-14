@@ -1,5 +1,5 @@
 import { and, asc, eq } from 'drizzle-orm';
-import { PermissionDeniedError } from '$lib/errors';
+import { PermissionDeniedError } from '#lib/errors.ts';
 import { ACTION, isAllowed, rolesOf, type DatabaseWriter } from '../../authz';
 import { user } from '../../db/schema/auth';
 import { complaintReplies, complaints, type ComplaintReply } from '../../db/schema/complaint';

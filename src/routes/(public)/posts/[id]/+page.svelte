@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import PostPreview from '$lib/components/post/post-preview.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import PostPreview from '#lib/components/post/post-preview.svelte';
 	import type { PageProps } from './$types';
 
 	/**

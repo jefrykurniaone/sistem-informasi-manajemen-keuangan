@@ -1,18 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { auditEntriesFor } from '$lib/server/audit';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
 import {
 	CASH_CATEGORY_TYPE,
 	cashCategories,
 	SYSTEM_CATEGORY_KEY
-} from '$lib/server/db/schema/cash-category';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
-import * as categoryModule from '$lib/server/services/cash/category';
+} from '#lib/server/db/schema/cash-category.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import * as categoryModule from '#lib/server/services/cash/category.ts';
 import {
 	CASH_CATEGORY_CREATED_ACTION,
 	CASH_CATEGORY_DEACTIVATED_ACTION,
@@ -30,7 +30,7 @@ import {
 	SYSTEM_CATEGORY_ATTEMPT,
 	SystemCashCategoryError,
 	updateCashCategory
-} from '$lib/server/services/cash/category';
+} from '#lib/server/services/cash/category.ts';
 
 /**
  * Managing the Kategori Kas: adding one, renaming it, retiring it, the three things a system

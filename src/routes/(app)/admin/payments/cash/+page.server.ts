@@ -1,12 +1,12 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { formatRupiah, parseRupiah, type Rupiah } from '$lib/money';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
-import { PeriodLockedError } from '$lib/server/services/cash/period';
-import { UnitNotFoundError } from '$lib/server/services/dues/queries';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { formatRupiah, parseRupiah, type Rupiah } from '#lib/money.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { PeriodLockedError } from '#lib/server/services/cash/period.ts';
+import { UnitNotFoundError } from '#lib/server/services/dues/queries.ts';
 import {
 	VERIFICATION_RULE,
 	VerificationRuleError,
@@ -14,7 +14,7 @@ import {
 	listCashPayableUnits,
 	recordCashPayment,
 	type VerificationRule
-} from '$lib/server/services/dues/verification';
+} from '#lib/server/services/dues/verification.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**

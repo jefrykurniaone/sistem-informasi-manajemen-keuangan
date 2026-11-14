@@ -1,17 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { auditEntriesFor } from '$lib/server/audit';
-import { readOrigin } from '$lib/server/auth';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { emailQueue } from '$lib/server/db/schema/email';
-import { POST_STATUS, POST_TYPE, posts } from '$lib/server/db/schema/post';
-import { residents } from '$lib/server/db/schema/resident';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { NEW_POST_KIND } from '$lib/server/email/templates/new-post';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { readOrigin } from '#lib/server/auth.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { emailQueue } from '#lib/server/db/schema/email.ts';
+import { POST_STATUS, POST_TYPE, posts } from '#lib/server/db/schema/post.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { NEW_POST_KIND } from '#lib/server/email/templates/new-post.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
 import {
 	archivePost,
 	assertAcceptableCoverImage,
@@ -37,9 +37,9 @@ import {
 	updatePost,
 	type CoverImageUpload,
 	type PostContent
-} from '$lib/server/services/post';
-import { setSubscriptionPreference } from '$lib/server/services/subscription';
-import { SUBSCRIPTION_KIND } from '$lib/server/services/subscription/kinds';
+} from '#lib/server/services/post/index.ts';
+import { setSubscriptionPreference } from '#lib/server/services/subscription/index.ts';
+import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
 
 /**
  * The Post service: who may write one, the type and status rules `docs/spec-konten-v1.md` left out

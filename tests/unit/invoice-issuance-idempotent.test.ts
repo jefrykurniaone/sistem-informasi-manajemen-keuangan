@@ -2,26 +2,26 @@ import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
 import type { PoolClient } from 'pg';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { rupiah, type Rupiah } from '$lib/money';
-import { createConnection, readDatabaseUrl } from '$lib/server/db';
-import { user } from '$lib/server/db/schema/auth';
-import { duesRates } from '$lib/server/db/schema/dues-rate';
-import { emailQueue } from '$lib/server/db/schema/email';
-import { invoices, type Invoice } from '$lib/server/db/schema/invoice';
-import { OCCUPANCY_ROLE, occupancies } from '$lib/server/db/schema/occupancy';
-import { residents } from '$lib/server/db/schema/resident';
-import { jobRuns } from '$lib/server/db/schema/scheduler';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { INVOICE_ISSUED_KIND } from '$lib/server/email/templates/invoice-issued';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { JOB_OUTCOME, runJob } from '$lib/server/scheduler';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { duesRates } from '#lib/server/db/schema/dues-rate.ts';
+import { emailQueue } from '#lib/server/db/schema/email.ts';
+import { invoices, type Invoice } from '#lib/server/db/schema/invoice.ts';
+import { OCCUPANCY_ROLE, occupancies } from '#lib/server/db/schema/occupancy.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { jobRuns } from '#lib/server/db/schema/scheduler.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { INVOICE_ISSUED_KIND } from '#lib/server/email/templates/invoice-issued.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { JOB_OUTCOME, runJob } from '#lib/server/scheduler/index.ts';
 import {
 	issueInvoicesForPeriod,
 	UNIT_SKIP_REASON,
 	type InvoiceIssuanceSummary
-} from '$lib/server/services/dues/issuance';
-import { invoiceIssuanceJob } from '$lib/server/services/dues/jobs';
+} from '#lib/server/services/dues/issuance.ts';
+import { invoiceIssuanceJob } from '#lib/server/services/dues/jobs.ts';
 
 /**
  * The idempotency argument of `docs/spec-iuran-v1.md`, proved rather than asserted: "menjalankan

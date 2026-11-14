@@ -23,11 +23,11 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
-	import * as Collapsible from '$lib/components/ui/collapsible/index.js';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
-	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
-	import { useSidebar } from '$lib/components/ui/sidebar/index.js';
-	import * as m from '$lib/paraglide/messages.js';
+	import * as Collapsible from '#lib/components/ui/collapsible/index.js';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
+	import { useSidebar } from '#lib/components/ui/sidebar/index.js';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { MenuGroup } from './menu.js';
 
 	/**

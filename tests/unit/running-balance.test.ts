@@ -1,18 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah } from '$lib/money';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { CASH_CATEGORY_TYPE, type CashCategoryType } from '$lib/server/db/schema/cash-category';
-import type { CashTransaction } from '$lib/server/db/schema/cash-transaction';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
-import { cashBook } from '$lib/server/services/cash/balance';
-import { createCashCategory } from '$lib/server/services/cash/category';
-import { recordCashCorrection } from '$lib/server/services/cash/correction';
-import { recordCashTransaction } from '$lib/server/services/cash/transaction';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah } from '#lib/money.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { CASH_CATEGORY_TYPE, type CashCategoryType } from '#lib/server/db/schema/cash-category.ts';
+import type { CashTransaction } from '#lib/server/db/schema/cash-transaction.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
+import { cashBook } from '#lib/server/services/cash/balance.ts';
+import { createCashCategory } from '#lib/server/services/cash/category.ts';
+import { recordCashCorrection } from '#lib/server/services/cash/correction.ts';
+import { recordCashTransaction } from '#lib/server/services/cash/transaction.ts';
 
 /**
  * The running balance: computed on every read, never stored, and checked here against sums worked

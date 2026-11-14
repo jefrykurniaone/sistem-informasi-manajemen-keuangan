@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { Rupiah } from '$lib/money';
+	import type { Rupiah } from '#lib/money.ts';
 
 	/** The four headline figures of a Laporan Bulanan, as the summary renders them. */
 	export interface ReportSummaryFigures {
@@ -30,9 +30,9 @@
 </script>
 
 <script lang="ts">
-	import { formatRupiah } from '$lib/money';
-	import * as m from '$lib/paraglide/messages.js';
-	import { formatDateTime } from '$lib/time';
+	import { formatRupiah } from '#lib/money.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formatDateTime } from '#lib/time.ts';
 
 	/**
 	 * The headline of a Laporan Bulanan: which revision it is, the four cash figures user story 18

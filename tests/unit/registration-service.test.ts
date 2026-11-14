@@ -1,25 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { auditEntriesFor } from '$lib/server/audit';
-import { createAuth, type Auth } from '$lib/server/auth';
-import { ACTION, requirePermission, type Action } from '$lib/server/authz';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { emailQueue } from '$lib/server/db/schema/email';
-import { occupancies, OCCUPANCY_ROLE } from '$lib/server/db/schema/occupancy';
-import { registrations, REGISTRATION_STATUS } from '$lib/server/db/schema/registration';
-import { residents } from '$lib/server/db/schema/resident';
-import { subscriptions } from '$lib/server/db/schema/subscription';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { createAuth, type Auth } from '#lib/server/auth.ts';
+import { ACTION, requirePermission, type Action } from '#lib/server/authz.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { emailQueue } from '#lib/server/db/schema/email.ts';
+import { occupancies, OCCUPANCY_ROLE } from '#lib/server/db/schema/occupancy.ts';
+import { registrations, REGISTRATION_STATUS } from '#lib/server/db/schema/registration.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { subscriptions } from '#lib/server/db/schema/subscription.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import {
 	REGISTRATION_APPROVED_KIND,
 	registrationApprovedTemplate
-} from '$lib/server/email/templates/registration-approved';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { occupiedUnitsForUser } from '$lib/server/services/occupancy';
+} from '#lib/server/email/templates/registration-approved.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { occupiedUnitsForUser } from '#lib/server/services/occupancy/index.ts';
 import {
 	approveRegistration,
 	listPendingRegistrations,
@@ -31,9 +31,9 @@ import {
 	RegistrationNotFoundError,
 	REGISTRATION_APPROVED_ACTION,
 	REGISTRATION_REJECTED_ACTION
-} from '$lib/server/services/registration';
-import { residentProfileForUser } from '$lib/server/services/resident/profile';
-import { UnitNotFoundError } from '$lib/server/services/unit';
+} from '#lib/server/services/registration/index.ts';
+import { residentProfileForUser } from '#lib/server/services/resident/profile.ts';
+import { UnitNotFoundError } from '#lib/server/services/unit/index.ts';
 
 /**
  * The Pendaftaran service, against a real PostgreSQL and a real better-auth instance.

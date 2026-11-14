@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as m from '$lib/paraglide/messages.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * The "grant an exemption" form on `src/routes/(app)/admin/exemptions/+page.svelte`. It posts to
@@ -8,7 +8,7 @@
 	 * reads. Same shape as `src/lib/components/dues/dues-rate-form.svelte`: the page above it prints
 	 * the last submission's message once, rather than this component repeating it.
 	 *
-	 * **The unit list comes in as a prop.** Nothing under `$lib/server` may be imported from a
+	 * **The unit list comes in as a prop.** Nothing under `#lib/server` may be imported from a
 	 * component — that boundary is SvelteKit's own — so the picker's options are read in
 	 * `+page.server.ts` and handed down.
 	 */

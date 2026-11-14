@@ -1,4 +1,4 @@
-import { api } from '$lib/server/api/app';
+import { api } from '#lib/server/api/app.ts';
 import type { RequestHandler } from './$types';
 
 /**

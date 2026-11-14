@@ -1,10 +1,10 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { parseRupiah, type Rupiah } from '$lib/money';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { parseRupiah, type Rupiah } from '#lib/money.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	MAXIMUM_PROOF_BYTES,
 	MAXIMUM_PROOF_MEBIBYTES,
@@ -15,8 +15,8 @@ import {
 	recordPayment,
 	type PaymentProofUpload,
 	type PaymentRule
-} from '$lib/server/services/dues/payment';
-import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
+} from '#lib/server/services/dues/payment.ts';
+import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**

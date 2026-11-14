@@ -1,6 +1,6 @@
 <script lang="ts">
-	import LanguageSwitcher from '$lib/components/app-shell/language-switcher.svelte';
-	import BrandPanel from '$lib/components/auth/brand-panel.svelte';
+	import LanguageSwitcher from '#lib/components/app-shell/language-switcher.svelte';
+	import BrandPanel from '#lib/components/auth/brand-panel.svelte';
 	import type { LayoutProps } from './$types';
 
 	/**

@@ -1,29 +1,29 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { formatRupiah, parseRupiah, type Rupiah } from '$lib/money';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { assertUuidParam } from '$lib/server/services/identifier';
-import { systemClock } from '$lib/server/ports/clock';
-import { PeriodLockedError } from '$lib/server/services/cash/period';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { formatRupiah, parseRupiah, type Rupiah } from '#lib/money.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { assertUuidParam } from '#lib/server/services/identifier.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { PeriodLockedError } from '#lib/server/services/cash/period.ts';
 import {
 	AllocationNotFoundError,
 	RELEASE_RULE,
 	ReleaseRuleError,
 	releaseAllocation,
 	type ReleaseRule
-} from '$lib/server/services/dues/allocation-release';
+} from '#lib/server/services/dues/allocation-release.ts';
 import {
 	correctionsHistoryFor,
 	unitFinanceFor
-} from '$lib/server/services/dues/corrections-history';
+} from '#lib/server/services/dues/corrections-history.ts';
 import {
 	REFUND_RULE,
 	RefundRuleError,
 	refundCredit,
 	type RefundRule
-} from '$lib/server/services/dues/credit-refund';
+} from '#lib/server/services/dues/credit-refund.ts';
 import {
 	InvoiceNotFoundError,
 	VOID_RULE,
@@ -31,8 +31,8 @@ import {
 	VoidRuleError,
 	voidInvoice,
 	type VoidRule
-} from '$lib/server/services/dues/invoice-void';
-import { UnitNotFoundError } from '$lib/server/services/dues/queries';
+} from '#lib/server/services/dues/invoice-void.ts';
+import { UnitNotFoundError } from '#lib/server/services/dues/queries.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -67,7 +67,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	if (!locals.user) {
 		redirect(303, AUTH_PATHS.login);
 	}
-	// `units.id` is a `uuid` column — see #111 and `$lib/server/services/identifier.ts`.
+	// `units.id` is a `uuid` column — see #111 and `#lib/server/services/identifier.ts`.
 	assertUuidParam(params.id, m.unitFinance_notFound());
 
 	try {

@@ -1,31 +1,31 @@
 import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah, type Rupiah } from '$lib/money';
-import { auditEntriesFor } from '$lib/server/audit';
-import { allocations } from '$lib/server/db/schema/allocation';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
-import { invoices } from '$lib/server/db/schema/invoice';
-import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '$lib/server/db/schema/payment';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { openInvoicesOfUnit } from '$lib/server/services/dues/allocation';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { allocations } from '#lib/server/db/schema/allocation.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '#lib/server/db/schema/payment.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { openInvoicesOfUnit } from '#lib/server/services/dues/allocation.ts';
 import {
 	ALLOCATION_RELEASED_ACTION,
 	AllocationNotFoundError,
 	RELEASE_RULE,
 	ReleaseRuleError,
 	releaseAllocation
-} from '$lib/server/services/dues/allocation-release';
+} from '#lib/server/services/dues/allocation-release.ts';
 import {
 	creditBalanceOfUnit,
 	lockUnallocatedVerifiedPayments
-} from '$lib/server/services/dues/credit-balance';
+} from '#lib/server/services/dues/credit-balance.ts';
 
 /**
  * Pelepasan Alokasi — user story 22 of `docs/spec-iuran-v1.md`, and #30's second correction: the

@@ -48,12 +48,12 @@ COPY . .
 # `superuser:grant` gives the first superuser, and on the server it has to run inside this image,
 # which carries no src/. scripts/grant-superuser.ts is therefore bundled here into one file with
 # every first-party import inlined. Two choices keep that bundle honest:
-# - `$lib` is resolved through scripts/tsconfig.seed.json, which spells the alias out against
-#   src/lib, rather than through tsconfig.json, which extends the generated .svelte-kit/tsconfig.json.
-#   The bundle therefore does not depend on `svelte-kit sync` having run, and holds no `$lib` import.
+# - `#lib` is resolved through the `imports` field of package.json, which Bun reads on its own, so
+#   the bundle does not depend on `svelte-kit sync` having run. scripts/tsconfig.seed.json only
+#   carries the `$app/server` shim mapping. The bundle holds no `#lib` import.
 # - Only pg and drizzle-orm are external, named one by one. They come from the node_modules the
 #   production image already carries, the same copies the app runs on. `--packages external` is
-#   not used because it would also pass an unresolved `$lib/...` through as if it were a package,
+#   not used because it would also pass an unresolved `#lib/...` through as if it were a package,
 #   and the image would only fail when somebody ran the command. Named externals make an import
 #   that cannot be resolved fail this build instead.
 RUN bun build scripts/grant-superuser.ts --target bun \

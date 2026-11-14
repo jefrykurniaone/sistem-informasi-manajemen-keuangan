@@ -1,14 +1,14 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
-import * as m from '$lib/paraglide/messages';
+import * as m from '#lib/paraglide/messages.js';
 import {
 	auth,
 	checkPassword,
 	MAXIMUM_PASSWORD_LENGTH,
 	MINIMUM_PASSWORD_LENGTH
-} from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
+} from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	acceptInvitation,
 	inspectInvitation,
@@ -17,7 +17,7 @@ import {
 	InvitationTokenUnknownError,
 	InvitationUsedError,
 	passwordHasherOf
-} from '$lib/server/services/invitation';
+} from '#lib/server/services/invitation/index.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -35,7 +35,7 @@ import type { Actions, PageServerLoad } from './$types';
  * A successful acceptance ends with an ordinary password sign-in through `auth().api.signInEmail`
  * and a redirect to the resident's own house. That is deliberately not a session minted from the
  * link: the person just typed the very password being checked, so this is the same act as signing
- * in on the login page — decision 6 in `$lib/server/auth` (a link must not mint a session) is not
+ * in on the login page — decision 6 in `#lib/server/auth.ts` (a link must not mint a session) is not
  * bent here.
  */
 

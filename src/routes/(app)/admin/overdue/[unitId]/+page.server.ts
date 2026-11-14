@@ -1,11 +1,11 @@
 import { error, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { assertUuidParam } from '$lib/server/services/identifier';
-import { systemClock } from '$lib/server/ports/clock';
-import { invoiceHistoryForUnit, UnitNotFoundError } from '$lib/server/services/dues/queries';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { assertUuidParam } from '#lib/server/services/identifier.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { invoiceHistoryForUnit, UnitNotFoundError } from '#lib/server/services/dues/queries.ts';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -22,7 +22,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	if (!locals.user) {
 		redirect(303, AUTH_PATHS.login);
 	}
-	// `units.id` is a `uuid` column — see #111 and `$lib/server/services/identifier.ts`.
+	// `units.id` is a `uuid` column — see #111 and `#lib/server/services/identifier.ts`.
 	assertUuidParam(params.unitId, m.adminOverdueUnit_notFound());
 
 	try {

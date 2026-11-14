@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { rupiah, type Rupiah } from '$lib/money';
+import { rupiah, type Rupiah } from '#lib/money.ts';
 import type { Database } from '../../db';
 import {
 	CASH_CATEGORY_TYPE,

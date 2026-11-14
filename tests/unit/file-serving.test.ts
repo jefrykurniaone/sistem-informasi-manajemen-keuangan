@@ -3,9 +3,9 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildSignedLink, SIGNED_LINK_BASE_PATH } from '$lib/server/ports/file-store';
-import { systemClock } from '$lib/server/ports/clock';
-import { LocalFileStore } from '$lib/server/storage/local-file-store';
+import { buildSignedLink, SIGNED_LINK_BASE_PATH } from '#lib/server/ports/file-store.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { LocalFileStore } from '#lib/server/storage/local-file-store.ts';
 import { GET } from '../../src/routes/files/[...key]/+server';
 
 /**

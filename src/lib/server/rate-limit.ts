@@ -10,7 +10,7 @@ import { systemClock, type Clock } from './ports/clock';
  * ## Why this exists next to better-auth's own limiter
  *
  * `src/lib/server/auth.ts` turns on `rateLimit`, and that setting stays on. It is middleware on
- * better-auth's HTTP router, so it guards `/api/auth/*` — the addresses `$lib/auth-client.ts` calls
+ * better-auth's HTTP router, so it guards `/api/auth/*` — the addresses `#lib/auth-client.ts` calls
  * from the browser — and nothing else. The sign-in, forgot-password and resend-verification pages
  * call `auth().api.*` directly from a form action, which is the pattern better-auth documents for
  * SvelteKit, and a direct call never passes through that middleware. Without this module,
@@ -49,7 +49,7 @@ import { systemClock, type Clock } from './ports/clock';
  *    answered differently would be the easiest way to reopen it.
  * 3. **The route translates; this module never does.** `RateLimitDecision` is a value, not an
  *    error, and the Indonesian sentence and the 429 live in the route, the same split
- *    `$lib/errors` records for `PermissionDeniedError`.
+ *    `#lib/errors.ts` records for `PermissionDeniedError`.
  *
  * ## Decisions settled here
  *

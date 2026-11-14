@@ -1,20 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
 import {
 	COMPLAINT_STATUS,
 	COMPLAINT_VISIBILITY,
 	complaints,
 	type Complaint,
 	type ComplaintStatus
-} from '$lib/server/db/schema/complaint';
-import { residents } from '$lib/server/db/schema/resident';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { complaintWorklistSummary } from '$lib/server/services/complaint';
+} from '#lib/server/db/schema/complaint.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { complaintWorklistSummary } from '#lib/server/services/complaint/index.ts';
 
 /**
  * Story 20: "sebagai admin, saya ingin melihat berapa keluhan masuk dan selesai bulan ini". One
@@ -97,7 +97,7 @@ describe('complaintWorklistSummary', () => {
 	// One fixture per case, each with its own before/after delta, so a one-sided boundary mistake
 	// cannot cancel against another fixture the way a single `toBe(2)` over four inserts could — see
 	// this ticket's hand-back. Months are WIB (`Asia/Jakarta`, UTC+7), read with `civilMonthOf` from
-	// `$lib/time`, matching `currentDay(clock)` in `../occupancy/visibility.ts`. WIB June runs from
+	// `#lib/time.ts`, matching `currentDay(clock)` in `../occupancy/visibility.ts`. WIB June runs from
 	// `2026-05-31T17:00:00.000Z` (00.00 WIB on the 1st) up to but not including `2026-06-30T17:00:00.000Z`
 	// (00.00 WIB on 1 July), so these four instants are exactly the ones that matter: the last instant
 	// before WIB June starts, the first and last instants of WIB June, and the first instant of WIB July.

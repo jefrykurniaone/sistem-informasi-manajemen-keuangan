@@ -1,4 +1,4 @@
-import { COMPLEX_TIME_ZONE } from '$lib/time';
+import { COMPLEX_TIME_ZONE } from '#lib/time.ts';
 
 /**
  * Turns what `date-time-fields.svelte` posts — a `YYYY-MM-DD` date box and an `HH:mm` time box —

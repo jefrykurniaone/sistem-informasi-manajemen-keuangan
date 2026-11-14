@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import { formatDay } from '$lib/time';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formatDay } from '#lib/time.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();

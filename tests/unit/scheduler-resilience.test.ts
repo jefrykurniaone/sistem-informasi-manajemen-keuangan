@@ -7,15 +7,15 @@ import {
 	isConnectionFailure,
 	readDatabaseUrl,
 	type Connection
-} from '$lib/server/db';
+} from '#lib/server/db/index.ts';
 import {
 	jobRuns,
 	JOB_RUN_STATUS,
 	type JobRun,
 	type JobRunStatus
-} from '$lib/server/db/schema/scheduler';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+} from '#lib/server/db/schema/scheduler.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	JOB_OUTCOME,
 	JOB_STEP,
@@ -27,8 +27,8 @@ import {
 	type JobOutcomeKind,
 	type JobStep,
 	type Schedule
-} from '$lib/server/scheduler';
-import { ABANDONED_RUN_ERROR, DEFAULT_LEASE_MILLISECONDS } from '$lib/server/scheduler/lock';
+} from '#lib/server/scheduler/index.ts';
+import { ABANDONED_RUN_ERROR, DEFAULT_LEASE_MILLISECONDS } from '#lib/server/scheduler/lock.ts';
 
 /**
  * What ticket #215 asked of the scheduler and of the pool under it, when the database ends a

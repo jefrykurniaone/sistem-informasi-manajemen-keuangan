@@ -555,7 +555,7 @@ function schedulerHost(): SchedulerHost {
 /**
  * Whether this process is one that should be ticking.
  *
- * @param building SvelteKit's `$app/environment` flag, passed in because `$lib/server` code cannot
+ * @param building SvelteKit's `$app/environment` flag, passed in because `#lib/server` code cannot
  *   import `$app/*` — that alias only resolves inside the SvelteKit build, and this module is also
  *   loaded by Vitest and by command-line tooling.
  * @param environment defaults to `process.env`. Vitest sets `VITEST` in every worker it runs, which

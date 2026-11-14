@@ -1,7 +1,7 @@
 import type { Pathname } from '$app/types';
-import type * as messages from '$lib/paraglide/messages.js';
-import { ACTION, isAllowed, type Action } from '$lib/server/authz';
-import type { Role } from '$lib/server/db/schema/authz';
+import type * as messages from '#lib/paraglide/messages.js';
+import { ACTION, isAllowed, type Action } from '#lib/server/authz.ts';
+import type { Role } from '#lib/server/db/schema/authz.ts';
 
 /**
  * The one description of the application's menu: which groups exist, in which order, what each
@@ -17,7 +17,7 @@ import type { Role } from '$lib/server/db/schema/authz';
  *
  * ## Why this module holds message *keys* and no icons
  *
- * It imports `$lib/server/authz`, so SvelteKit treats it as a server-only module and refuses to
+ * It imports `#lib/server/authz.ts`, so SvelteKit treats it as a server-only module and refuses to
  * pull it into the browser bundle. That is the right side of the fence for the permission filter —
  * and it means the values in here have to survive `devalue`, because `src/routes/(app)/+layout.server.ts`
  * sends `visibleMenu`'s result to the browser as ordinary load data. A paraglide message function
@@ -25,7 +25,7 @@ import type { Role } from '$lib/server/db/schema/authz';
  * and resolved with `m[labelKey]()` where it is rendered, and the group icons live beside the
  * markup in `app-sidebar.svelte`, keyed by the same `key` field. `app-sidebar.svelte` and
  * `nav-group.svelte` import the types below with `import type`, which is erased, so no client
- * module ever reaches `$lib/server/authz` at runtime.
+ * module ever reaches `#lib/server/authz.ts` at runtime.
  */
 
 /** A paraglide message key belonging to the app shell. Every label below is one of these. */

@@ -1,30 +1,30 @@
 import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { rupiah, type Rupiah } from '$lib/money';
-import { allocations } from '$lib/server/db/schema/allocation';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { duesRates } from '$lib/server/db/schema/dues-rate';
-import { emailQueue } from '$lib/server/db/schema/email';
-import { exemptions } from '$lib/server/db/schema/exemption';
-import { invoices, type Invoice } from '$lib/server/db/schema/invoice';
-import { OCCUPANCY_ROLE, occupancies } from '$lib/server/db/schema/occupancy';
-import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '$lib/server/db/schema/payment';
-import { residents } from '$lib/server/db/schema/resident';
-import { jobRuns, JOB_RUN_STATUS } from '$lib/server/db/schema/scheduler';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { INVOICE_ISSUED_KIND } from '$lib/server/email/templates/invoice-issued';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { creditBalanceOfUnit } from '$lib/server/services/dues/credit-balance';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { allocations } from '#lib/server/db/schema/allocation.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { duesRates } from '#lib/server/db/schema/dues-rate.ts';
+import { emailQueue } from '#lib/server/db/schema/email.ts';
+import { exemptions } from '#lib/server/db/schema/exemption.ts';
+import { invoices, type Invoice } from '#lib/server/db/schema/invoice.ts';
+import { OCCUPANCY_ROLE, occupancies } from '#lib/server/db/schema/occupancy.ts';
+import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '#lib/server/db/schema/payment.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { jobRuns, JOB_RUN_STATUS } from '#lib/server/db/schema/scheduler.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { INVOICE_ISSUED_KIND } from '#lib/server/email/templates/invoice-issued.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { creditBalanceOfUnit } from '#lib/server/services/dues/credit-balance.ts';
 import {
 	applicationJobs,
 	JOB_OUTCOME,
 	listJobsWithLastRun,
 	runJob,
 	triggerJob
-} from '$lib/server/scheduler';
+} from '#lib/server/scheduler/index.ts';
 import {
 	COMPLEX_TIME_ZONE,
 	describeIssuance,
@@ -33,13 +33,13 @@ import {
 	NOTIFICATION_SKIP_REASON,
 	UNIT_SKIP_REASON,
 	type InvoiceIssuanceSummary
-} from '$lib/server/services/dues/issuance';
+} from '#lib/server/services/dues/issuance.ts';
 import {
 	INVOICE_ISSUANCE_JOB_NAME,
 	invoiceIssuanceJob,
 	registerDuesJobs
-} from '$lib/server/services/dues/jobs';
-import { deleteDuesRate, DuesRateInUseError } from '$lib/server/services/dues/rate';
+} from '#lib/server/services/dues/jobs.ts';
+import { deleteDuesRate, DuesRateInUseError } from '#lib/server/services/dues/rate.ts';
 
 /**
  * Penerbitan tagihan: what one run issues, what it passes over and why, and the job that carries it.

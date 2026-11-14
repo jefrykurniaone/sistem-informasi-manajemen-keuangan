@@ -2,26 +2,29 @@ import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah } from '$lib/money';
-import { auditEntriesFor } from '$lib/server/audit';
-import { createConnection, readDatabaseUrl } from '$lib/server/db';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { CASH_CATEGORY_TYPE } from '$lib/server/db/schema/cash-category';
-import { cashTransactions, type CashTransaction } from '$lib/server/db/schema/cash-transaction';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
-import { createCashCategory } from '$lib/server/services/cash/category';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah } from '#lib/money.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { CASH_CATEGORY_TYPE } from '#lib/server/db/schema/cash-category.ts';
+import { cashTransactions, type CashTransaction } from '#lib/server/db/schema/cash-transaction.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
+import { createCashCategory } from '#lib/server/services/cash/category.ts';
 import {
 	CASH_CORRECTION_RECORDED_ACTION,
 	CashTransactionAlreadyCorrectedError,
 	CashTransactionNotFoundError,
 	recordCashCorrection
-} from '$lib/server/services/cash/correction';
-import { getOpeningBalance, recordOpeningBalance } from '$lib/server/services/cash/opening-balance';
-import { lockPeriod, PeriodLockedError, unlockPeriod } from '$lib/server/services/cash/period';
-import { CashRuleError, recordCashTransaction } from '$lib/server/services/cash/transaction';
+} from '#lib/server/services/cash/correction.ts';
+import {
+	getOpeningBalance,
+	recordOpeningBalance
+} from '#lib/server/services/cash/opening-balance.ts';
+import { lockPeriod, PeriodLockedError, unlockPeriod } from '#lib/server/services/cash/period.ts';
+import { CashRuleError, recordCashTransaction } from '#lib/server/services/cash/transaction.ts';
 
 /**
  * The Koreksi: the reversing line that is the only way a mistake in the buku kas is put right, and

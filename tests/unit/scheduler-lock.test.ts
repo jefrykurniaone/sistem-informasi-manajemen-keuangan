@@ -2,14 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
 import type { PoolClient } from 'pg';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { auditEntriesFor } from '$lib/server/audit';
-import { createConnection, readDatabaseUrl } from '$lib/server/db';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { jobRuns, JOB_RUN_STATUS, type JobRun } from '$lib/server/db/schema/scheduler';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { jobRuns, JOB_RUN_STATUS, type JobRun } from '#lib/server/db/schema/scheduler.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	ABANDONED_RUN_ERROR,
 	claimJobRun,
@@ -17,7 +17,7 @@ import {
 	failJobRun,
 	latestJobRun,
 	type JobClaim
-} from '$lib/server/scheduler/lock';
+} from '#lib/server/scheduler/lock.ts';
 import {
 	JOB_OUTCOME,
 	JOB_TRIGGER_ACTION,
@@ -30,7 +30,7 @@ import {
 	type JobContext,
 	type JobDefinition,
 	type Schedule
-} from '$lib/server/scheduler';
+} from '#lib/server/scheduler/index.ts';
 
 /**
  * The lock that makes a scheduled job run exactly once per period, and the scheduler built on it —

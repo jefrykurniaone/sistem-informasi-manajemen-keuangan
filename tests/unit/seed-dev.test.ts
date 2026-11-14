@@ -1,27 +1,27 @@
 import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createAuth, type Auth } from '$lib/server/auth';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { allocations } from '$lib/server/db/schema/allocation';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { CASH_CATEGORY_TYPE, cashCategories } from '$lib/server/db/schema/cash-category';
-import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
-import { complaints } from '$lib/server/db/schema/complaint';
-import { invoices } from '$lib/server/db/schema/invoice';
-import { occupancies } from '$lib/server/db/schema/occupancy';
-import { PAYMENT_STATUS, payments } from '$lib/server/db/schema/payment';
-import { posts } from '$lib/server/db/schema/post';
-import { REGISTRATION_STATUS, registrations } from '$lib/server/db/schema/registration';
-import { residents } from '$lib/server/db/schema/resident';
-import { JOB_RUN_STATUS, jobRuns } from '$lib/server/db/schema/scheduler';
-import { units } from '$lib/server/db/schema/unit';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
-import { cashBook } from '$lib/server/services/cash/balance';
-import { openInvoicesOfUnit } from '$lib/server/services/dues/allocation';
-import { creditBalanceOfUnit } from '$lib/server/services/dues/credit-balance';
-import { INVOICE_ISSUANCE_JOB_NAME } from '$lib/server/services/dues/jobs';
+import { createAuth, type Auth } from '#lib/server/auth.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { allocations } from '#lib/server/db/schema/allocation.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { CASH_CATEGORY_TYPE, cashCategories } from '#lib/server/db/schema/cash-category.ts';
+import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
+import { complaints } from '#lib/server/db/schema/complaint.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { occupancies } from '#lib/server/db/schema/occupancy.ts';
+import { PAYMENT_STATUS, payments } from '#lib/server/db/schema/payment.ts';
+import { posts } from '#lib/server/db/schema/post.ts';
+import { REGISTRATION_STATUS, registrations } from '#lib/server/db/schema/registration.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { JOB_RUN_STATUS, jobRuns } from '#lib/server/db/schema/scheduler.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
+import { cashBook } from '#lib/server/services/cash/balance.ts';
+import { openInvoicesOfUnit } from '#lib/server/services/dues/allocation.ts';
+import { creditBalanceOfUnit } from '#lib/server/services/dues/credit-balance.ts';
+import { INVOICE_ISSUANCE_JOB_NAME } from '#lib/server/services/dues/jobs.ts';
 import {
 	PRESERVED_TABLES,
 	RESET_TABLES,

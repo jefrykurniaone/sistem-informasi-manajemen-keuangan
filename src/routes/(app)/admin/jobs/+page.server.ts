@@ -1,12 +1,12 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { PermissionDeniedError } from '$lib/errors';
-import * as m from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime.js';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { JOB_RUN_STATUS, type JobRunStatus } from '$lib/server/db/schema/scheduler';
-import { EMAIL_QUEUE_DRAIN_JOB_NAME } from '$lib/server/email/jobs';
-import { systemClock } from '$lib/server/ports/clock';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import * as m from '#lib/paraglide/messages.js';
+import { getLocale } from '#lib/paraglide/runtime.js';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { JOB_RUN_STATUS, type JobRunStatus } from '#lib/server/db/schema/scheduler.ts';
+import { EMAIL_QUEUE_DRAIN_JOB_NAME } from '#lib/server/email/jobs.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	applicationJobs,
 	isFailureNamed,
@@ -16,11 +16,11 @@ import {
 	triggerJob,
 	type JobOutcome,
 	type JobSummary
-} from '$lib/server/scheduler';
-import { JOB_RUN_RETENTION_DAYS } from '$lib/server/scheduler/lock';
-import { INVOICE_ISSUANCE_JOB_NAME } from '$lib/server/services/dues/jobs';
-import { MONTHLY_REPORT_JOB_NAME } from '$lib/server/services/report/jobs';
-import { formatDateTime, formatDay, formatMonthLabel, type InterfaceLocale } from '$lib/time';
+} from '#lib/server/scheduler/index.ts';
+import { JOB_RUN_RETENTION_DAYS } from '#lib/server/scheduler/lock.ts';
+import { INVOICE_ISSUANCE_JOB_NAME } from '#lib/server/services/dues/jobs.ts';
+import { MONTHLY_REPORT_JOB_NAME } from '#lib/server/services/report/jobs.ts';
+import { formatDateTime, formatDay, formatMonthLabel, type InterfaceLocale } from '#lib/time.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -225,7 +225,7 @@ function failureView(job: JobSummary, locale: InterfaceLocale): FailureView | un
  * a date, and a window of minutes (the email drain's minute, the prune's day counted from the
  * epoch) as the date and time it starts. A marker of any other shape is shown as it is.
  *
- * The date and time use `$lib/time`'s formatters, whose locale is `id-ID` whatever the interface
+ * The date and time use `#lib/time.ts`'s formatters, whose locale is `id-ID` whatever the interface
  * language (decision 2 there: it is what prints `WIB`); only the month name follows the language.
  *
  * Exported, with the underscore SvelteKit asks of any extra export from a route file, for

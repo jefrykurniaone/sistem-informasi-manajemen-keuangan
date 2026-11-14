@@ -1,8 +1,8 @@
 import { count, eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { rupiah } from '$lib/money';
-import { scaffoldProbe } from '$lib/server/db/schema';
-import { testDatabase } from '$lib/server/db/test-helpers';
+import { rupiah } from '#lib/money.ts';
+import { scaffoldProbe } from '#lib/server/db/schema/index.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 
 const testDb = testDatabase();
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatRupiah, groupThousands, parseRupiah, rupiah, type Rupiah } from '$lib/money';
+import { formatRupiah, groupThousands, parseRupiah, rupiah, type Rupiah } from '#lib/money.ts';
 
 describe('rupiah', () => {
 	it.each([

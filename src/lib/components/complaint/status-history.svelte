@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { ComplaintStatus } from '$lib/server/db/schema/complaint';
+	import type { ComplaintStatus } from '#lib/server/db/schema/complaint.ts';
 
 	/** One transition this component renders — already formatted by the server load. */
 	export interface StatusHistoryRow {
@@ -13,7 +13,7 @@
 </script>
 
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * The full Riwayat Status of one Keluhan — story 19's "siapa mengubah status apa dan kapan" —

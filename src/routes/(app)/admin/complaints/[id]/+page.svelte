@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button/index.js';
-	import StatusChangeDialog from '$lib/components/complaint/status-change-dialog.svelte';
-	import StatusHistory from '$lib/components/complaint/status-history.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { ComplaintStatus } from '$lib/server/db/schema/complaint';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import StatusChangeDialog from '#lib/components/complaint/status-change-dialog.svelte';
+	import StatusHistory from '#lib/components/complaint/status-history.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { ComplaintStatus } from '#lib/server/db/schema/complaint.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();

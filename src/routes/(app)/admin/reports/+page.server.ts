@@ -1,21 +1,21 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime.js';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
-import { CASH_BOOK_MONTH_PATTERN } from '$lib/server/services/cash/balance';
-import { PERIOD_RULE, PeriodRuleError, type PeriodRule } from '$lib/server/services/cash/period';
+import * as m from '#lib/paraglide/messages.js';
+import { getLocale } from '#lib/paraglide/runtime.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { CASH_BOOK_MONTH_PATTERN } from '#lib/server/services/cash/balance.ts';
+import { PERIOD_RULE, PeriodRuleError, type PeriodRule } from '#lib/server/services/cash/period.ts';
 import {
 	publishReport,
 	reportWorkbench,
 	REPORT_RULE,
 	ReportRuleError,
 	type ReportRule
-} from '$lib/server/services/report/publication';
-import { presentBreakdown } from '$lib/server/services/report/resident-payload';
-import { formatMonthLabel } from '$lib/time';
+} from '#lib/server/services/report/publication.ts';
+import { presentBreakdown } from '#lib/server/services/report/resident-payload.ts';
+import { formatMonthLabel } from '#lib/time.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -60,7 +60,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		// which line is the iuran category and is therefore never broken down.
 		const breakdown = await presentBreakdown(db, workbench.figures.categoryBreakdown);
 		// The preview heading names the month, not the raw `YYYY-MM`, in whichever language is
-		// active — `formatMonthLabel` is the same formatter the Beranda uses (`$lib/time`).
+		// active — `formatMonthLabel` is the same formatter the Beranda uses (`#lib/time.ts`).
 		const month = formatMonthLabel(workbench.period, getLocale());
 		return { ...workbench, ...breakdown, month };
 	} catch (caught) {

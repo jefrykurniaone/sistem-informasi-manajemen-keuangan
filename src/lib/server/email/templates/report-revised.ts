@@ -1,6 +1,6 @@
-import * as m from '$lib/paraglide/messages';
-import { isLocale } from '$lib/paraglide/runtime';
-import type { EmailPayload, EmailTemplate, EmailTemplates } from '$lib/server/ports/email';
+import * as m from '#lib/paraglide/messages.js';
+import { isLocale } from '#lib/paraglide/runtime.js';
+import type { EmailPayload, EmailTemplate, EmailTemplates } from '#lib/server/ports/email.ts';
 
 /**
  * The email that tells the same subscribers a Laporan Bulanan they have already read was replaced:

@@ -1,26 +1,26 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { rupiah, type Rupiah } from '$lib/money';
-import { allocations } from '$lib/server/db/schema/allocation';
-import { user } from '$lib/server/db/schema/auth';
-import { cashCategories, SYSTEM_CATEGORY_KEY } from '$lib/server/db/schema/cash-category';
-import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
-import { invoices } from '$lib/server/db/schema/invoice';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { allocations } from '#lib/server/db/schema/allocation.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { cashCategories, SYSTEM_CATEGORY_KEY } from '#lib/server/db/schema/cash-category.ts';
+import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
 import {
 	PAYMENT_METHOD,
 	PAYMENT_STATUS,
 	payments,
 	type PaymentStatus
-} from '$lib/server/db/schema/payment';
-import { refunds } from '$lib/server/db/schema/refund';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
+} from '#lib/server/db/schema/payment.ts';
+import { refunds } from '#lib/server/db/schema/refund.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import {
 	creditBalanceOfUnit,
 	lockUnallocatedVerifiedPayments
-} from '$lib/server/services/dues/credit-balance';
+} from '#lib/server/services/dues/credit-balance.ts';
 
 /**
  * Saldo Titipan: a number computed from `payments` and `allocations`, never stored — so every test

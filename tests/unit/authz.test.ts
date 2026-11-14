@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { ACTION, isAllowed, requirePermission, rolesOf, type Action } from '$lib/server/authz';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, ROLES, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { testDatabase } from '$lib/server/db/test-helpers';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { ACTION, isAllowed, requirePermission, rolesOf, type Action } from '#lib/server/authz.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, ROLES, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 
 /**
  * The permission guard: the pure decision table in `isAllowed`/`requirePermission`, and the

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { OCCUPANCY_ROLE } from '$lib/server/db/schema/occupancy';
-import { readResidentRows } from '$lib/server/services/import/xlsx';
+import { OCCUPANCY_ROLE } from '#lib/server/db/schema/occupancy.ts';
+import { readResidentRows } from '#lib/server/services/import/xlsx.ts';
 import {
 	EmptyImportFileError,
 	IMPORT_PROBLEM,
@@ -10,7 +10,7 @@ import {
 	validateImportRows,
 	type ImportProblemCode,
 	type ImportRow
-} from '$lib/server/services/import/validation';
+} from '#lib/server/services/import/validation.ts';
 
 /**
  * Every refusal a file carries in itself, decided without a database and without a workbook:

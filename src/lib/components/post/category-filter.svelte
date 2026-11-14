@@ -1,5 +1,5 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * The category `<select>` on the public board, `postPublic_filterCategoryLabel` and all — meant to
@@ -8,7 +8,7 @@
 	 * that filters live in `?category=…` rather than in a new route.
 	 *
 	 * The label map is its own small copy rather than an import from
-	 * `$lib/components/post/post-form.svelte`: that module is not part of this ticket's `reads:`, and
+	 * `#lib/components/post/post-form.svelte`: that module is not part of this ticket's `reads:`, and
 	 * `post-form.svelte`'s own doc comment already points at
 	 * `(app)/profile/notifications/+page.svelte` copying its `KIND_LABEL` as the precedent for a
 	 * screen holding its own copy rather than growing a cross-file dependency. The values read from

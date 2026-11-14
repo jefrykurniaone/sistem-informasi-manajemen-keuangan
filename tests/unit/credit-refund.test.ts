@@ -1,38 +1,38 @@
 import { randomUUID } from 'node:crypto';
 import { asc, eq, inArray } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah, type Rupiah } from '$lib/money';
-import { auditEntriesFor } from '$lib/server/audit';
-import { allocations } from '$lib/server/db/schema/allocation';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { allocations } from '#lib/server/db/schema/allocation.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
 import {
 	CASH_CATEGORY_TYPE,
 	cashCategories,
 	SYSTEM_CATEGORY_KEY
-} from '$lib/server/db/schema/cash-category';
-import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
-import { duesRates } from '$lib/server/db/schema/dues-rate';
-import { invoices } from '$lib/server/db/schema/invoice';
-import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '$lib/server/db/schema/payment';
-import { refunds } from '$lib/server/db/schema/refund';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { lockPeriod } from '$lib/server/services/cash/period';
-import { PeriodLockedError } from '$lib/server/services/cash/period';
-import { lockUnallocatedVerifiedPayments } from '$lib/server/services/dues/credit-balance';
-import { creditBalanceOfUnit } from '$lib/server/services/dues/credit-balance';
+} from '#lib/server/db/schema/cash-category.ts';
+import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
+import { duesRates } from '#lib/server/db/schema/dues-rate.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '#lib/server/db/schema/payment.ts';
+import { refunds } from '#lib/server/db/schema/refund.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { lockPeriod } from '#lib/server/services/cash/period.ts';
+import { PeriodLockedError } from '#lib/server/services/cash/period.ts';
+import { lockUnallocatedVerifiedPayments } from '#lib/server/services/dues/credit-balance.ts';
+import { creditBalanceOfUnit } from '#lib/server/services/dues/credit-balance.ts';
 import {
 	CREDIT_REFUNDED_ACTION,
 	REFUND_RULE,
 	RefundRuleError,
 	refundCredit
-} from '$lib/server/services/dues/credit-refund';
-import { issueInvoicesForPeriod } from '$lib/server/services/dues/issuance';
-import { UnitNotFoundError } from '$lib/server/services/dues/queries';
+} from '#lib/server/services/dues/credit-refund.ts';
+import { issueInvoicesForPeriod } from '#lib/server/services/dues/issuance.ts';
+import { UnitNotFoundError } from '#lib/server/services/dues/queries.ts';
 
 /**
  * Pengembalian — user story 23 of `docs/spec-iuran-v1.md`, and #30's third correction: part or

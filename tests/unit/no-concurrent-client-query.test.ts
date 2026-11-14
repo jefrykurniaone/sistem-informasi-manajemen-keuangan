@@ -2,14 +2,14 @@ import { randomUUID } from 'node:crypto';
 import ExcelJS, { type CellValue } from 'exceljs';
 import { Client } from 'pg';
 import { describe, expect, it } from 'vitest';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { cashBook } from '$lib/server/services/cash/balance';
-import { importResidents } from '$lib/server/services/import/resident-import';
-import { IMPORT_HEADER } from '$lib/server/services/import/validation';
-import { composeReportFigures } from '$lib/server/services/report/composition';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { cashBook } from '#lib/server/services/cash/balance.ts';
+import { importResidents } from '#lib/server/services/import/resident-import.ts';
+import { IMPORT_HEADER } from '#lib/server/services/import/validation.ts';
+import { composeReportFigures } from '#lib/server/services/report/composition.ts';
 
 /**
  * #231: `pg` warns "Calling client.query() when the client is already executing a query is

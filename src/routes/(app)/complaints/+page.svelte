@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import StatusBadge from '$lib/components/complaint/status-badge.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { ComplaintStatus } from '$lib/server/db/schema/complaint';
+	import StatusBadge from '#lib/components/complaint/status-badge.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { ComplaintStatus } from '#lib/server/db/schema/complaint.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
