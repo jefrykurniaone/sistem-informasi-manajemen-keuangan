@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { bigint, check, date, pgTable, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
-import type { Rupiah } from '$lib/money';
+import type { Rupiah } from '#lib/money.ts';
 
 /**
  * `dues_rates`: the Tarif — the monthly iuran amount, versioned by the date it starts applying.

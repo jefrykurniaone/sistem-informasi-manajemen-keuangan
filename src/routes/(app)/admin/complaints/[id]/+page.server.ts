@@ -1,13 +1,13 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { ACTION, requirePermission } from '$lib/server/authz';
-import { database } from '$lib/server/db';
-import { COMPLAINT_STATUSES, type ComplaintStatus } from '$lib/server/db/schema/complaint';
-import { assertUuidParam } from '$lib/server/services/identifier';
-import { systemClock } from '$lib/server/ports/clock';
-import { formatDateTime } from '$lib/time';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { ACTION, requirePermission } from '#lib/server/authz.ts';
+import { database } from '#lib/server/db/index.ts';
+import { COMPLAINT_STATUSES, type ComplaintStatus } from '#lib/server/db/schema/complaint.ts';
+import { assertUuidParam } from '#lib/server/services/identifier.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { formatDateTime } from '#lib/time.ts';
 import {
 	addComplaintReply,
 	changeComplaintStatus,
@@ -20,13 +20,13 @@ import {
 	listComplaintReplies,
 	type ComplaintReplyRule,
 	type ComplaintRule
-} from '$lib/server/services/complaint';
-import { complaintStatusHistory } from '$lib/server/services/complaint/history';
+} from '#lib/server/services/complaint/index.ts';
+import { complaintStatusHistory } from '#lib/server/services/complaint/history.ts';
 import {
 	COMPLAINT_ACTOR,
 	complaintTransitionActor,
 	ComplaintTransitionError
-} from '$lib/server/services/complaint/state-machine';
+} from '#lib/server/services/complaint/state-machine.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -45,7 +45,7 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 	if (!locals.user) {
 		redirect(303, AUTH_PATHS.login);
 	}
-	// `complaints.id` is a `uuid` column — see #111 and `$lib/server/services/identifier.ts`.
+	// `complaints.id` is a `uuid` column — see #111 and `#lib/server/services/identifier.ts`.
 	assertUuidParam(params.id, m.adminComplaintDetail_notFound());
 
 	try {
@@ -174,7 +174,7 @@ function allowedHandlerTransitionsFrom(from: ComplaintStatus): readonly Complain
 	);
 }
 
-/** An instant as a sentence, in the complex's own zone — `$lib/time`'s `formatDateTime`. */
+/** An instant as a sentence, in the complex's own zone — `#lib/time.ts`'s `formatDateTime`. */
 function formatInstant(instant: Date): string {
 	return formatDateTime(instant);
 }

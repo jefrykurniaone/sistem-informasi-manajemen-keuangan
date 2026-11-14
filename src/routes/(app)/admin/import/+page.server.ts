@@ -1,22 +1,22 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { ACTION, requirePermission } from '$lib/server/authz';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { ACTION, requirePermission } from '#lib/server/authz.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	importResidents,
 	previewResidentImport,
 	ImportRejectedError
-} from '$lib/server/services/import/resident-import';
-import { IMPORT_TEMPLATE_CONTENT_TYPE } from '$lib/server/services/import/template';
+} from '#lib/server/services/import/resident-import.ts';
+import { IMPORT_TEMPLATE_CONTENT_TYPE } from '#lib/server/services/import/template.ts';
 import {
 	EmptyImportFileError,
 	ImportHeaderError,
 	ImportTooLargeError,
 	MAX_IMPORT_ROWS
-} from '$lib/server/services/import/validation';
+} from '#lib/server/services/import/validation.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -32,7 +32,7 @@ import type { Actions, PageServerLoad } from './$types';
  *
  * **The file's bytes travel back to `confirm` in a hidden field, base64-encoded**, and are decoded,
  * parsed and checked again there from scratch; see the doc comment of
- * `$lib/server/services/import/resident-import` for why that is the transport and why nothing the
+ * `#lib/server/services/import/resident-import.ts` for why that is the transport and why nothing the
  * preview computed is trusted on the way back.
  */
 

@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { readDatabaseUrl } from '$lib/server/db';
-import { testDatabase } from '$lib/server/db/test-helpers';
+import { readDatabaseUrl } from '#lib/server/db/index.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 
 /**
  * `scripts/migrate-preflight.ts`, run the way `bun run db:migrate` runs it: as its own `bun`

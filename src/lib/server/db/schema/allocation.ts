@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { bigint, check, index, pgTable, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
-import type { Rupiah } from '$lib/money';
+import type { Rupiah } from '#lib/money.ts';
 import { invoices } from './invoice';
 import { payments } from './payment';
 

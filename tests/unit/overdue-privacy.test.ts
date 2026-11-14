@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { invoiceHistoryForUnit, listOverdueUnits } from '$lib/server/services/dues/queries';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { invoiceHistoryForUnit, listOverdueUnits } from '#lib/server/services/dues/queries.ts';
 
 /**
  * "Peran warga tidak dapat membuka daftar penunggak; percobaan langsung ke lapisan service

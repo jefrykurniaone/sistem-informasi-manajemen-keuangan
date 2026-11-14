@@ -1,25 +1,25 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { formatRupiah } from '$lib/money';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
-import type { FileStore } from '$lib/server/ports/file-store';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { formatRupiah } from '#lib/money.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import type { FileStore } from '#lib/server/ports/file-store.ts';
 import {
 	CASH_BOOK_MONTH_PATTERN,
 	cashBook,
 	type CashBookEntry,
 	type CashBookFilter
-} from '$lib/server/services/cash/balance';
+} from '#lib/server/services/cash/balance.ts';
 import {
 	CashTransactionAlreadyCorrectedError,
 	CashTransactionNotFoundError,
 	recordCashCorrection
-} from '$lib/server/services/cash/correction';
-import { PeriodLockedError } from '$lib/server/services/cash/period';
-import { CashRuleError } from '$lib/server/services/cash/transaction';
-import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
+} from '#lib/server/services/cash/correction.ts';
+import { PeriodLockedError } from '#lib/server/services/cash/period.ts';
+import { CashRuleError } from '#lib/server/services/cash/transaction.ts';
+import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**

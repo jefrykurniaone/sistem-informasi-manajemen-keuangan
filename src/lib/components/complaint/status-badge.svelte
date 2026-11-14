@@ -1,13 +1,13 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages.js';
-	import type { ComplaintStatus } from '$lib/server/db/schema/complaint';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { ComplaintStatus } from '#lib/server/db/schema/complaint.ts';
 
 	/**
 	 * One Keluhan's status, as a small badge — the resident-facing screens' equivalent of the label
 	 * `worklist-table.svelte` and `status-history.svelte` already render for the admin queue.
 	 *
 	 * `type ComplaintStatus` is imported for its type only, the same reading `payments/+page.svelte`
-	 * already makes of `type PaymentStatus`: everything under `$lib/server/` is server-only, and this
+	 * already makes of `type PaymentStatus`: everything under `#lib/server/` is server-only, and this
 	 * component also runs in the browser, so only the type — erased at build time — crosses that line.
 	 *
 	 * Its own `complaints_status_*` message keys rather than the admin screens'

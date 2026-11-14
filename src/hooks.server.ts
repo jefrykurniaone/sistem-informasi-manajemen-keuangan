@@ -2,15 +2,19 @@ import { building } from '$app/environment';
 import type { Handle } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
-import { auth } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { registerEmailJobs } from '$lib/server/email/jobs';
-import { systemClock } from '$lib/server/ports/clock';
-import { applicationJobs, isSchedulerProcess, startJobScheduler } from '$lib/server/scheduler';
-import { registerDuesJobs } from '$lib/server/services/dues/jobs';
-import { registerReportJobs } from '$lib/server/services/report/jobs';
-import { paraglideMiddleware } from '$lib/paraglide/server.js';
-import { getTextDirection } from '$lib/paraglide/runtime.js';
+import { auth } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { registerEmailJobs } from '#lib/server/email/jobs.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import {
+	applicationJobs,
+	isSchedulerProcess,
+	startJobScheduler
+} from '#lib/server/scheduler/index.ts';
+import { registerDuesJobs } from '#lib/server/services/dues/jobs.ts';
+import { registerReportJobs } from '#lib/server/services/report/jobs.ts';
+import { paraglideMiddleware } from '#lib/paraglide/server.js';
+import { getTextDirection } from '#lib/paraglide/runtime.js';
 
 /**
  * Where a request meets better-auth, then Paraglide. `sequence()` runs `authHandle` first and

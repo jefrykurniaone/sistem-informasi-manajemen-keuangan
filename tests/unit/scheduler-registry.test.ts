@@ -6,7 +6,7 @@ import {
 	monthlySchedule,
 	type JobDefinition,
 	type Schedule
-} from '$lib/server/scheduler/registry';
+} from '#lib/server/scheduler/registry.ts';
 
 /**
  * The job registry and the schedules jobs are registered with. Nothing here touches the database or

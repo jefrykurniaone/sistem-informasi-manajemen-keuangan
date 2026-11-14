@@ -1,11 +1,11 @@
-import { database } from '$lib/server/db';
-import { formatDateTime } from '$lib/time';
-import { systemClock } from '$lib/server/ports/clock';
-import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
-import { isPostCategory, POST_CATEGORIES } from '$lib/server/services/post';
-import { listPublicPosts, POST_WHEN } from '$lib/server/services/post/public';
-import type { Post } from '$lib/server/db/schema/post';
-import type { FileStore } from '$lib/server/ports/file-store';
+import { database } from '#lib/server/db/index.ts';
+import { formatDateTime } from '#lib/time.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
+import { isPostCategory, POST_CATEGORIES } from '#lib/server/services/post/index.ts';
+import { listPublicPosts, POST_WHEN } from '#lib/server/services/post/public.ts';
+import type { Post } from '#lib/server/db/schema/post.ts';
+import type { FileStore } from '#lib/server/ports/file-store.ts';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -77,7 +77,7 @@ async function toCard(
 
 /**
  * An instant as a sentence, labelled with the WIB zone, or `null` when there is no instant —
- * `formatDateTime` from `$lib/time`. Copied from `(app)/admin/posts/+page.server.ts`'s helper of the
+ * `formatDateTime` from `#lib/time.ts`. Copied from `(app)/admin/posts/+page.server.ts`'s helper of the
  * same name for the same reason that route's own comment gives: a route helper belongs next to the
  * route that uses it.
  */

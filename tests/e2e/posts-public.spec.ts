@@ -262,7 +262,7 @@ test('an admin publishes a kegiatan, and a browser with no session opens it from
 
 	// The start time typed through the two boxes — `19:00` WIB — reaches the public page labelled
 	// with the same hour and the zone, `19.00 WIB`: `id-ID`'s own separator, never a colon and never
-	// `GMT+7`. This is what `formatDateTime` from `$lib/time` replacing the four route
+	// `GMT+7`. This is what `formatDateTime` from `#lib/time.ts` replacing the four route
 	// `formatInstant` helpers is for.
 	await expect(anonymousPage.getByText('Waktu mulai')).toBeVisible();
 	await expect(anonymousPage.locator('dl')).toContainText('19.00 WIB');

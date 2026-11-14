@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { Rupiah } from '$lib/money';
+	import type { Rupiah } from '#lib/money.ts';
 
 	/** One line of the cash book as the table renders it. */
 	export interface CashBookRow {
@@ -25,11 +25,11 @@
 </script>
 
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button/index.js';
-	import type { CorrectableCashTransaction } from '$lib/components/cash/correction-dialog.svelte';
-	import { formatRupiah } from '$lib/money';
-	import * as m from '$lib/paraglide/messages.js';
-	import { formatDay } from '$lib/time';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import type { CorrectableCashTransaction } from '#lib/components/cash/correction-dialog.svelte';
+	import { formatRupiah } from '#lib/money.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formatDay } from '#lib/time.ts';
 
 	/**
 	 * The buku kas itself: every line in date order with its running balance, used by
@@ -60,7 +60,7 @@
 	/** The stored value that means money coming in, as `cash_categories.type` writes it. */
 	const INCOME = 'income';
 
-	/** A stored `YYYY-MM-DD` as a day a person reads — `$lib/time`'s `formatDay`. */
+	/** A stored `YYYY-MM-DD` as a day a person reads — `#lib/time.ts`'s `formatDay`. */
 	function asDay(day: string): string {
 		return formatDay(new Date(`${day}T00:00:00.000Z`));
 	}

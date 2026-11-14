@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import UnitForm from '$lib/components/unit/unit-form.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import UnitForm from '#lib/components/unit/unit-form.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import type { PageProps } from './$types';
 

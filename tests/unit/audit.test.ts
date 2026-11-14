@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { rupiah } from '$lib/money';
-import * as auditModule from '$lib/server/audit';
-import { auditEntriesFor, recordAuditEntry } from '$lib/server/audit';
-import { scaffoldProbe } from '$lib/server/db/schema';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+import { rupiah } from '#lib/money.ts';
+import * as auditModule from '#lib/server/audit.ts';
+import { auditEntriesFor, recordAuditEntry } from '#lib/server/audit.ts';
+import { scaffoldProbe } from '#lib/server/db/schema/index.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 
 /**
  * The audit log module: what it writes, what it reads back, and — just as much the point of this

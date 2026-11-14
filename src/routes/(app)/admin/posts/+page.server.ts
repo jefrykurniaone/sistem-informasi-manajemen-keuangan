@@ -1,21 +1,21 @@
 import { error, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { formatDateTime } from '$lib/time';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
+import * as m from '#lib/paraglide/messages.js';
+import { formatDateTime } from '#lib/time.ts';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
 import {
 	POST_STATUSES,
 	POST_TYPES,
 	type PostStatus,
 	type PostType
-} from '$lib/server/db/schema/post';
+} from '#lib/server/db/schema/post.ts';
 import {
 	DEFAULT_POST_PAGE_SIZE,
 	isPostCategory,
 	listPosts,
 	POST_CATEGORIES
-} from '$lib/server/services/post';
+} from '#lib/server/services/post/index.ts';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -77,7 +77,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 /**
  * An instant as a sentence, labelled with the WIB zone, or `null` when there is no instant —
- * `formatDateTime` from `$lib/time`, which is what carries `WIB` onto the label rather than the
+ * `formatDateTime` from `#lib/time.ts`, which is what carries `WIB` onto the label rather than the
  * `GMT+7` an `en-US` browser locale would otherwise print. `(app)/admin/posts/[id]/+page.server.ts`
  * carries the same helper for the same reason the three admin screens each carry their own
  * `throwAsRouteError`: a route helper belongs next to the route that uses it.

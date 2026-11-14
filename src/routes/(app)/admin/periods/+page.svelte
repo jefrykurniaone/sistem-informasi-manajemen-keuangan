@@ -2,11 +2,11 @@
 	import { resolve } from '$app/paths';
 	import UnlockPeriodDialog, {
 		type UnlockablePeriod
-	} from '$lib/components/cash/unlock-period-dialog.svelte';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import { formatDateTime } from '$lib/time';
+	} from '#lib/components/cash/unlock-period-dialog.svelte';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formatDateTime } from '#lib/time.ts';
 	import type { PageProps } from './$types';
 
 	/**

@@ -1,11 +1,11 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { POST_TYPES, type PostType } from '$lib/server/db/schema/post';
-import { systemClock } from '$lib/server/ports/clock';
-import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { POST_TYPES, type PostType } from '#lib/server/db/schema/post.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import {
 	assertAcceptableCoverImage,
 	assertMayManagePosts,
@@ -17,8 +17,8 @@ import {
 	setPostCoverImage,
 	type CoverImageUpload,
 	type PostRule
-} from '$lib/server/services/post';
-import { combineCivilDateTime } from '$lib/server/services/post/time';
+} from '#lib/server/services/post/index.ts';
+import { combineCivilDateTime } from '#lib/server/services/post/time.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -28,7 +28,7 @@ import type { Actions, PageServerLoad } from './$types';
  *
  * Since #140 the Sampul is chosen on this form too, so the `create` action reads a file as well as
  * the typed fields. It checks that file *before* it writes anything: see
- * `assertAcceptableCoverImage` in `$lib/server/services/post` for the whole argument, and
+ * `assertAcceptableCoverImage` in `#lib/server/services/post/index.ts` for the whole argument, and
  * `coverImageRefusal` below for the one line of it that lives here.
  *
  * Follows the shape `(app)/admin/units/+page.server.ts` settled: nobody who is not signed in reaches

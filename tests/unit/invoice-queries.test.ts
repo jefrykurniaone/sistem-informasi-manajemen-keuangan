@@ -1,16 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { rupiah, type Rupiah } from '$lib/money';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { allocations } from '$lib/server/db/schema/allocation';
-import { invoices } from '$lib/server/db/schema/invoice';
-import { occupancies, OCCUPANCY_ROLE } from '$lib/server/db/schema/occupancy';
-import { payments, PAYMENT_METHOD, PAYMENT_STATUS } from '$lib/server/db/schema/payment';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { allocations } from '#lib/server/db/schema/allocation.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { occupancies, OCCUPANCY_ROLE } from '#lib/server/db/schema/occupancy.ts';
+import { payments, PAYMENT_METHOD, PAYMENT_STATUS } from '#lib/server/db/schema/payment.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	INVOICE_STATUS,
 	invoiceHistoryForUnit,
@@ -18,8 +18,8 @@ import {
 	invoicesForUser,
 	listOverdueUnits,
 	UnitNotFoundError
-} from '$lib/server/services/dues/queries';
-import { PermissionDeniedError } from '$lib/errors';
+} from '#lib/server/services/dues/queries.ts';
+import { PermissionDeniedError } from '#lib/errors.ts';
 
 /**
  * `invoiceStatus`'s comparison table, a warga's own list filtered by Masa Huni, admin's daftar

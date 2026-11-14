@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { formatRupiah } from '$lib/money';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { PaymentStatus } from '$lib/server/db/schema/payment';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { formatRupiah } from '#lib/money.ts';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { PaymentStatus } from '#lib/server/db/schema/payment.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -13,7 +13,7 @@
 	 * The sentence beside each payment.
 	 *
 	 * The keys are written out rather than taken from `PAYMENT_STATUS`, because everything under
-	 * `$lib/server/` is server-only and this page also runs in the browser — the same split
+	 * `#lib/server/` is server-only and this page also runs in the browser — the same split
 	 * `status-change-dialog.svelte` already makes, importing the union as a *type* and spelling the
 	 * values. The `Record` is exhaustive over that union, so a fourth status — were anybody ever to
 	 * add one, which `CONTEXT.md` says there is not — is a type error here before it is a blank badge

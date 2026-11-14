@@ -3,7 +3,7 @@ import path from 'node:path';
 import { eq, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { describe, expect, it } from 'vitest';
-import { rupiah } from '$lib/money';
+import { rupiah } from '#lib/money.ts';
 import {
 	allocations,
 	duesRates,
@@ -18,8 +18,8 @@ import {
 	type NewExemption,
 	type NewInvoice,
 	type NewPayment
-} from '$lib/server/db/schema';
-import { testDatabase } from '$lib/server/db/test-helpers';
+} from '#lib/server/db/schema/index.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 
 /**
  * The iuran schema (Tarif, Tagihan, Pembebasan, Pembayaran, Alokasi), tested against PostgreSQL

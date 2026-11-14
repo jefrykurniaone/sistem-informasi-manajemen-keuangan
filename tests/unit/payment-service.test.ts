@@ -1,24 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah, type Rupiah } from '$lib/money';
-import { auditEntriesFor } from '$lib/server/audit';
-import { allocations } from '$lib/server/db/schema/allocation';
-import { user } from '$lib/server/db/schema/auth';
-import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
-import { invoices } from '$lib/server/db/schema/invoice';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { allocations } from '#lib/server/db/schema/allocation.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
 import {
 	PAYMENT_METHOD,
 	PAYMENT_STATUS,
 	payments,
 	type PaymentStatus
-} from '$lib/server/db/schema/payment';
-import { occupancies, OCCUPANCY_ROLE } from '$lib/server/db/schema/occupancy';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
+} from '#lib/server/db/schema/payment.ts';
+import { occupancies, OCCUPANCY_ROLE } from '#lib/server/db/schema/occupancy.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
 import {
 	PAYMENT_CANCELLED_ACTION,
 	PAYMENT_RECORDED_ACTION,
@@ -29,7 +29,7 @@ import {
 	payableUnitsForUser,
 	recordPayment,
 	type RecordPaymentRequest
-} from '$lib/server/services/dues/payment';
+} from '#lib/server/services/dues/payment.ts';
 
 /**
  * A Warga recording that they have transferred money, and the line this ticket draws: the row is

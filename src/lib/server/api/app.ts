@@ -1,6 +1,6 @@
 import { Elysia } from 'elysia';
 import { sql } from 'drizzle-orm';
-import { PermissionDeniedError } from '$lib/errors';
+import { PermissionDeniedError } from '#lib/errors.ts';
 import { auth, type Auth } from '../auth';
 import { database, type Database } from '../db';
 import { createAuthMacro } from './auth-macro';

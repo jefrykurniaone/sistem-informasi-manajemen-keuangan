@@ -2,20 +2,20 @@ import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError, LastSuperuserError } from '$lib/errors';
-import { rolesOf } from '$lib/server/authz';
-import { auditEntriesFor } from '$lib/server/audit';
-import { createConnection, readDatabaseUrl } from '$lib/server/db';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+import { PermissionDeniedError, LastSuperuserError } from '#lib/errors.ts';
+import { rolesOf } from '#lib/server/authz.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	grantRole,
 	listUsersWithRoles,
 	revokeRole,
 	ROLE_CHANGE_ACTION
-} from '$lib/server/services/user/roles';
+} from '#lib/server/services/user/roles.ts';
 
 /**
  * Managing roles: granting, revoking, the last-superuser rule, and the audit trail every change

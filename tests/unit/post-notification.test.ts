@@ -1,23 +1,23 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { readOrigin } from '$lib/server/auth';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { emailQueue } from '$lib/server/db/schema/email';
-import { POST_TYPE } from '$lib/server/db/schema/post';
-import { residents } from '$lib/server/db/schema/resident';
-import { testDatabase } from '$lib/server/db/test-helpers';
+import { readOrigin } from '#lib/server/auth.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { emailQueue } from '#lib/server/db/schema/email.ts';
+import { POST_TYPE } from '#lib/server/db/schema/post.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import {
 	newPostPayload,
 	newPostTemplate,
 	NEW_POST_KIND
-} from '$lib/server/email/templates/new-post';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { createPost, type PostContent } from '$lib/server/services/post';
-import { notifyNewPost } from '$lib/server/services/post/notification';
-import { setSubscriptionPreference } from '$lib/server/services/subscription';
-import { SUBSCRIPTION_KIND } from '$lib/server/services/subscription/kinds';
+} from '#lib/server/email/templates/new-post.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { createPost, type PostContent } from '#lib/server/services/post/index.ts';
+import { notifyNewPost } from '#lib/server/services/post/notification.ts';
+import { setSubscriptionPreference } from '#lib/server/services/subscription/index.ts';
+import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
 
 /**
  * `notifyNewPost` — the recipient side of #41 — and the `new-post` template it renders through.

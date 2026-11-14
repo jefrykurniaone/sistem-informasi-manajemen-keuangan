@@ -9,7 +9,7 @@ import {
 	uniqueIndex,
 	uuid
 } from 'drizzle-orm/pg-core';
-import type { Rupiah } from '$lib/money';
+import type { Rupiah } from '#lib/money.ts';
 import { user } from './auth';
 import { cashTransactions } from './cash-transaction';
 import { payments } from './payment';

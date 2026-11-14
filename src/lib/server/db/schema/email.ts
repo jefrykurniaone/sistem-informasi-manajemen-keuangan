@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { check, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
-import type { EmailPayload } from '$lib/server/ports/email';
+import type { EmailPayload } from '#lib/server/ports/email.ts';
 
 /**
  * The email queue: every email the application means to send, and what has happened to it.
@@ -14,7 +14,7 @@ import type { EmailPayload } from '$lib/server/ports/email';
  * - **`kind` and `payload`, not a rendered subject and body.** The text is produced when the email
  *   leaves, from a template chosen by `kind` and the values in `payload`. A row therefore stays
  *   small, readable and language-neutral, and a wording fix reaches the emails that are still
- *   waiting. See `$lib/server/ports/email`.
+ *   waiting. See `#lib/server/ports/email.ts`.
  * - **`kind` is free text with no constraint.** Every later spec adds kinds of its own, and a
  *   PostgreSQL enum would make each of them ship an `alter type` migration to add one word. The
  *   set of kinds that really exist is the template registry the worker is given; a row naming a

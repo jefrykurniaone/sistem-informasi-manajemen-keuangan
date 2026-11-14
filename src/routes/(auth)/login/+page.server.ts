@@ -1,8 +1,8 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
-import * as m from '$lib/paraglide/messages';
-import { auth } from '$lib/server/auth';
-import { forgiveEmail, limitFormAction, RATE_LIMIT_POLICY } from '$lib/server/rate-limit';
+import * as m from '#lib/paraglide/messages.js';
+import { auth } from '#lib/server/auth.ts';
+import { forgiveEmail, limitFormAction, RATE_LIMIT_POLICY } from '#lib/server/rate-limit.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -10,7 +10,7 @@ import type { Actions, PageServerLoad } from './$types';
  *
  * The form posts to a SvelteKit action rather than to better-auth over `fetch`, so the flow works
  * with JavaScript turned off and so that the response that sets the session cookie is the same
- * one that redirects. `sveltekitCookies` in `$lib/server/auth` is what copies the cookie onto it.
+ * one that redirects. `sveltekitCookies` in `#lib/server/auth.ts` is what copies the cookie onto it.
  *
  * Two failures are told apart on purpose, and only two:
  *
@@ -23,7 +23,7 @@ import type { Actions, PageServerLoad } from './$types';
  *   password even when it found no user, so the two answers also take the same time.
  *
  * **Too many attempts is refused before better-auth is asked anything.** `limitFormAction` in
- * `$lib/server/rate-limit` counts the caller's address and the email typed, and a request over
+ * `#lib/server/rate-limit.ts` counts the caller's address and the email typed, and a request over
  * either limit gets `TOO_MANY_ATTEMPTS` with a 429 — the same sentence, the same status and the
  * same amount of work whether the address is registered or not, because the limiter never looks
  * it up. That ordering is the point: a refused guess costs no scrypt and reveals nothing. A

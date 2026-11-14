@@ -1,8 +1,8 @@
 <script lang="ts">
-	import RupiahInput from '$lib/components/rupiah-input.svelte';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import type { Rupiah } from '$lib/money';
-	import * as m from '$lib/paraglide/messages.js';
+	import RupiahInput from '#lib/components/rupiah-input.svelte';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import type { Rupiah } from '#lib/money.ts';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/** The rate an edit form starts from. */
 	interface DuesRateFormValues {
@@ -22,7 +22,7 @@
 	 * With no `rate` it is the "set a new rate" form and posts to `?/create`. With one it is the edit
 	 * form of that row, posts to `?/update`, and offers `?/delete` beside it. The page renders an edit
 	 * form only for a rate the service reported as still changeable, so nothing here decides whether a
-	 * rate may be touched — see `$lib/server/services/dues/rate`.
+	 * rate may be touched — see `#lib/server/services/dues/rate.ts`.
 	 *
 	 * The message from the last submission is deliberately not a prop: a screen showing several of
 	 * these at once has one result to report, and the page prints it once above them all rather than

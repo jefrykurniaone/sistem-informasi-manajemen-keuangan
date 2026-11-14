@@ -1,9 +1,9 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	CashCategoryNameTakenError,
 	CashCategoryNotFoundError,
@@ -13,7 +13,7 @@ import {
 	reactivateCashCategory,
 	SystemCashCategoryError,
 	updateCashCategory
-} from '$lib/server/services/cash/category';
+} from '#lib/server/services/cash/category.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -49,7 +49,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 				type: category.type,
 				isActive: category.isActive,
 				// Whether a category is a system one is a rule about the row, not a rendering choice, and
-				// a component may not import from `$lib/server` — so the answer travels as data.
+				// a component may not import from `#lib/server` — so the answer travels as data.
 				isSystem: category.systemKey !== null
 			}))
 		};

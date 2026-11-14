@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
 import {
 	COMPLAINT_STATUS,
 	COMPLAINT_VISIBILITY,
@@ -10,22 +10,22 @@ import {
 	type Complaint,
 	type ComplaintStatus,
 	type ComplaintVisibility
-} from '$lib/server/db/schema/complaint';
-import { residents } from '$lib/server/db/schema/resident';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
+} from '#lib/server/db/schema/complaint.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	changeComplaintStatus,
 	getComplaint,
 	listComplaints,
 	withdrawComplaint
-} from '$lib/server/services/complaint';
+} from '#lib/server/services/complaint/index.ts';
 import {
 	complaintAge,
 	complaintStatusHistory,
 	isComplaintStale,
 	STALE_COMPLAINT_AGE_MILLISECONDS
-} from '$lib/server/services/complaint/history';
+} from '#lib/server/services/complaint/history.ts';
 
 /**
  * The Riwayat Status: one row per transition with who and when, and the age that is derived from

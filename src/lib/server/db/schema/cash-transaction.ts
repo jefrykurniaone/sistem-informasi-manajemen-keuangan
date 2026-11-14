@@ -10,7 +10,7 @@ import {
 	uuid,
 	type AnyPgColumn
 } from 'drizzle-orm/pg-core';
-import type { Rupiah } from '$lib/money';
+import type { Rupiah } from '#lib/money.ts';
 import { user } from './auth';
 import { CASH_CATEGORY_TYPES, cashCategories, type CashCategoryType } from './cash-category';
 

@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
-	import CategoryFilter from '$lib/components/post/category-filter.svelte';
-	import PostCard from '$lib/components/post/post-card.svelte';
+	import CategoryFilter from '#lib/components/post/category-filter.svelte';
+	import PostCard from '#lib/components/post/post-card.svelte';
 	import type { PageProps } from './$types';
 
 	/**
 	 * The announcement board a visitor with no session opens. `data.when` is `'upcoming'` or
-	 * `'past'`, the two values `$lib/server/services/post/public.ts`'s `POST_WHEN` names — written
+	 * `'past'`, the two values `#lib/server/services/post/public.ts`'s `POST_WHEN` names — written
 	 * out as the literal `'past'` below rather than imported, because that module is under
-	 * `$lib/server/` and this component also runs in the browser, the same reasoning
+	 * `#lib/server/` and this component also runs in the browser, the same reasoning
 	 * `post-form.svelte`'s own `EVENT_TYPE` constant explains.
 	 */
 	let { data }: PageProps = $props();

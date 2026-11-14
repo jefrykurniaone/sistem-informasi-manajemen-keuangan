@@ -1,15 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { rupiah } from '$lib/money';
-import { user } from '$lib/server/db/schema/auth';
-import { occupancies, OCCUPANCY_ROLE } from '$lib/server/db/schema/occupancy';
-import { payments } from '$lib/server/db/schema/payment';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { DEFAULT_SIGNED_LINK_LIFETIME_MILLISECONDS } from '$lib/server/ports/file-store';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
+import { rupiah } from '#lib/money.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { occupancies, OCCUPANCY_ROLE } from '#lib/server/db/schema/occupancy.ts';
+import { payments } from '#lib/server/db/schema/payment.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { DEFAULT_SIGNED_LINK_LIFETIME_MILLISECONDS } from '#lib/server/ports/file-store.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
 import {
 	MAXIMUM_PROOF_BYTES,
 	PAYMENT_RULE,
@@ -17,7 +17,7 @@ import {
 	PaymentRuleError,
 	recordPayment,
 	type PaymentProofUpload
-} from '$lib/server/services/dues/payment';
+} from '#lib/server/services/dues/payment.ts';
 
 /**
  * The photograph a Warga attaches to a Pembayaran: where it is stored, how it is read back, and

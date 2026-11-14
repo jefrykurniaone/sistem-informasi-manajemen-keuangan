@@ -1,7 +1,7 @@
 <script lang="ts">
-	import * as m from '$lib/paraglide/messages.js';
-	import { formatRupiah, type Rupiah } from '$lib/money';
-	import type { InvoiceStatus } from '$lib/server/services/dues/queries';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formatRupiah, type Rupiah } from '#lib/money.ts';
+	import type { InvoiceStatus } from '#lib/server/services/dues/queries.ts';
 	import InvoiceStatusBadge from './invoice-status-badge.svelte';
 
 	/**

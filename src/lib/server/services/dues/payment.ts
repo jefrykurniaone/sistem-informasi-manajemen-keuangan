@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
-import { PermissionDeniedError } from '$lib/errors';
-import type { Rupiah } from '$lib/money';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import type { Rupiah } from '#lib/money.ts';
 import { recordAuditEntry } from '../../audit';
 import type { DatabaseWriter, Transaction } from '../../authz';
 import type { Database } from '../../db';

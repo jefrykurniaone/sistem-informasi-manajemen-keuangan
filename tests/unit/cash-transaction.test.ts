@@ -1,30 +1,30 @@
 import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah, type Rupiah } from '$lib/money';
-import { auditEntriesFor } from '$lib/server/audit';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
 import {
 	CASH_CATEGORY_TYPE,
 	cashCategories,
 	SYSTEM_CATEGORY_KEY
-} from '$lib/server/db/schema/cash-category';
-import { cashTransactions, type CashTransaction } from '$lib/server/db/schema/cash-transaction';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
-import * as balanceModule from '$lib/server/services/cash/balance';
-import { cashBook } from '$lib/server/services/cash/balance';
+} from '#lib/server/db/schema/cash-category.ts';
+import { cashTransactions, type CashTransaction } from '#lib/server/db/schema/cash-transaction.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
+import * as balanceModule from '#lib/server/services/cash/balance.ts';
+import { cashBook } from '#lib/server/services/cash/balance.ts';
 import {
 	CashCategoryNotFoundError,
 	createCashCategory,
 	deactivateCashCategory
-} from '$lib/server/services/cash/category';
-import * as correctionModule from '$lib/server/services/cash/correction';
-import { recordCashCorrection } from '$lib/server/services/cash/correction';
-import { lockPeriod, PeriodLockedError, unlockPeriod } from '$lib/server/services/cash/period';
-import * as transactionModule from '$lib/server/services/cash/transaction';
+} from '#lib/server/services/cash/category.ts';
+import * as correctionModule from '#lib/server/services/cash/correction.ts';
+import { recordCashCorrection } from '#lib/server/services/cash/correction.ts';
+import { lockPeriod, PeriodLockedError, unlockPeriod } from '#lib/server/services/cash/period.ts';
+import * as transactionModule from '#lib/server/services/cash/transaction.ts';
 import {
 	CASH_RULE,
 	CASH_TRANSACTION_RECORDED_ACTION,
@@ -34,7 +34,7 @@ import {
 	recordDuesIncome,
 	recordDuesRefund,
 	type RecordCashTransactionRequest
-} from '$lib/server/services/cash/transaction';
+} from '#lib/server/services/cash/transaction.ts';
 
 /**
  * Recording a Transaksi Kas by hand, and the property the whole spec rests on: the buku kas is

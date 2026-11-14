@@ -1,16 +1,16 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
-import * as m from '$lib/paraglide/messages';
+import * as m from '#lib/paraglide/messages.js';
 import {
 	AUTH_PATHS,
 	MAXIMUM_PASSWORD_LENGTH,
 	MINIMUM_PASSWORD_LENGTH,
 	auth,
 	checkPassword
-} from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
-import { submitRegistration } from '$lib/server/services/registration';
+} from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { submitRegistration } from '#lib/server/services/registration/index.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**

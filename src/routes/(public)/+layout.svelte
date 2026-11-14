@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import LanguageSwitcher from '$lib/components/app-shell/language-switcher.svelte';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { complexName } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import LanguageSwitcher from '#lib/components/app-shell/language-switcher.svelte';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { complexName } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import type { LayoutProps } from './$types';
 
 	/**

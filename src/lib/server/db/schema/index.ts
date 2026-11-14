@@ -1,5 +1,5 @@
 import { bigint, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
-import type { Rupiah } from '$lib/money';
+import type { Rupiah } from '#lib/money.ts';
 
 export * from './allocation';
 export * from './auth';

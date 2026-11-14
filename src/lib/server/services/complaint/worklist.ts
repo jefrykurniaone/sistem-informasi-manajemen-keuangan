@@ -1,5 +1,5 @@
 import { and, count, eq, gte, lt } from 'drizzle-orm';
-import { civilMonthOf } from '$lib/time';
+import { civilMonthOf } from '#lib/time.ts';
 import { ACTION, requirePermission, type DatabaseWriter } from '../../authz';
 import { COMPLAINT_STATUS, complaints } from '../../db/schema/complaint';
 import type { Clock } from '../../ports/clock';
@@ -28,7 +28,7 @@ import type { Clock } from '../../ports/clock';
  * "Bulan berjalan" is the calendar month the clock is currently in — the 1st through the last day
  * — not "the last 30 days", so a test can move a fake clock to the last day of a month and prove
  * the count resets on the next call after the 1st. **The boundaries are WIB calendar months**,
- * read with `civilMonthOf` from `$lib/time` — the complex's own zone, `Asia/Jakarta` — the same
+ * read with `civilMonthOf` from `#lib/time.ts` — the complex's own zone, `Asia/Jakarta` — the same
  * module `currentDay(clock)` in `../occupancy/visibility.ts` reads its own calendar day from.
  *
  * ## Gated the same way the admin queue itself is

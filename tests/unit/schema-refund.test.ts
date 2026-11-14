@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { rupiah } from '$lib/money';
+import { rupiah } from '#lib/money.ts';
 import {
 	cashCategories,
 	cashTransactions,
@@ -14,8 +14,8 @@ import {
 	units,
 	user,
 	type NewRefund
-} from '$lib/server/db/schema';
-import { testDatabase } from '$lib/server/db/test-helpers';
+} from '#lib/server/db/schema/index.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 
 /**
  * The `refunds` schema (Pengembalian, #30), tested against PostgreSQL the way

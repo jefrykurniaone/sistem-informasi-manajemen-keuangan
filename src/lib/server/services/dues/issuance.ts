@@ -1,5 +1,5 @@
 import { asc, eq } from 'drizzle-orm';
-import { formatRupiah, type Rupiah } from '$lib/money';
+import { formatRupiah, type Rupiah } from '#lib/money.ts';
 import type { Transaction } from '../../authz';
 import type { Database } from '../../db';
 import { duesRates } from '../../db/schema/dues-rate';
@@ -104,7 +104,7 @@ import { duesRateOn } from './rate';
  * cannot be imported by; `docs/spec-waktu-rupiah-v1.md` moved it there so that every screen reads
  * the same zone the job schedule does. It is re-exported here under the same name so that every
  * existing caller keeps compiling, the value is unchanged, and no job's period marker moves. A new
- * caller imports it from `$lib/time`; that module's doc comment carries the reasons for
+ * caller imports it from `#lib/time.ts`; that module's doc comment carries the reasons for
  * `Asia/Jakarta` over a fixed `+07:00` offset.
  *
  * **What it decides here is when the job fires, and nothing else.** The run itself never asks the
@@ -115,7 +115,7 @@ import { duesRateOn } from './rate';
  * is recorded in that function's own comment, and it is not this module's to close — issuance reads
  * no day from the clock at all.
  */
-export { COMPLEX_TIME_ZONE } from '$lib/time';
+export { COMPLEX_TIME_ZONE } from '#lib/time.ts';
 
 /**
  * Thrown when no Tarif is in force on the day a Periode is being issued for.

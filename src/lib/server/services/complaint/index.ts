@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, type SQL } from 'drizzle-orm';
-import { PermissionDeniedError } from '$lib/errors';
+import { PermissionDeniedError } from '#lib/errors.ts';
 import { recordAuditEntry } from '../../audit';
 import { ACTION, requirePermission, type DatabaseWriter } from '../../authz';
 import type { Database } from '../../db';

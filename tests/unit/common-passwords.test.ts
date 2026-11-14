@@ -2,8 +2,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { MINIMUM_PASSWORD_LENGTH } from '$lib/server/auth';
-import { COMMON_PASSWORDS, isCommonPassword } from '$lib/server/common-passwords';
+import { MINIMUM_PASSWORD_LENGTH } from '#lib/server/auth.ts';
+import { COMMON_PASSWORDS, isCommonPassword } from '#lib/server/common-passwords.ts';
 import { SEED_PASSWORD } from '../../scripts/seed-data';
 
 /**

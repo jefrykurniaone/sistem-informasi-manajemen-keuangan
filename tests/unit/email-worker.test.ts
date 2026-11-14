@@ -1,23 +1,23 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { rupiah } from '$lib/money';
-import { emailQueue, scaffoldProbe, type QueuedEmail } from '$lib/server/db/schema';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { enqueueEmail } from '$lib/server/email/queue';
+import { rupiah } from '#lib/money.ts';
+import { emailQueue, scaffoldProbe, type QueuedEmail } from '#lib/server/db/schema/index.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { enqueueEmail } from '#lib/server/email/queue.ts';
 import {
 	MAX_EMAIL_ATTEMPTS,
 	processEmailQueue,
 	renderQueuedEmail,
 	retryDelayMilliseconds,
 	type EmailWorkerReport
-} from '$lib/server/email/worker';
+} from '#lib/server/email/worker.ts';
 import {
 	PermanentEmailError,
 	type EmailMessage,
 	type EmailSender,
 	type EmailTemplates
-} from '$lib/server/ports/email';
-import { FakeClock, FakeEmailSender } from '$lib/server/ports/fakes';
+} from '#lib/server/ports/email.ts';
+import { FakeClock, FakeEmailSender } from '#lib/server/ports/fakes.ts';
 
 /**
  * The worker that empties the email queue, against a real PostgreSQL.

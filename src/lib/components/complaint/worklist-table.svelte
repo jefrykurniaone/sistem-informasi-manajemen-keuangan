@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { ComplaintStatus } from '$lib/server/db/schema/complaint';
+	import type { ComplaintStatus } from '#lib/server/db/schema/complaint.ts';
 
 	/** One row this table renders. A plain object rather than `ComplaintWithAge` itself, because the
 	 * server load already reduced the age to whole days and dropped everything the row does not use. */
@@ -15,7 +15,7 @@
 
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import * as m from '$lib/paraglide/messages.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * The admin work queue's table: one row per open Keluhan, longest wait first — the order

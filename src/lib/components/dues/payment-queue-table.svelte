@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { formatRupiah, type Rupiah } from '$lib/money';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { PaymentMethod } from '$lib/server/db/schema/payment';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { formatRupiah, type Rupiah } from '#lib/money.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { PaymentMethod } from '#lib/server/db/schema/payment.ts';
 
 	/**
 	 * The verification queue: every pending Pembayaran, each with the two decisions an admin can

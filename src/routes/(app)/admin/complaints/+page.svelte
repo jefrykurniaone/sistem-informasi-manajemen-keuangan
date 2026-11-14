@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button/index.js';
-	import WorklistTable from '$lib/components/complaint/worklist-table.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import type { ComplaintStatus } from '$lib/server/db/schema/complaint';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import WorklistTable from '#lib/components/complaint/worklist-table.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import type { ComplaintStatus } from '#lib/server/db/schema/complaint.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();

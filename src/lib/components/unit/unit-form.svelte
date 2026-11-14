@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as m from '$lib/paraglide/messages.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import * as m from '#lib/paraglide/messages.js';
 
 	/**
 	 * The "add a unit" form on `src/routes/(app)/admin/units/+page.svelte`. It posts to that route's

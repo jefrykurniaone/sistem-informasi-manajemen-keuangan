@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { Rupiah } from '$lib/money';
+	import type { Rupiah } from '#lib/money.ts';
 	import type { ReportCategoryDetail, ReportDirection } from './category-drilldown.svelte';
 	import { oppositeDirection } from './category-drilldown.svelte';
 
@@ -56,8 +56,8 @@
 
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { formatRupiah, rupiah } from '$lib/money';
-	import * as m from '$lib/paraglide/messages.js';
+	import { formatRupiah, rupiah } from '#lib/money.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import CategoryDrilldown from './category-drilldown.svelte';
 
 	/**

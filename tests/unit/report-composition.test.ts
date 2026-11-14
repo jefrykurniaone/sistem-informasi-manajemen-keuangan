@@ -1,32 +1,32 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { rupiah, type Rupiah } from '$lib/money';
-import { allocations } from '$lib/server/db/schema/allocation';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { allocations } from '#lib/server/db/schema/allocation.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
 import {
 	CASH_CATEGORY_TYPE,
 	SYSTEM_CATEGORY_KEY,
 	cashCategories,
 	type CashCategoryType
-} from '$lib/server/db/schema/cash-category';
-import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
-import { invoices } from '$lib/server/db/schema/invoice';
-import { payments, PAYMENT_METHOD, PAYMENT_STATUS } from '$lib/server/db/schema/payment';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
-import { cashBook } from '$lib/server/services/cash/balance';
-import { createCashCategory } from '$lib/server/services/cash/category';
-import { recordCashCorrection } from '$lib/server/services/cash/correction';
-import { recordCashTransaction } from '$lib/server/services/cash/transaction';
+} from '#lib/server/db/schema/cash-category.ts';
+import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { payments, PAYMENT_METHOD, PAYMENT_STATUS } from '#lib/server/db/schema/payment.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
+import { cashBook } from '#lib/server/services/cash/balance.ts';
+import { createCashCategory } from '#lib/server/services/cash/category.ts';
+import { recordCashCorrection } from '#lib/server/services/cash/correction.ts';
+import { recordCashTransaction } from '#lib/server/services/cash/transaction.ts';
 import {
 	composeReportFigures,
 	currentReportPeriod,
 	transactionsInCategory
-} from '$lib/server/services/report/composition';
+} from '#lib/server/services/report/composition.ts';
 
 /**
  * What a Laporan Bulanan says, worked out from the buku kas and that month's Tagihan —

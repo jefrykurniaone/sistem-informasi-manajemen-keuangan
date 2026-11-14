@@ -10,10 +10,10 @@
 	import WrenchIcon from '@lucide/svelte/icons/wrench';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import * as Sidebar from '$lib/components/ui/sidebar/index.js';
-	import { useSidebar } from '$lib/components/ui/sidebar/index.js';
-	import { complexName } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
+	import { useSidebar } from '#lib/components/ui/sidebar/index.js';
+	import { complexName } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import LanguageSwitcher from './language-switcher.svelte';
 	import NavGroup, { staticRoute } from './nav-group.svelte';
 	import type { GroupKey, MenuGroup, MenuItem } from './menu.js';
@@ -24,7 +24,7 @@
 	 * no sidebar at all (#170); the signed-out branch below is only ever seen on an `(app)` error page
 	 * reached without a session, since every page of the group sends such a visitor to `/login`.
 	 *
-	 * The brand is `complexName` from `$lib/complex-name`, the installation's `PUBLIC_COMPLEX_NAME`,
+	 * The brand is `complexName` from `#lib/complex-name.ts`, the installation's `PUBLIC_COMPLEX_NAME`,
 	 * rather than a message: a complex's name does not change with the interface language.
 	 *
 	 * It renders only what `(app)/+layout.server.ts` already decided a visitor may see: `menu` is the

@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { listPublishedReports } from '$lib/server/services/report/publication';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { listPublishedReports } from '#lib/server/services/report/publication.ts';
 import type { PageServerLoad } from './$types';
 
 /**

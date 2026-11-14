@@ -1,12 +1,12 @@
 import { error } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { formatDateTime } from '$lib/time';
-import { database } from '$lib/server/db';
-import { assertUuidParam } from '$lib/server/services/identifier';
-import { PostNotFoundError } from '$lib/server/services/post';
-import { getPublishedPost, renderPublicPostBody } from '$lib/server/services/post/public';
-import { systemClock } from '$lib/server/ports/clock';
-import { localFileStoreFromEnvironment } from '$lib/server/storage/local-file-store';
+import * as m from '#lib/paraglide/messages.js';
+import { formatDateTime } from '#lib/time.ts';
+import { database } from '#lib/server/db/index.ts';
+import { assertUuidParam } from '#lib/server/services/identifier.ts';
+import { PostNotFoundError } from '#lib/server/services/post/index.ts';
+import { getPublishedPost, renderPublicPostBody } from '#lib/server/services/post/public.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
+import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -16,7 +16,7 @@ import type { PageServerLoad } from './$types';
  * sesi": there is no `locals.user` check to bypass, because none exists on this route.
  *
  * `getPublishedPost` is what makes story 15 hold even against a guessed id — see its own doc
- * comment in `$lib/server/services/post/public.ts`. A `draft` or an `archived` Post answers exactly
+ * comment in `#lib/server/services/post/public.ts`. A `draft` or an `archived` Post answers exactly
  * like one that was never written: `PostNotFoundError` becomes `error(404, …)`, the same
  * translation `(app)/admin/posts/[id]/+page.server.ts` makes for the same class.
  *
@@ -38,7 +38,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	// `params.id` reaches no session check on this route at all — see the doc comment above — so an
 	// id shaped like `new` (the sibling `/admin/posts/new` route's own segment) or any other
 	// non-uuid string must be refused before it ever reaches `getPublishedPost`'s `uuid` comparison.
-	// See #111 and `$lib/server/services/identifier.ts`.
+	// See #111 and `#lib/server/services/identifier.ts`.
 	assertUuidParam(params.id, m.postPublic_notFound());
 
 	let post;
@@ -80,7 +80,7 @@ function toAbsoluteUrl(base: URL, link: string): string {
 
 /**
  * An instant as a sentence, labelled with the WIB zone, or `null` when there is no instant —
- * `formatDateTime` from `$lib/time`. Copied from `(app)/admin/posts/+page.server.ts`'s helper of the
+ * `formatDateTime` from `#lib/time.ts`. Copied from `(app)/admin/posts/+page.server.ts`'s helper of the
  * same name — a route helper belongs next to the route that uses it, as that file's own comment
  * explains.
  */

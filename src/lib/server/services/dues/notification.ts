@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray } from 'drizzle-orm';
-import type { Rupiah } from '$lib/money';
+import type { Rupiah } from '#lib/money.ts';
 import type { DatabaseWriter } from '../../authz';
 import { user } from '../../db/schema/auth';
 import type { Allocation } from '../../db/schema/allocation';

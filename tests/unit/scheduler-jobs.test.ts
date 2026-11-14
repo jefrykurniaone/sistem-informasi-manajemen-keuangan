@@ -2,47 +2,47 @@ import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
 import type { PoolClient } from 'pg';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createConnection, readDatabaseUrl } from '$lib/server/db';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles } from '$lib/server/db/schema/authz';
-import { emailQueue, EMAIL_STATUS } from '$lib/server/db/schema/email';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import { emailQueue, EMAIL_STATUS } from '#lib/server/db/schema/email.ts';
 import {
 	jobRuns,
 	JOB_RUN_STATUS,
 	type JobRun,
 	type JobRunStatus
-} from '$lib/server/db/schema/scheduler';
-import { testDatabase } from '$lib/server/db/test-helpers';
+} from '#lib/server/db/schema/scheduler.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import {
 	applicationEmailTemplates,
 	emailQueueDrainJob,
 	EMAIL_QUEUE_DRAIN_JOB_NAME,
 	EMAIL_QUEUE_DRAIN_MINUTES,
 	registerEmailJobs
-} from '$lib/server/email/jobs';
-import { enqueueEmail } from '$lib/server/email/queue';
-import { COMPLAINT_STATUS_CHANGED_KIND } from '$lib/server/email/templates/complaint-status-changed';
-import { INVITATION_KIND } from '$lib/server/email/templates/invitation';
-import { INVOICE_ISSUED_KIND } from '$lib/server/email/templates/invoice-issued';
-import { MONTHLY_REPORT_KIND } from '$lib/server/email/templates/monthly-report';
-import { NEW_COMPLAINT_KIND } from '$lib/server/email/templates/new-complaint';
-import { NEW_POST_KIND } from '$lib/server/email/templates/new-post';
+} from '#lib/server/email/jobs.ts';
+import { enqueueEmail } from '#lib/server/email/queue.ts';
+import { COMPLAINT_STATUS_CHANGED_KIND } from '#lib/server/email/templates/complaint-status-changed.ts';
+import { INVITATION_KIND } from '#lib/server/email/templates/invitation.ts';
+import { INVOICE_ISSUED_KIND } from '#lib/server/email/templates/invoice-issued.ts';
+import { MONTHLY_REPORT_KIND } from '#lib/server/email/templates/monthly-report.ts';
+import { NEW_COMPLAINT_KIND } from '#lib/server/email/templates/new-complaint.ts';
+import { NEW_POST_KIND } from '#lib/server/email/templates/new-post.ts';
 import {
 	PASSWORD_RESET_KIND,
 	passwordResetPayload
-} from '$lib/server/email/templates/password-reset';
-import { PAYMENT_REJECTED_KIND } from '$lib/server/email/templates/payment-rejected';
-import { PAYMENT_VERIFIED_KIND } from '$lib/server/email/templates/payment-verified';
-import { REGISTRATION_APPROVED_KIND } from '$lib/server/email/templates/registration-approved';
-import { MONTHLY_REPORT_REVISED_KIND } from '$lib/server/email/templates/report-revised';
-import { VERIFY_EMAIL_KIND, verifyEmailPayload } from '$lib/server/email/templates/verify-email';
-import { FakeClock, FakeEmailSender } from '$lib/server/ports/fakes';
+} from '#lib/server/email/templates/password-reset.ts';
+import { PAYMENT_REJECTED_KIND } from '#lib/server/email/templates/payment-rejected.ts';
+import { PAYMENT_VERIFIED_KIND } from '#lib/server/email/templates/payment-verified.ts';
+import { REGISTRATION_APPROVED_KIND } from '#lib/server/email/templates/registration-approved.ts';
+import { MONTHLY_REPORT_REVISED_KIND } from '#lib/server/email/templates/report-revised.ts';
+import { VERIFY_EMAIL_KIND, verifyEmailPayload } from '#lib/server/email/templates/verify-email.ts';
+import { FakeClock, FakeEmailSender } from '#lib/server/ports/fakes.ts';
 import {
 	claimJobRun,
 	completeJobRun,
 	JOB_RUN_RETENTION_MILLISECONDS,
 	pruneJobRuns
-} from '$lib/server/scheduler/lock';
+} from '#lib/server/scheduler/lock.ts';
 import {
 	applicationJobs,
 	isSchedulerProcess,
@@ -57,12 +57,12 @@ import {
 	type JobContext,
 	type JobDefinition,
 	type Schedule
-} from '$lib/server/scheduler';
+} from '#lib/server/scheduler/index.ts';
 // Importing these two, like the email import above, is what registers `issue-invoices` and
 // `send-monthly-report` into `applicationJobs` for this file — see the comment on the superuser
 // screen test below for why that import has to be here rather than assumed.
-import { INVOICE_ISSUANCE_JOB_NAME } from '$lib/server/services/dues/jobs';
-import { MONTHLY_REPORT_JOB_NAME } from '$lib/server/services/report/jobs';
+import { INVOICE_ISSUANCE_JOB_NAME } from '#lib/server/services/dues/jobs.ts';
+import { MONTHLY_REPORT_JOB_NAME } from '#lib/server/services/report/jobs.ts';
 
 /**
  * The two halves ticket #67 added: the periodic trigger that makes registered jobs run without
@@ -364,9 +364,9 @@ describe('the superuser screen, through the exact call /admin/jobs makes', () =>
 		// `src/routes/(app)/admin/jobs/+page.server.ts` calls `listJobsWithLastRun` with
 		// `applicationJobs` and nothing else, so what that page shows is whatever is registered into
 		// `applicationJobs` by the time it runs. On a real server that is all four jobs:
-		// `src/hooks.server.ts` imports `$lib/server/email/jobs`, `$lib/server/services/dues/jobs` and
-		// `$lib/server/services/report/jobs` unconditionally (`registerEmailJobs`, `registerDuesJobs`,
-		// `registerReportJobs`), and `$lib/server/scheduler` registers `jobRunPruneJob` itself. This
+		// `src/hooks.server.ts` imports `#lib/server/email/jobs.ts`, `#lib/server/services/dues/jobs.ts` and
+		// `#lib/server/services/report/jobs.ts` unconditionally (`registerEmailJobs`, `registerDuesJobs`,
+		// `registerReportJobs`), and `#lib/server/scheduler/index.ts` registers `jobRunPruneJob` itself. This
 		// file's own import list at the top pulls in all of those same modules for the same reason —
 		// not to run their jobs, just for the registration each one does at module scope — so that
 		// this test states what `/admin/jobs` actually shows rather than a subset that only holds

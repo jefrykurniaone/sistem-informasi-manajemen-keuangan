@@ -1,8 +1,8 @@
-import * as m from '$lib/paraglide/messages';
-import { baseLocale, locales, type Locale } from '$lib/paraglide/runtime';
-import { formatRupiah, rupiah } from '$lib/money';
-import type { EmailPayload, EmailTemplate, EmailTemplates } from '$lib/server/ports/email';
-import { SUBSCRIPTION_KIND } from '$lib/server/services/subscription/kinds';
+import * as m from '#lib/paraglide/messages.js';
+import { baseLocale, locales, type Locale } from '#lib/paraglide/runtime.js';
+import { formatRupiah, rupiah } from '#lib/money.ts';
+import type { EmailPayload, EmailTemplate, EmailTemplates } from '#lib/server/ports/email.ts';
+import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
 
 /**
  * The email that tells a Unit's active primary occupant that its Tagihan for a Periode has been

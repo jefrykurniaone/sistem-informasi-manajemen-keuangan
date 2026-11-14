@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { complexName } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
+	import { complexName } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
 	import BrandIllustration from './brand-illustration.svelte';
 
 	/**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { combineCivilDateTime } from '$lib/server/services/post/time';
+import { combineCivilDateTime } from '#lib/server/services/post/time.ts';
 
 /**
  * `combineCivilDateTime` reads a `date-time-fields.svelte` date box and time box as WIB wall-clock

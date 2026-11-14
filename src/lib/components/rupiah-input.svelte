@@ -39,8 +39,8 @@
 
 <script lang="ts">
 	import type { HTMLInputAttributes } from 'svelte/elements';
-	import { groupThousands } from '$lib/money';
-	import { cn } from '$lib/utils';
+	import { groupThousands } from '#lib/money.ts';
+	import { cn } from '#lib/utils.ts';
 
 	/**
 	 * A nominal field: the amount is typed as bare digits and read back with thousands separators, so

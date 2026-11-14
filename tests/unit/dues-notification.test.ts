@@ -1,40 +1,40 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { rupiah, type Rupiah } from '$lib/money';
-import type { Allocation } from '$lib/server/db/schema/allocation';
-import { user } from '$lib/server/db/schema/auth';
-import { emailQueue } from '$lib/server/db/schema/email';
-import { invoices } from '$lib/server/db/schema/invoice';
-import { OCCUPANCY_ROLE, occupancies } from '$lib/server/db/schema/occupancy';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import type { Allocation } from '#lib/server/db/schema/allocation.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { emailQueue } from '#lib/server/db/schema/email.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { OCCUPANCY_ROLE, occupancies } from '#lib/server/db/schema/occupancy.ts';
 import {
 	PAYMENT_METHOD,
 	PAYMENT_STATUS,
 	payments,
 	type Payment,
 	type PaymentStatus
-} from '$lib/server/db/schema/payment';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { INVOICE_ISSUED_KIND } from '$lib/server/email/templates/invoice-issued';
-import { PAYMENT_REJECTED_KIND } from '$lib/server/email/templates/payment-rejected';
-import { PAYMENT_VERIFIED_KIND } from '$lib/server/email/templates/payment-verified';
-import { FakeClock } from '$lib/server/ports/fakes';
+} from '#lib/server/db/schema/payment.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { INVOICE_ISSUED_KIND } from '#lib/server/email/templates/invoice-issued.ts';
+import { PAYMENT_REJECTED_KIND } from '#lib/server/email/templates/payment-rejected.ts';
+import { PAYMENT_VERIFIED_KIND } from '#lib/server/email/templates/payment-verified.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	notifyInvoiceIssued,
 	notifyPaymentRejected,
 	notifyPaymentVerified
-} from '$lib/server/services/dues/notification';
+} from '#lib/server/services/dues/notification.ts';
 import {
 	isMandatorySubscriptionKind,
 	SUBSCRIPTION_KIND,
 	subscriptionKindDefinition
-} from '$lib/server/services/subscription/kinds';
+} from '#lib/server/services/subscription/kinds.ts';
 import {
 	MandatorySubscriptionKindError,
 	setSubscriptionPreference
-} from '$lib/server/services/subscription';
+} from '#lib/server/services/subscription/index.ts';
 
 /**
  * `./notification.ts` in isolation: which recipient each of the three emails finds (or does not),

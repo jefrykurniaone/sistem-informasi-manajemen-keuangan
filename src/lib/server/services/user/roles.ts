@@ -1,5 +1,5 @@
 import { and, asc, eq } from 'drizzle-orm';
-import { LastSuperuserError } from '$lib/errors';
+import { LastSuperuserError } from '#lib/errors.ts';
 import { ACTION, requirePermission, rolesOf, type Transaction } from '../../authz';
 import { recordAuditEntry } from '../../audit';
 import type { Database } from '../../db';

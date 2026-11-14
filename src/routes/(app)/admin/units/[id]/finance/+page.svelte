@@ -1,17 +1,17 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import RefundDialog from '$lib/components/dues/refund-dialog.svelte';
+	import RefundDialog from '#lib/components/dues/refund-dialog.svelte';
 	import ReleaseAllocationDialog, {
 		type ReleasableAllocation
-	} from '$lib/components/dues/release-allocation-dialog.svelte';
+	} from '#lib/components/dues/release-allocation-dialog.svelte';
 	import VoidInvoiceDialog, {
 		type VoidableInvoice
-	} from '$lib/components/dues/void-invoice-dialog.svelte';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { formatRupiah } from '$lib/money';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import { formatDateTime } from '$lib/time';
+	} from '#lib/components/dues/void-invoice-dialog.svelte';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { formatRupiah } from '#lib/money.ts';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formatDateTime } from '#lib/time.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();

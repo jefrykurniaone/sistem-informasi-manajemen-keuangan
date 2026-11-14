@@ -1,6 +1,6 @@
 import { Elysia } from 'elysia';
 import type { User } from 'better-auth';
-import { PermissionDeniedError } from '$lib/errors';
+import { PermissionDeniedError } from '#lib/errors.ts';
 import type { Auth } from '../auth';
 import { requirePermission, rolesOf, type Action, type DatabaseWriter } from '../authz';
 import type { Role } from '../db/schema/authz';

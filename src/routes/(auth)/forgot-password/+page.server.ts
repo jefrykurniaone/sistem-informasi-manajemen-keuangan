@@ -1,8 +1,8 @@
 import { fail } from '@sveltejs/kit';
 import { APIError } from 'better-auth';
-import * as m from '$lib/paraglide/messages';
-import { auth } from '$lib/server/auth';
-import { limitFormAction, RATE_LIMIT_POLICY } from '$lib/server/rate-limit';
+import * as m from '#lib/paraglide/messages.js';
+import { auth } from '#lib/server/auth.ts';
+import { limitFormAction, RATE_LIMIT_POLICY } from '#lib/server/rate-limit.ts';
 import type { Actions } from './$types';
 
 /**
@@ -14,7 +14,7 @@ import type { Actions } from './$types';
  * well as saying the same words. Nothing is returned that a script could tell apart.
  *
  * **Too many requests is refused before better-auth is asked anything**, by `limitFormAction` in
- * `$lib/server/rate-limit`, which counts the caller's address and the email typed without looking
+ * `#lib/server/rate-limit.ts`, which counts the caller's address and the email typed without looking
  * either up. Every post past the limit gets `TOO_MANY_REQUESTS` and a 429, registered address or
  * not, and queues nothing: without that, this form is a way to send mail in the complex's name to
  * any resident, as often as one likes, and to grow `email_queue` without ever signing in.

@@ -1,13 +1,13 @@
 import { fail } from '@sveltejs/kit';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	disableSubscriptionByToken,
 	MandatorySubscriptionKindError,
 	UnsubscribeTokenError
-} from '$lib/server/services/subscription';
-import { verifyUnsubscribeToken } from '$lib/server/services/subscription/unsubscribe-token';
-import { isMandatorySubscriptionKind } from '$lib/server/services/subscription/kinds';
+} from '#lib/server/services/subscription/index.ts';
+import { verifyUnsubscribeToken } from '#lib/server/services/subscription/unsubscribe-token.ts';
+import { isMandatorySubscriptionKind } from '#lib/server/services/subscription/kinds.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -19,7 +19,7 @@ import type { Actions, PageServerLoad } from './$types';
  * is the whole authorization, exactly as on `(auth)/invitations/[token]`, and what it can authorize
  * is deliberately tiny — switching one opt-in notification kind off for the one resident it names.
  * The argument for why that is safe to do without a session is in
- * `$lib/server/services/subscription/unsubscribe-token.ts`.
+ * `#lib/server/services/subscription/unsubscribe-token.ts`.
  *
  * **The GET changes nothing.** It only decides which of three things to show: the confirmation
  * button, "this link is not valid", or "this kind cannot be switched off". A link is followed by

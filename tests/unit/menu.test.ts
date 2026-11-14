@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { MENU, visibleMenu, type GroupKey, type MenuGroup } from '$lib/components/app-shell/menu';
-import { ACTION, isAllowed } from '$lib/server/authz';
-import { ROLE, type Role } from '$lib/server/db/schema/authz';
+import {
+	MENU,
+	visibleMenu,
+	type GroupKey,
+	type MenuGroup
+} from '#lib/components/app-shell/menu.ts';
+import { ACTION, isAllowed } from '#lib/server/authz.ts';
+import { ROLE, type Role } from '#lib/server/db/schema/authz.ts';
 
 /**
  * The menu filter as a pure function: a set of roles goes in, the groups and items that set may

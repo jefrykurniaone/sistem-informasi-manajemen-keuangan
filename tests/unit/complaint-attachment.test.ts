@@ -1,17 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { user } from '$lib/server/db/schema/auth';
+import { user } from '#lib/server/db/schema/auth.ts';
 import {
 	COMPLAINT_STATUS,
 	COMPLAINT_VISIBILITY,
 	complaintAttachments,
 	complaints,
 	type ComplaintVisibility
-} from '$lib/server/db/schema/complaint';
-import { residents } from '$lib/server/db/schema/resident';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock, FakeFileStore } from '$lib/server/ports/fakes';
+} from '#lib/server/db/schema/complaint.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
 import {
 	ATTACHMENT_CONTENT_TYPES,
 	COMPLAINT_ATTACHMENT_RULE,
@@ -22,7 +22,7 @@ import {
 	storeComplaintAttachments,
 	type ComplaintAttachmentUpload,
 	type StoredComplaintAttachment
-} from '$lib/server/services/complaint';
+} from '#lib/server/services/complaint/index.ts';
 
 /**
  * Lampiran: the photographs attached to a Keluhan. `storeComplaintAttachments` is what

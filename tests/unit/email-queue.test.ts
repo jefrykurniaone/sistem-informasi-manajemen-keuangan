@@ -1,16 +1,16 @@
 import { eq, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { rupiah } from '$lib/money';
-import { emailQueue, scaffoldProbe, type QueuedEmail } from '$lib/server/db/schema';
-import { testDatabase } from '$lib/server/db/test-helpers';
+import { rupiah } from '#lib/money.ts';
+import { emailQueue, scaffoldProbe, type QueuedEmail } from '#lib/server/db/schema/index.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import {
 	claimDueEmails,
 	enqueueEmail,
 	markEmailFailed,
 	markEmailSent,
 	recordEmailRetry
-} from '$lib/server/email/queue';
-import { FakeClock } from '$lib/server/ports/fakes';
+} from '#lib/server/email/queue.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
 
 /**
  * The email queue table and the operations on it, against a real PostgreSQL.

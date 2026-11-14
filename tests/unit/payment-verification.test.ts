@@ -1,27 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah, type Rupiah } from '$lib/money';
-import { auditEntriesFor } from '$lib/server/audit';
-import { allocations } from '$lib/server/db/schema/allocation';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { cashCategories, SYSTEM_CATEGORY_KEY } from '$lib/server/db/schema/cash-category';
-import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
-import { emailQueue } from '$lib/server/db/schema/email';
-import { invoices } from '$lib/server/db/schema/invoice';
-import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '$lib/server/db/schema/payment';
-import { residents } from '$lib/server/db/schema/resident';
-import { units } from '$lib/server/db/schema/unit';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { PAYMENT_REJECTED_KIND } from '$lib/server/email/templates/payment-rejected';
-import { PAYMENT_VERIFIED_KIND } from '$lib/server/email/templates/payment-verified';
-import type { Clock } from '$lib/server/ports/clock';
-import { FakeClock } from '$lib/server/ports/fakes';
-import { lockPeriod, PeriodLockedError } from '$lib/server/services/cash/period';
-import { creditBalanceOfUnit } from '$lib/server/services/dues/credit-balance';
-import { UnitNotFoundError } from '$lib/server/services/dues/queries';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { allocations } from '#lib/server/db/schema/allocation.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { cashCategories, SYSTEM_CATEGORY_KEY } from '#lib/server/db/schema/cash-category.ts';
+import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
+import { emailQueue } from '#lib/server/db/schema/email.ts';
+import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '#lib/server/db/schema/payment.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { units } from '#lib/server/db/schema/unit.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { PAYMENT_REJECTED_KIND } from '#lib/server/email/templates/payment-rejected.ts';
+import { PAYMENT_VERIFIED_KIND } from '#lib/server/email/templates/payment-verified.ts';
+import type { Clock } from '#lib/server/ports/clock.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import { lockPeriod, PeriodLockedError } from '#lib/server/services/cash/period.ts';
+import { creditBalanceOfUnit } from '#lib/server/services/dues/credit-balance.ts';
+import { UnitNotFoundError } from '#lib/server/services/dues/queries.ts';
 import {
 	PAYMENT_REJECTED_ACTION,
 	PAYMENT_VERIFIED_ACTION,
@@ -32,8 +32,8 @@ import {
 	recordCashPayment,
 	rejectPayment,
 	verifyPayment
-} from '$lib/server/services/dues/verification';
-import { PAYMENT_RECORDED_ACTION } from '$lib/server/services/dues/payment';
+} from '#lib/server/services/dues/verification.ts';
+import { PAYMENT_RECORDED_ACTION } from '#lib/server/services/dues/payment.ts';
 
 /**
  * Verifikasi Pembayaran: the one transaction that flips the status, writes the cash row into

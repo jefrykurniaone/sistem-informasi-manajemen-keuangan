@@ -6,8 +6,8 @@ import {
 	smtpTransportOptions,
 	SmtpEmailSender,
 	type EmailMessage
-} from '$lib/server/ports/email';
-import { FakeEmailSender } from '$lib/server/ports/fakes';
+} from '#lib/server/ports/email.ts';
+import { FakeEmailSender } from '#lib/server/ports/fakes.ts';
 
 /**
  * The `EmailSender` port: the fake that tests use, and the SMTP implementation that Mailpit sees.

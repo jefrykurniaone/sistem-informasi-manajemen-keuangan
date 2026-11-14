@@ -2,28 +2,28 @@ import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { PermissionDeniedError } from '$lib/errors';
-import { rupiah } from '$lib/money';
-import { auditEntriesFor } from '$lib/server/audit';
-import { createConnection, readDatabaseUrl } from '$lib/server/db';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { rupiah } from '#lib/money.ts';
+import { auditEntriesFor } from '#lib/server/audit.ts';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
 import {
 	CASH_CATEGORY_TYPE,
 	cashCategories,
 	SYSTEM_CATEGORY_KEY
-} from '$lib/server/db/schema/cash-category';
-import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { FakeClock } from '$lib/server/ports/fakes';
-import * as openingBalanceModule from '$lib/server/services/cash/opening-balance';
+} from '#lib/server/db/schema/cash-category.ts';
+import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { FakeClock } from '#lib/server/ports/fakes.ts';
+import * as openingBalanceModule from '#lib/server/services/cash/opening-balance.ts';
 import {
 	getOpeningBalance,
 	OPENING_BALANCE_DESCRIPTION,
 	OPENING_BALANCE_RECORDED_ACTION,
 	OpeningBalanceAlreadyRecordedError,
 	recordOpeningBalance
-} from '$lib/server/services/cash/opening-balance';
+} from '#lib/server/services/cash/opening-balance.ts';
 
 /**
  * The Saldo awal: recorded once, by a superuser, as one income transaction in the system category

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { assertUuidParam, isUuid } from '$lib/server/services/identifier';
+import { assertUuidParam, isUuid } from '#lib/server/services/identifier.ts';
 
 /**
  * `isUuid` and `assertUuidParam`, the one place #111's guard lives. No database — both are pure —
- * see `$lib/server/services/identifier.ts`'s own doc comment for why a route param that reaches a
+ * see `#lib/server/services/identifier.ts`'s own doc comment for why a route param that reaches a
  * `uuid` column unchecked is a 500, not a 404, and why this module exists to close that gap.
  */
 

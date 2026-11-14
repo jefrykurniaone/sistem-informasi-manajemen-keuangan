@@ -1,43 +1,43 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { formatRupiah, rupiah } from '$lib/money';
-import { readOrigin } from '$lib/server/auth';
-import { user } from '$lib/server/db/schema/auth';
-import { ROLE, userRoles, type Role } from '$lib/server/db/schema/authz';
-import { CASH_CATEGORY_TYPE, type CashCategoryType } from '$lib/server/db/schema/cash-category';
-import { cashTransactions } from '$lib/server/db/schema/cash-transaction';
-import { emailQueue } from '$lib/server/db/schema/email';
-import { monthlyReports } from '$lib/server/db/schema/monthly-report';
-import { periods } from '$lib/server/db/schema/period';
-import { residents } from '$lib/server/db/schema/resident';
-import { subscriptions } from '$lib/server/db/schema/subscription';
-import { testDatabase } from '$lib/server/db/test-helpers';
-import { emailQueueDrainJob } from '$lib/server/email/jobs';
+import { formatRupiah, rupiah } from '#lib/money.ts';
+import { readOrigin } from '#lib/server/auth.ts';
+import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import { CASH_CATEGORY_TYPE, type CashCategoryType } from '#lib/server/db/schema/cash-category.ts';
+import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
+import { emailQueue } from '#lib/server/db/schema/email.ts';
+import { monthlyReports } from '#lib/server/db/schema/monthly-report.ts';
+import { periods } from '#lib/server/db/schema/period.ts';
+import { residents } from '#lib/server/db/schema/resident.ts';
+import { subscriptions } from '#lib/server/db/schema/subscription.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { emailQueueDrainJob } from '#lib/server/email/jobs.ts';
 import {
 	MONTHLY_REPORT_KIND,
 	monthlyReportPayload,
 	monthlyReportTemplate
-} from '$lib/server/email/templates/monthly-report';
+} from '#lib/server/email/templates/monthly-report.ts';
 import {
 	MONTHLY_REPORT_REVISED_KIND,
 	reportRevisedPayload,
 	reportRevisedTemplate
-} from '$lib/server/email/templates/report-revised';
-import { FakeClock, FakeEmailSender, FakeFileStore } from '$lib/server/ports/fakes';
-import { runJob } from '$lib/server/scheduler';
-import { createCashCategory } from '$lib/server/services/cash/category';
-import { unlockPeriod } from '$lib/server/services/cash/period';
-import { recordCashTransaction } from '$lib/server/services/cash/transaction';
+} from '#lib/server/email/templates/report-revised.ts';
+import { FakeClock, FakeEmailSender, FakeFileStore } from '#lib/server/ports/fakes.ts';
+import { runJob } from '#lib/server/scheduler/index.ts';
+import { createCashCategory } from '#lib/server/services/cash/category.ts';
+import { unlockPeriod } from '#lib/server/services/cash/period.ts';
+import { recordCashTransaction } from '#lib/server/services/cash/transaction.ts';
 import {
 	MONTHLY_REPORT_ANNOUNCEMENT_WINDOW_MILLISECONDS,
 	sendMonthlyReportEmails
-} from '$lib/server/services/report/notification';
-import { monthlyReportJob, MONTHLY_REPORT_JOB_NAME } from '$lib/server/services/report/jobs';
-import { publishReport } from '$lib/server/services/report/publication';
-import { setSubscriptionPreference } from '$lib/server/services/subscription';
-import { SUBSCRIPTION_KIND } from '$lib/server/services/subscription/kinds';
-import { verifyUnsubscribeToken } from '$lib/server/services/subscription/unsubscribe-token';
+} from '#lib/server/services/report/notification.ts';
+import { monthlyReportJob, MONTHLY_REPORT_JOB_NAME } from '#lib/server/services/report/jobs.ts';
+import { publishReport } from '#lib/server/services/report/publication.ts';
+import { setSubscriptionPreference } from '#lib/server/services/subscription/index.ts';
+import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
+import { verifyUnsubscribeToken } from '#lib/server/services/subscription/unsubscribe-token.ts';
 
 /**
  * #37's recipient side: who is told a Laporan Bulanan exists, what they are told, and the rule that

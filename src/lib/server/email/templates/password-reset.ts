@@ -1,4 +1,4 @@
-import type { EmailPayload, EmailTemplate, EmailTemplates } from '$lib/server/ports/email';
+import type { EmailPayload, EmailTemplate, EmailTemplates } from '#lib/server/ports/email.ts';
 
 /**
  * The email that lets someone who has forgotten their password choose a new one.

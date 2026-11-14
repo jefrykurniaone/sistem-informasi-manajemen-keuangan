@@ -1,9 +1,9 @@
 import { count, eq, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { rupiah } from '$lib/money';
-import { createConnection, readDatabaseUrl } from '$lib/server/db';
-import { scaffoldProbe } from '$lib/server/db/schema';
-import { testDatabase } from '$lib/server/db/test-helpers';
+import { rupiah } from '#lib/money.ts';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
+import { scaffoldProbe } from '#lib/server/db/schema/index.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 
 const testDb = testDatabase();
 

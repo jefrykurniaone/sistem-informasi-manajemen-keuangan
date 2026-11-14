@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_COMPLEX_NAME, composePageTitle, normalizeComplexName } from '$lib/complex-name';
+import { DEFAULT_COMPLEX_NAME, composePageTitle, normalizeComplexName } from '#lib/complex-name.ts';
 
 /**
  * The complex name and the tab title as pure functions (`docs/spec-shell-masuk-v1.md`): a raw

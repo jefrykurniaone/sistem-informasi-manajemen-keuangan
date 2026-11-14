@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { ownRegistrationStatus } from '$lib/server/services/registration';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { ownRegistrationStatus } from '#lib/server/services/registration/index.ts';
 import type { PageServerLoad } from './$types';
 
 /**

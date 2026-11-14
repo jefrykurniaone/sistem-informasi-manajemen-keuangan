@@ -1,14 +1,14 @@
 import { error, redirect } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { ACTION, requirePermission } from '$lib/server/authz';
-import { database } from '$lib/server/db';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { ACTION, requirePermission } from '#lib/server/authz.ts';
+import { database } from '#lib/server/db/index.ts';
 import {
 	buildImportTemplate,
 	IMPORT_TEMPLATE_CONTENT_TYPE,
 	IMPORT_TEMPLATE_FILENAME
-} from '$lib/server/services/import/template';
+} from '#lib/server/services/import/template.ts';
 import type { RequestHandler } from './$types';
 
 /**

@@ -8,8 +8,8 @@ import {
 	residents,
 	user,
 	type NewPost
-} from '$lib/server/db/schema';
-import { testDatabase } from '$lib/server/db/test-helpers';
+} from '#lib/server/db/schema/index.ts';
+import { testDatabase } from '#lib/server/db/test-helpers.ts';
 
 /**
  * The `posts` schema, tested against PostgreSQL rather than against a service that does not exist

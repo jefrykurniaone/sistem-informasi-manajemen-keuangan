@@ -1,10 +1,10 @@
 import { error, fail, redirect, type ActionFailure } from '@sveltejs/kit';
-import * as m from '$lib/paraglide/messages';
-import { PermissionDeniedError } from '$lib/errors';
-import { formatRupiah, parseRupiah, type Rupiah } from '$lib/money';
-import { AUTH_PATHS } from '$lib/server/auth';
-import { database } from '$lib/server/db';
-import { systemClock } from '$lib/server/ports/clock';
+import * as m from '#lib/paraglide/messages.js';
+import { PermissionDeniedError } from '#lib/errors.ts';
+import { formatRupiah, parseRupiah, type Rupiah } from '#lib/money.ts';
+import { AUTH_PATHS } from '#lib/server/auth.ts';
+import { database } from '#lib/server/db/index.ts';
+import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	createDuesRate,
 	deleteDuesRate,
@@ -13,7 +13,7 @@ import {
 	DuesRateNotFoundError,
 	listDuesRates,
 	updateDuesRate
-} from '$lib/server/services/dues/rate';
+} from '#lib/server/services/dues/rate.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -24,7 +24,7 @@ import type { Actions, PageServerLoad } from './$types';
  * message the superuser can read.
  *
  * This route decides nothing about rates. Which one is in force, which one may still be changed, and
- * what "already used to bill" means are all answered in `$lib/server/services/dues/rate` and travel
+ * what "already used to bill" means are all answered in `#lib/server/services/dues/rate.ts` and travel
  * here as data.
  */
 

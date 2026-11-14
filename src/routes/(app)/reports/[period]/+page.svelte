@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { afterNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import type { ReportDirection } from '$lib/components/report/category-drilldown.svelte';
+	import type { ReportDirection } from '#lib/components/report/category-drilldown.svelte';
 	import CategoryTable, {
 		drilldownHeadingId,
 		drilldownOpenLinkId
-	} from '$lib/components/report/category-table.svelte';
-	import ReportSummary from '$lib/components/report/report-summary.svelte';
-	import { pageTitle } from '$lib/complex-name';
-	import * as m from '$lib/paraglide/messages.js';
-	import { formatDateTime } from '$lib/time';
+	} from '#lib/components/report/category-table.svelte';
+	import ReportSummary from '#lib/components/report/report-summary.svelte';
+	import { pageTitle } from '#lib/complex-name.ts';
+	import * as m from '#lib/paraglide/messages.js';
+	import { formatDateTime } from '#lib/time.ts';
 	import type { PageProps } from './$types';
 
 	/**
