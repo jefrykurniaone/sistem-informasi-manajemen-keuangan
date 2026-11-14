@@ -29,6 +29,9 @@ Pemilik menginginkan 0 alert terbuka. `bun run audit` sudah hijau, karena `scrip
 kedua advisory itu dengan syarat pensiun "The repository upgrades to SvelteKit 3." Yang masih merah
 hanya dashboard Dependabot.
 
+> *Catatan penyerahan (2026-11-14):* kedua ignore itu sudah dihapus di #298 (`060fd86`). `bun run audit` tetap exit 0 dengan 4 ignore transitif.
+> Dashboard Dependabot baru berubah setelah PR #299 di-merge ke `main` (S6, langkah pemilik).
+
 Analisis per 2026-11-14 menunjukkan keduanya tidak bisa dieksploitasi pada 2.70.4 yang terpasang:
 
 - #4: perbaikannya sudah di-backport ke 2.70.4 (catatan rilis: "fix: escape cache-control headers in
@@ -39,6 +42,9 @@ Analisis per 2026-11-14 menunjukkan keduanya tidak bisa dieksploitasi pada 2.70.
   untuk hasil yang bukan redirect. Navigasi itu perilaku SvelteKit 3. `forms.js` di 2.70.4 hanya
   memanggil `applyAction` bila action milik halaman yang sedang dibuka. Repositori ini juga tidak
   memakai `use:enhance` sama sekali.
+
+> *Catatan penyerahan (2026-11-14):* analisis ini berlaku untuk 2.70.4, versi yang terpasang saat spec ditulis. `chore/kit3-v1` sekarang
+> memasang `@sveltejs/kit` 3.2.0 dan `@sveltejs/adapter-node` 6.0.2 (#298, merge `96a34e5`).
 
 Alert bisa saja di-dismiss dengan alasan itu. Pemilik memilih memperbaikinya lewat upgrade ke SvelteKit 3,
 supaya alert tertutup sebagai *fixed* dan aplikasi tetap di versi mayor yang dirawat.
@@ -139,6 +145,9 @@ runtime, dan image yang sama berjalan di Bun.
    - `tsconfig.json` menukar `rewriteRelativeImportExtensions` dengan `allowImportingTsExtensions`.
      `$app/tsconfig` milik SvelteKit 3 memasang opsi yang sama, bersama `noEmit`. Dengan
      `rewriteRelativeImportExtensions`, `svelte-check` menolak setiap specifier `#lib/....ts` (TS2877).
+
+     > *Catatan penyerahan (2026-11-14):* #297 memasang `allowImportingTsExtensions` (`59a0e13`). #298 lalu membuangnya dari
+     > `tsconfig.json`, karena `$app/tsconfig` sudah memasangnya.
    - Alias `components.json` menjadi `#lib/...`.
    - `scripts/tsconfig.seed.json` membuang mapping `$lib`, karena Bun me-resolve `imports` di
      `package.json` sendiri. Shim `$app/server` tetap ada.
@@ -154,6 +163,12 @@ runtime, dan image yang sama berjalan di Bun.
      dikembalikan.
    - Setiap komentar `@migration-task` yang ditinggalkan codemod diselesaikan, dan tidak ada yang tersisa
      di pohon kerja.
+
+   > *Catatan penyerahan (2026-11-14):* codemod (`sv` 1.3.0) dipakai sebagai dasar, tetapi pencetakan ulang template Svelte-nya
+   > dibuang, karena mengubah whitespace yang terlihat dan entitas `&middot;`. Yang diterapkan ulang hanya
+   > penghapusan garis miring `resolve()`. Guard `shallow` yang ditambahkan codemod ke `afterNavigate` laporan
+   > juga tidak dipakai, karena aplikasi tidak memakai `pushState`, `replaceState` maupun `goto`. Tidak ada
+   > `@migration-task` yang tersisa.
 4. **Environment.**
    - `building` diimpor dari `$app/env`.
    - `PUBLIC_COMPLEX_NAME` dideklarasikan di `src/env.ts` dengan `public: true` dan `static: true`, dan
@@ -179,6 +194,11 @@ runtime, dan image yang sama berjalan di Bun.
      file, dan semuanya ditangani task `paths` codemod.
    - `resolve('/')` adalah kasus yang tidak diubah codemod. Executor memeriksa bentuk yang diterima
      SvelteKit 3 untuk root.
+
+   > *Catatan penyerahan (2026-11-14):* SvelteKit 3 menolak `resolve('/')`, karena `/` bukan route id: root aplikasi adalah
+   > `/(app)`. Bentuk yang diterima untuk root adalah `resolve('')`, yang menghasilkan `/`. Keempat pemanggilan
+   > menjadi `resolve('')`, dan tipe `Pathname` menjadi `Path`. `covers()` di sidebar menambahkan `/` kembali
+   > sebelum membandingkan dengan `page.url.pathname`.
 9. **Default baru SvelteKit 3 diterima apa adanya**, dan tidak dikembalikan lewat konfigurasi:
    - polling versi setiap jam;
    - klik link ke halaman yang sedang dibuka me-refresh data;
@@ -187,6 +207,11 @@ runtime, dan image yang sama berjalan di Bun.
    - preload sebagai elemen `<link>`.
 
    Kode atau test yang rusak karena default ini diperbaiki, bukan konfigurasinya.
+
+    > *Catatan penyerahan (2026-11-14):* tidak ada test yang rusak karena default baru. 2375 test unit dan 48 test e2e lulus tanpa
+    > perubahan perilaku. Verifikasi kedua mencatat dua perubahan perilaku library:
+    > - cookie v2 tidak lagi meng-encode `+`, `/` dan `=` di nilai cookie, dan cookie lama tetap terbaca;
+    > - POST tanpa `Content-Type` sekarang juga diperiksa origin-nya.
 10. **Tidak terkena** (sweep 2026-11-14):
     - tidak ada `use:enhance`, `$app/forms` maupun `goto`;
     - semua `redirect(303, …)` mengarah ke path internal, dan semua `error(…)` memakai pesan string;
@@ -203,6 +228,9 @@ runtime, dan image yang sama berjalan di Bun.
       tidak lagi membawa `@rollup/plugin-node-resolve > deepmerge`.
     - Entri yang advisory-nya tidak muncul lagi dihapus.
     - Advisory baru yang muncul adalah stop: executor melapor dan tidak menambah entri sendiri.
+
+    > *Catatan penyerahan (2026-11-14):* terjadi seperti diperkirakan. Parent `deepmerge` tinggal
+    > `@sveltejs/vite-plugin-svelte > deepmerge`. Tiga entri lain tidak berubah, dan tidak ada advisory baru.
 12. **Dokumen dan komentar.** Yang menyebut modul SvelteKit 2 diperbarui:
     - `README.md`: baris `svelte-kit sync`, catatan `svelte.config.js` "From SvelteKit 2.63", dan setiap
       `$lib`;
@@ -210,6 +238,10 @@ runtime, dan image yang sama berjalan di Bun.
     - komentar di `Dockerfile`, `.github/workflows/ci.yml` dan `scripts/`.
 
     `CLAUDE.md` dan `CONTEXT.md` per 2026-11-14 tidak menyebut satu pun dari itu.
+
+    > *Catatan penyerahan (2026-11-14):* komentar `$lib` di `scripts/` diperbarui di #297. Tiga komentar `scripts/` yang masih
+    > menyebut `.svelte-kit/tsconfig.json` berada di luar permukaan #298, jadi dipindah ke #301. Perilakunya
+    > tidak terpengaruh.
 13. **Pengiriman.**
     - Branch integrasi `chore/kit3-v1` dengan satu PR ke `main`, berisi salinan spec ini dan kedua tiket.
     - Pemilik yang me-merge dan men-deploy.
@@ -287,3 +319,41 @@ Prior art: seam S1 sampai S5 run `aman-v2` (peta #291).
 - Dokumentasi Context7 untuk kit 3.1.1 masih menyebut `ORIGIN` dihapus. Yang berlaku adalah changelog
   adapter-node 6.0.2.
 
+## Catatan penyerahan (2026-11-14)
+
+Run `kit3-v1` (peta #300) selesai di branch integrasi `chore/kit3-v1`, PR #299 ke `main`.
+
+| Tiket | Commit | Merge di `chore/kit3-v1` |
+|---|---|---|
+| #297, `$lib` ke `#lib` | `59a0e13` | `dfe73c5` |
+| #298, SvelteKit 3.2 dan adapter-node 6.0.2 | `39ae6ff`, `060fd86`, `4041d4a`, `a5eea0f` | `96a34e5` |
+
+Keputusan yang diambil saat eksekusi, di luar yang tertulis di atas:
+
+- `localeHandle` di `src/hooks.server.ts` memanggil `resolve({ ...event, request })`, karena SvelteKit 3
+  membuat `event.request` read-only. Bentuk ini sama dengan yang ditulis `sv add paraglide` untuk SvelteKit 3.
+  `cookies`, `locals` dan `setHeaders` tetap objek yang sama. Pengecekan CSRF berjalan sebelum `handle`, jadi
+  salinan event tidak memengaruhinya.
+- `include` di `tsconfig.json` adalah `src`, `tests` dan `vite.config.ts`. `exclude` adalah `node_modules`,
+  `src/service-worker` dan `src/service-worker.*`.
+- Pohon utama dipasang ulang bersih (`rm -rf node_modules && bun install --frozen-lockfile`) sebelum gate
+  Gelombang 2.
+
+Hasil seam:
+
+- **S1:** hijau di `dfe73c5` dan di `96a34e5`. `bun run audit` exit 0 dengan 4 ignore.
+- **S2:** keempat required check hijau setelah setiap push. Di `96a34e5` hijau setelah rerun satu job yang
+  gagal karena test flaky yang sudah ada sebelumnya (#302).
+- **S3:** keenam pengamatan lulus pada build produksi.
+- **S4:** 48/48 setelah #297 dan 48/48 setelah #298.
+- **S5:** kelima pengamatan lulus pada image produksi.
+- **S6:** milik pemilik setelah merge ke `main`. Rinciannya ada di komentar #297 dan #298.
+
+Diserahkan ke pemilik:
+
+1. merge PR #299;
+2. deploy produksi lewat `docs/deploy.md`;
+3. S6, yaitu `gh api repos/jefrykurniaone/sistem-informasi-manajemen-keuangan/dependabot/alerts/4` dan `/5`
+   menunjukkan `"state": "fixed"`.
+
+Tindak lanjut di luar run: #301 (komentar `scripts/`) dan #302 (test privasi yang flaky).
