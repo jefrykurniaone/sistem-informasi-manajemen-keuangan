@@ -4,9 +4,9 @@
 |---|---|
 | Item spesifikasi | [#296](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/296) |
 | Run | `kit3-v1` |
-| Peta eksekusi | (diisi setelah peta terbit) |
+| Peta eksekusi | [#300](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/300) |
 | Tiket | [#297](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/297), [#298](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/298) |
-| Branch integrasi | `chore/kit3-v1`, satu PR ke `main` yang juga memuat salinan ini |
+| Branch integrasi | `chore/kit3-v1`, PR [#299](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/pull/299) ke `main`, yang juga memuat salinan ini |
 | Pendahulu | Tidak ada. Membalik keputusan "tanpa upgrade major" run `aman-v1` ([#273](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/273)) dan `aman-v2` ([#287](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/287)), khusus untuk `@sveltejs/kit` dan `@sveltejs/adapter-node` |
 | Disalin pada | 2026-11-14, dari `main` di `e1138cb` |
 
