@@ -61,7 +61,7 @@
 	<div>
 		<a
 			class="inline-flex h-11 items-center rounded-md border border-border px-4 text-sm font-medium"
-			href={resolve('/admin/cash/new')}
+			href={resolve('admin/cash/new')}
 		>
 			{m.adminCash_newLink()}
 		</a>

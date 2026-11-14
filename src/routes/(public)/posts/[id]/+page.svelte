@@ -30,7 +30,7 @@
 <main class="flex flex-col gap-6">
 	<a
 		class="flex h-11 min-w-24 items-center text-sm underline underline-offset-2"
-		href={resolve('/posts')}
+		href={resolve('posts')}
 	>
 		{m.postPublic_backLink()}
 	</a>

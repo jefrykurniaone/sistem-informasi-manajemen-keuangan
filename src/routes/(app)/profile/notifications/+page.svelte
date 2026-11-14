@@ -97,7 +97,7 @@
 			{/each}
 		</ul>
 
-		<a class="text-sm underline underline-offset-4" href={resolve('/profile')}>
+		<a class="text-sm underline underline-offset-4" href={resolve('profile')}>
 			{m.profile_notifications_backLink()}
 		</a>
 	{/if}

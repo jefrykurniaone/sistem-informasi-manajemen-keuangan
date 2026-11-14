@@ -17,7 +17,7 @@
 	 * The query string for this same screen with `page` replaced, keeping the current search and
 	 * filter. Returns only the query string, not the full href — `resolve()` has to be called
 	 * directly at each `href={…}` for `eslint-plugin-svelte`'s `no-navigation-without-resolve` to see
-	 * it, so the templates below wrap this in `resolve(\`/admin/units?${pageQuery(…)}\`)` themselves.
+	 * it, so the templates below wrap this in `resolve(\`admin/units?${pageQuery(…)}\`)` themselves.
 	 */
 	function pageQuery(page: number): string {
 		const params = new SvelteURLSearchParams();
@@ -92,12 +92,12 @@
 					</p>
 				{/if}
 				<div class="flex flex-wrap gap-4">
-					<a class="text-sm underline underline-offset-2" href={resolve(`/admin/units/${unit.id}`)}>
+					<a class="text-sm underline underline-offset-2" href={resolve(`admin/units/${unit.id}`)}>
 						{m.adminUnits_detailLink()}
 					</a>
 					<a
 						class="text-sm underline underline-offset-2"
-						href={resolve(`/admin/units/${unit.id}/occupancies`)}
+						href={resolve(`admin/units/${unit.id}/occupancies`)}
 					>
 						{m.adminOccupancies_historyLink()}
 					</a>
@@ -119,7 +119,7 @@
 				class="rounded-md border border-border px-3 py-1.5"
 				class:pointer-events-none={data.page <= 1}
 				class:opacity-50={data.page <= 1}
-				href={resolve(`/admin/units?${pageQuery(Math.max(1, data.page - 1))}`)}
+				href={resolve(`admin/units?${pageQuery(Math.max(1, data.page - 1))}`)}
 			>
 				{m.adminUnits_prevPage()}
 			</a>
@@ -130,7 +130,7 @@
 				class="rounded-md border border-border px-3 py-1.5"
 				class:pointer-events-none={data.page >= totalPages}
 				class:opacity-50={data.page >= totalPages}
-				href={resolve(`/admin/units?${pageQuery(Math.min(totalPages, data.page + 1))}`)}
+				href={resolve(`admin/units?${pageQuery(Math.min(totalPages, data.page + 1))}`)}
 			>
 				{m.adminUnits_nextPage()}
 			</a>

@@ -43,7 +43,7 @@
 <div class="flex flex-col gap-3">
 	{#each rows as row (row.id)}
 		<a
-			href={resolve(`/admin/complaints/${row.id}`)}
+			href={resolve(`admin/complaints/${row.id}`)}
 			class="flex min-h-11 flex-col gap-2 rounded-lg border p-4 {row.stale
 				? 'border-destructive'
 				: 'border-border'}"

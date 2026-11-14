@@ -24,7 +24,7 @@
 		<div class="flex flex-col gap-3">
 			{#each data.overdue as row (row.unitId)}
 				<a
-					href={resolve(`/admin/overdue/${row.unitId}`)}
+					href={resolve(`admin/overdue/${row.unitId}`)}
 					class="flex min-h-11 flex-col gap-2 rounded-lg border border-border p-4"
 				>
 					<div class="flex flex-wrap items-center justify-between gap-2">

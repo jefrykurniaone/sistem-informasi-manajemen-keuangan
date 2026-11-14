@@ -46,7 +46,7 @@
 <header class="border-b border-border">
 	<div class="mx-auto flex h-14 w-full max-w-3xl items-center justify-between gap-3 px-4">
 		<a
-			href={resolve('/posts')}
+			href={resolve('posts')}
 			class="max-w-[35%] min-w-0 shrink-0 truncate text-sm font-semibold tracking-tight hover:underline sm:max-w-[50%]"
 		>
 			{complexName}
@@ -57,15 +57,14 @@
 				<div class="shrink-0">
 					<LanguageSwitcher hideLabel />
 				</div>
-				<Button href={resolve('/')} variant="outline" class="min-h-11 shrink-0 md:min-h-0">
+				<Button href={resolve('')} variant="outline" class="min-h-11 shrink-0 md:min-h-0">
 					{m.appShell_navHome()}
 				</Button>
 			</div>
 		{:else}
 			<div class="flex shrink-0 items-center gap-2">
 				<LanguageSwitcher hideLabel />
-				<Button href={resolve('/login')} class="min-h-11 md:min-h-0">{m.appShell_navLogin()}</Button
-				>
+				<Button href={resolve('login')} class="min-h-11 md:min-h-0">{m.appShell_navLogin()}</Button>
 			</div>
 		{/if}
 	</div>

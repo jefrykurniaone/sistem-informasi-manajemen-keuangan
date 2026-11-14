@@ -41,7 +41,7 @@
 
 	<a
 		class="flex h-11 items-center text-sm underline underline-offset-4"
-		href={resolve('/admin/posts')}
+		href={resolve('admin/posts')}
 	>
 		{m.adminPosts_backLink()}
 	</a>

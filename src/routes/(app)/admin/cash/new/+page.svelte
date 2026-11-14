@@ -45,7 +45,7 @@
 
 	<a
 		class="flex h-11 items-center text-sm underline underline-offset-4"
-		href={resolve('/admin/cash')}
+		href={resolve('admin/cash')}
 	>
 		{m.adminCash_new_backLink()}
 	</a>

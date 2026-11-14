@@ -47,7 +47,7 @@
 	-->
 	<a
 		class="inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4"
-		href={resolve('/')}
+		href={resolve('')}
 	>
 		{m.unsubscribe_homeLink()}
 	</a>

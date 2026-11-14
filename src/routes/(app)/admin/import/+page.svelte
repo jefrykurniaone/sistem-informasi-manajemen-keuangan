@@ -48,7 +48,7 @@
 			<li>{m.adminImport_guideStep3()}</li>
 		</ol>
 		<p class="text-sm text-muted-foreground">{m.adminImport_rowLimit({ maximum: data.maxRows })}</p>
-		<Button href={resolve('/admin/import/template')} variant="secondary" class="h-11 w-fit">
+		<Button href={resolve('admin/import/template')} variant="secondary" class="h-11 w-fit">
 			{m.adminImport_downloadTemplate()}
 		</Button>
 	</section>

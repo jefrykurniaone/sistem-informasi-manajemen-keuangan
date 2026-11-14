@@ -1,4 +1,4 @@
-import type { Pathname } from '$app/types';
+import type { Path } from '$app/types';
 import type * as messages from '#lib/paraglide/messages.js';
 import { ACTION, isAllowed, type Action } from '#lib/server/authz.ts';
 import type { Role } from '#lib/server/db/schema/authz.ts';
@@ -38,7 +38,7 @@ export interface MenuItem {
 	/** The paraglide message that names this item. */
 	readonly labelKey: MenuMessageKey;
 	/** Where the item goes. Typed against the generated route table, so a dead link fails `check`. */
-	readonly href: Pathname;
+	readonly href: Path;
 	/** The action that switches this item on, or `null` when every signed-in Warga sees it. */
 	readonly action: Action | null;
 }
@@ -68,27 +68,27 @@ export const MENU: readonly MenuGroup[] = [
 	{
 		key: 'home',
 		labelKey: 'appShell_groupHome',
-		items: [{ key: 'home', labelKey: 'appShell_navHome', href: '/', action: null }]
+		items: [{ key: 'home', labelKey: 'appShell_navHome', href: '', action: null }]
 	},
 	{
 		key: 'posts',
 		labelKey: 'appShell_groupPosts',
-		items: [{ key: 'posts', labelKey: 'appShell_navPosts', href: '/posts', action: null }]
+		items: [{ key: 'posts', labelKey: 'appShell_navPosts', href: 'posts', action: null }]
 	},
 	{
 		key: 'mine',
 		labelKey: 'appShell_groupMine',
 		items: [
-			{ key: 'myUnit', labelKey: 'appShell_navMyUnit', href: '/my-unit', action: null },
-			{ key: 'invoices', labelKey: 'appShell_navInvoices', href: '/invoices', action: null },
-			{ key: 'payments', labelKey: 'appShell_navPayments', href: '/payments', action: null },
-			{ key: 'reports', labelKey: 'appShell_navReports', href: '/reports', action: null },
-			{ key: 'complaints', labelKey: 'appShell_navComplaints', href: '/complaints', action: null },
-			{ key: 'profile', labelKey: 'appShell_navProfile', href: '/profile', action: null },
+			{ key: 'myUnit', labelKey: 'appShell_navMyUnit', href: 'my-unit', action: null },
+			{ key: 'invoices', labelKey: 'appShell_navInvoices', href: 'invoices', action: null },
+			{ key: 'payments', labelKey: 'appShell_navPayments', href: 'payments', action: null },
+			{ key: 'reports', labelKey: 'appShell_navReports', href: 'reports', action: null },
+			{ key: 'complaints', labelKey: 'appShell_navComplaints', href: 'complaints', action: null },
+			{ key: 'profile', labelKey: 'appShell_navProfile', href: 'profile', action: null },
 			{
 				key: 'profileNotifications',
 				labelKey: 'appShell_navProfileNotifications',
-				href: '/profile/notifications',
+				href: 'profile/notifications',
 				action: null
 			}
 		]
@@ -100,55 +100,55 @@ export const MENU: readonly MenuGroup[] = [
 			{
 				key: 'verifyPayments',
 				labelKey: 'appShell_navVerifyPayments',
-				href: '/admin/payments',
+				href: 'admin/payments',
 				action: ACTION.verifyPayments
 			},
 			{
 				key: 'recordCash',
 				labelKey: 'appShell_navRecordCash',
-				href: '/admin/cash',
+				href: 'admin/cash',
 				action: ACTION.recordCashTransactions
 			},
 			{
 				key: 'overdue',
 				labelKey: 'appShell_navReadOverdue',
-				href: '/admin/overdue',
+				href: 'admin/overdue',
 				action: ACTION.readOverdue
 			},
 			{
 				key: 'periods',
 				labelKey: 'appShell_navReadPeriods',
-				href: '/admin/periods',
+				href: 'admin/periods',
 				action: ACTION.readPeriods
 			},
 			{
 				key: 'publishReports',
 				labelKey: 'appShell_navPublishReports',
-				href: '/admin/reports',
+				href: 'admin/reports',
 				action: ACTION.publishReports
 			},
 			{
 				key: 'duesRates',
 				labelKey: 'appShell_navManageDuesRates',
-				href: '/admin/dues-rates',
+				href: 'admin/dues-rates',
 				action: ACTION.manageDuesRates
 			},
 			{
 				key: 'cashCategories',
 				labelKey: 'appShell_navManageCashCategories',
-				href: '/admin/cash-categories',
+				href: 'admin/cash-categories',
 				action: ACTION.manageCashCategories
 			},
 			{
 				key: 'openingBalance',
 				labelKey: 'appShell_navRecordOpeningBalance',
-				href: '/admin/opening-balance',
+				href: 'admin/opening-balance',
 				action: ACTION.recordOpeningBalance
 			},
 			{
 				key: 'exemptions',
 				labelKey: 'appShell_navManageExemptions',
-				href: '/admin/exemptions',
+				href: 'admin/exemptions',
 				action: ACTION.manageExemptions
 			}
 		]
@@ -160,31 +160,31 @@ export const MENU: readonly MenuGroup[] = [
 			{
 				key: 'units',
 				labelKey: 'appShell_navManageUnits',
-				href: '/admin/units',
+				href: 'admin/units',
 				action: ACTION.manageUnits
 			},
 			{
 				key: 'importResidents',
 				labelKey: 'appShell_navImportResidents',
-				href: '/admin/import',
+				href: 'admin/import',
 				action: ACTION.importResidents
 			},
 			{
 				key: 'invitations',
 				labelKey: 'appShell_navManageInvitations',
-				href: '/admin/invitations',
+				href: 'admin/invitations',
 				action: ACTION.manageInvitations
 			},
 			{
 				key: 'registrations',
 				labelKey: 'appShell_navManageRegistrations',
-				href: '/admin/registrations',
+				href: 'admin/registrations',
 				action: ACTION.manageRegistrations
 			},
 			{
 				key: 'roles',
 				labelKey: 'appShell_navManageRoles',
-				href: '/admin/roles',
+				href: 'admin/roles',
 				action: ACTION.manageRoles
 			}
 		]
@@ -196,13 +196,13 @@ export const MENU: readonly MenuGroup[] = [
 			{
 				key: 'managePosts',
 				labelKey: 'appShell_navManagePosts',
-				href: '/admin/posts',
+				href: 'admin/posts',
 				action: ACTION.managePosts
 			},
 			{
 				key: 'allComplaints',
 				labelKey: 'appShell_navReadAllComplaints',
-				href: '/admin/complaints',
+				href: 'admin/complaints',
 				action: ACTION.readAllComplaints
 			}
 		]
@@ -214,7 +214,7 @@ export const MENU: readonly MenuGroup[] = [
 			{
 				key: 'jobs',
 				labelKey: 'appShell_navManageJobs',
-				href: '/admin/jobs',
+				href: 'admin/jobs',
 				action: ACTION.manageJobs
 			}
 		]

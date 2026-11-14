@@ -1,22 +1,24 @@
 <script lang="ts" module>
-	import type { Pathname } from '$app/types';
+	import type { Path } from '$app/types';
 
 	/**
 	 * Narrows one of the application's pathnames to a single route, so that `resolve` can be
 	 * called on it.
 	 *
 	 * `resolve` is generic over one route at a time, and a menu item's `href` is the whole
-	 * `Pathname` union, which leaves TypeScript with no overload to pick. Narrowing to any one
-	 * member restores that and changes no value: every `href` in `menu.ts` is a static pathname,
-	 * and `resolve` does the one same thing to all of them — prefix the base path. `bun run check`
-	 * still refuses an `href` in `menu.ts` that is not a route this application has.
+	 * `Path` union, which leaves TypeScript with no overload to pick. Narrowing to any one member
+	 * restores that and changes no value: every `href` in `menu.ts` is a static pathname without a
+	 * leading slash, and `resolve` does the one same thing to all of them — prefix the base path
+	 * and a slash. The member picked is `''`, the root, because a route ID (anything starting with
+	 * `/`) would take `resolve`'s other branch. `bun run check` still refuses an `href` in
+	 * `menu.ts` that is not a route this application has.
 	 *
 	 * Exported from this module block so `app-sidebar.svelte`, which already imports this
-	 * component, shares the one copy. `$app/paths`' `base` is the other way to write this and is
-	 * deprecated.
+	 * component, shares the one copy. `$app/paths`' `base` was the other way to write this, and
+	 * SvelteKit 3 removed it.
 	 */
-	export function staticRoute(pathname: Pathname): '/' {
-		return pathname as '/';
+	export function staticRoute(pathname: Path): '' {
+		return pathname as '';
 	}
 </script>
 

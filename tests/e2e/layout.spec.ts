@@ -57,7 +57,7 @@ const ACCOUNT_NAME = 'Pengurus Kerangka';
 /**
  * The complex name the server under test was built with, worked out the way `src/lib/complex-name.ts`
  * does: trimmed, and "Komplek" when nothing is left. That module cannot be imported here, because
- * `$env/static/public` only resolves inside a SvelteKit build, so the rule is restated; the unit
+ * `$app/env/public` only resolves inside a SvelteKit build, so the rule is restated; the unit
  * test proves the module's side of it.
  */
 function expectedComplexName(): string {

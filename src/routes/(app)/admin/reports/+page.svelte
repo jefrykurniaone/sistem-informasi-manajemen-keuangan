@@ -125,7 +125,7 @@
 			</ul>
 			<a
 				class="inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4"
-				href={resolve(`/reports/${data.period}`)}
+				href={resolve(`reports/${data.period}`)}
 			>
 				{m.adminReports_openReportLink()}
 			</a>
@@ -139,7 +139,7 @@
 			</p>
 			<a
 				class="inline-flex min-h-11 items-center self-start text-sm underline underline-offset-4"
-				href={resolve('/admin/periods')}
+				href={resolve('admin/periods')}
 			>
 				{m.adminReports_periodsLink()}
 			</a>

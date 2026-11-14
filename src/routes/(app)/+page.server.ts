@@ -1,5 +1,5 @@
 import { redirect } from '@sveltejs/kit';
-import type { Pathname } from '$app/types';
+import type { Path } from '$app/types';
 import { MENU } from '#lib/components/app-shell/menu.ts';
 import { formatRupiah } from '#lib/money.ts';
 import * as m from '#lib/paraglide/messages.js';
@@ -54,7 +54,7 @@ interface StatCard {
 	readonly value: string;
 	readonly label: string;
 	readonly detail?: string;
-	readonly href: Pathname;
+	readonly href: Path;
 	readonly variant?: 'warning';
 }
 
@@ -104,7 +104,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 		hasUnit: dashboard.hasUnit,
 		units: dashboard.units.map((unit) => residentUnitCards(unit, dashboard.units.length > 1)),
 		complaints: dashboard.complaints,
-		postsCard: postsCard(dashboard.latestPosts, '/posts')
+		postsCard: postsCard(dashboard.latestPosts, 'posts')
 	};
 };
 
@@ -130,7 +130,7 @@ function adminCards(dashboard: AdminDashboard): readonly StatCard[] {
 		cards.push(cashCard(dashboard.cash));
 	}
 	cards.push(complaintsCard(dashboard.complaints));
-	cards.push(postsCard(dashboard.latestPosts, '/admin/posts'));
+	cards.push(postsCard(dashboard.latestPosts, 'admin/posts'));
 	if (dashboard.jobs) {
 		cards.push(jobsCard(dashboard.jobs));
 	}
@@ -148,7 +148,7 @@ function invoicesCard(invoices: DashboardInvoiceSummary): StatCard {
 			paidCount: invoices.paidCount,
 			paidAmount: formatRupiah(invoices.paidAmount)
 		}),
-		href: '/admin/overdue',
+		href: 'admin/overdue',
 		variant: invoices.overdueCount > 0 ? 'warning' : undefined
 	};
 }
@@ -159,7 +159,7 @@ function pendingPaymentsCard(pending: PendingPaymentsSummary): StatCard {
 		value: formatRupiah(pending.amount),
 		label: m.dashboard_adminPendingLabel(),
 		detail: m.dashboard_adminPendingDetail({ count: pending.count }),
-		href: '/admin/payments',
+		href: 'admin/payments',
 		variant: pending.count > 0 ? 'warning' : undefined
 	};
 }
@@ -173,7 +173,7 @@ function cashCard(cash: CashSummary): StatCard {
 			income: formatRupiah(cash.incomeThisMonth),
 			expense: formatRupiah(cash.expenseThisMonth)
 		}),
-		href: '/admin/cash'
+		href: 'admin/cash'
 	};
 }
 
@@ -188,12 +188,12 @@ function complaintsCard(complaints: OpenComplaintCounts): StatCard {
 			reviewingCount: complaints.reviewing,
 			workingCount: complaints.working
 		}),
-		href: '/admin/complaints'
+		href: 'admin/complaints'
 	};
 }
 
 /** The "3 Post terbaru" card, shared by both roles — only the destination link differs. */
-function postsCard(posts: readonly LatestPost[], href: Pathname): StatCard {
+function postsCard(posts: readonly LatestPost[], href: Path): StatCard {
 	const [latest, ...rest] = posts;
 	return {
 		key: 'posts',
@@ -221,7 +221,7 @@ function jobsCard(jobs: readonly JobStatusSummary[]): StatCard {
 			key: 'jobs',
 			value: m.dashboard_adminJobsEmptyValue(),
 			label: m.dashboard_adminJobsEmptyLabel(),
-			href: '/admin/jobs'
+			href: 'admin/jobs'
 		};
 	}
 
@@ -231,7 +231,7 @@ function jobsCard(jobs: readonly JobStatusSummary[]): StatCard {
 			key: 'jobs',
 			value: m.dashboard_adminJobsNeverRun(),
 			label: m.dashboard_adminJobsEmptyLabel(),
-			href: '/admin/jobs'
+			href: 'admin/jobs'
 		};
 	}
 
@@ -240,7 +240,7 @@ function jobsCard(jobs: readonly JobStatusSummary[]): StatCard {
 		value: formatDateTime(latest.lastRunAt),
 		label: m.dashboard_adminJobsLabel({ name: latest.name }),
 		detail: latest.status ? JOB_STATUS_LABEL[latest.status]() : undefined,
-		href: '/admin/jobs'
+		href: 'admin/jobs'
 	};
 }
 
@@ -272,7 +272,7 @@ function residentUnitCards(unit: ResidentUnitSummary, showLabel: boolean): Resid
 			value: formatRupiah(unit.openInvoices.amount),
 			label: m.dashboard_residentInvoicesLabel(),
 			detail: m.dashboard_residentInvoicesDetail({ count: unit.openInvoices.count }),
-			href: '/invoices',
+			href: 'invoices',
 			variant: unit.openInvoices.overdueCount > 0 ? 'warning' : undefined
 		},
 		creditCard: {
@@ -281,7 +281,7 @@ function residentUnitCards(unit: ResidentUnitSummary, showLabel: boolean): Resid
 			label: m.dashboard_residentCreditLabel(),
 			// No dedicated Saldo Titipan screen exists yet, so this points at the one resident-facing
 			// finance screen there is — the same house's Tagihan.
-			href: '/invoices'
+			href: 'invoices'
 		}
 	};
 }

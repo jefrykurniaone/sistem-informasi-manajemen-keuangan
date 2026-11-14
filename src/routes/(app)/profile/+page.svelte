@@ -75,7 +75,7 @@
 			<Button type="submit" class="h-11">{m.profile_saveButton()}</Button>
 		</form>
 
-		<a class="text-sm underline underline-offset-4" href={resolve('/profile/notifications')}>
+		<a class="text-sm underline underline-offset-4" href={resolve('profile/notifications')}>
 			{m.profile_notificationsLink()}
 		</a>
 	{/if}
