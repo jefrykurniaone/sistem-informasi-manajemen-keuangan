@@ -1,7 +1,7 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail, redirect } from '@sveltejs/kit';
 import { AUTH_PATHS } from '#lib/server/auth.ts';
 import { database } from '#lib/server/db/index.ts';
-import { PermissionDeniedError } from '#lib/errors.ts';
+import { throwRouteError, type PageMessages } from '#lib/server/route-action.ts';
 import { systemClock } from '#lib/server/ports/clock.ts';
 import { residentProfileForUser, updateOwnProfile } from '#lib/server/services/resident/profile.ts';
 import type { Actions, PageServerLoad } from './$types';
@@ -16,9 +16,13 @@ import type { Actions, PageServerLoad } from './$types';
  *
  * **A permission refusal becomes a 403, never a 500.** `PermissionDeniedError` — reached here
  * through `updateOwnProfile` if a form were ever posted with someone else's `residentId` — is caught
- * below and turned into `error(403, …)`, the same translation `(app)/admin/roles/+page.server.ts`
- * does for the same error class.
+ * below and turned into `error(403, …)` by `throwRouteError` in `src/lib/server/route-action.ts`
+ * (#333), the one translation every route shares. Anything else is rethrown as it was.
  */
+
+const PAGE = {
+	forbidden: () => 'Anda hanya dapat mengubah data diri Anda sendiri.'
+} satisfies PageMessages;
 
 export const load: PageServerLoad = async ({ locals }) => {
 	if (!locals.user) {
@@ -48,10 +52,7 @@ export const actions: Actions = {
 				phone: form.phone
 			});
 		} catch (caught) {
-			if (caught instanceof PermissionDeniedError) {
-				throw error(403, 'Anda hanya dapat mengubah data diri Anda sendiri.');
-			}
-			throw caught;
+			throwRouteError(caught, PAGE);
 		}
 
 		return { name: form.name, phone: form.phone, saved: true };

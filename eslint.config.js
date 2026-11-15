@@ -43,6 +43,21 @@ export default defineConfig(
 		}
 	},
 	{
+		// `failOrThrow` returns the rejected form; a call whose result is discarded lets the action
+		// fall through to its success message (#318, #333). Always `return failOrThrow(...)`.
+		files: ['src/routes/**/*.ts'],
+		rules: {
+			'no-restricted-syntax': [
+				'error',
+				{
+					selector: "ExpressionStatement > CallExpression[callee.name='failOrThrow']",
+					message:
+						'Return the result of failOrThrow: a discarded call falls through to the success path. Use throwRouteError in a catch that only throws.'
+				}
+			]
+		}
+	},
+	{
 		// Override or add rule settings here, such as:
 		// 'svelte/button-has-type': 'error'
 		rules: {}

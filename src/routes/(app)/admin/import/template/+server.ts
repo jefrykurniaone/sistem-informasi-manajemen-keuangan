@@ -1,6 +1,6 @@
-import { error, redirect } from '@sveltejs/kit';
+import { redirect } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
+import { throwRouteError, type PageMessages } from '#lib/server/route-action.ts';
 import { AUTH_PATHS } from '#lib/server/auth.ts';
 import { ACTION, requirePermission } from '#lib/server/authz.ts';
 import { database } from '#lib/server/db/index.ts';
@@ -10,6 +10,8 @@ import {
 	IMPORT_TEMPLATE_FILENAME
 } from '#lib/server/services/import/template.ts';
 import type { RequestHandler } from './$types';
+
+const PAGE = { forbidden: m.adminImport_forbidden } satisfies PageMessages;
 
 /**
  * The Template Impor download: the empty workbook a superuser fills in with Excel and uploads back
@@ -25,10 +27,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 	try {
 		await requirePermission(database(), locals.user.id, ACTION.importResidents);
 	} catch (caught) {
-		if (caught instanceof PermissionDeniedError) {
-			throw error(403, m.adminImport_forbidden());
-		}
-		throw caught;
+		throwRouteError(caught, PAGE);
 	}
 
 	const workbook = await buildImportTemplate();
