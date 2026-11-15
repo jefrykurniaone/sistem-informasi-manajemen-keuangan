@@ -1,11 +1,16 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
 import { ACTION, isAllowed, rolesOf } from '#lib/server/authz.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
 import { PERIOD_STATUS } from '#lib/server/db/schema/period.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	requireUser,
+	throwRouteError,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import {
 	listPeriods,
 	PERIOD_RULE,
@@ -20,10 +25,10 @@ import type { Actions, PageServerLoad } from './$types';
  * The screen that shows every Periode of the buku kas with its status and the Laporan Bulanan
  * published inside it, and lets a superuser reopen a locked month with a reason.
  *
- * Follows the shape `src/routes/(app)/admin/exemptions/+page.server.ts` settled: nobody who is not
- * signed in reaches the service layer, `PermissionDeniedError` becomes `error(403, …)` here and
- * never in the service, and every rule the service refuses comes back as `fail(400, …)` with a
- * sentence the superuser can read.
+ * Nobody who is not signed in reaches the service layer, `PermissionDeniedError` becomes
+ * `error(403, …)` here and never in the service, and every rule the service refuses comes back as
+ * `fail(400, …)` with a sentence the superuser can read. All three go through
+ * `#lib/server/route-action.ts` (#318): this file names its sentences and nothing else.
  *
  * This route decides nothing about periods. Which months exist, whether a month with no row is
  * open, and whether this caller may reopen one are all answered in
@@ -60,13 +65,18 @@ const MONTH_FIELD = 'month';
 /** The form field carrying the alasan, which the audit log records. */
 const REASON_FIELD = 'reason';
 
-export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+/**
+ * The page's own refusal: the 403 for anyone without `ACTION.readPeriods` who opens the page, and
+ * for anyone without `ACTION.unlockPeriods` who posts the unlock form. There is no 404 sentence,
+ * because nothing on this screen is addressed by an id.
+ */
+const PAGE = { forbidden: m.adminPeriods_forbidden } satisfies PageMessages;
 
-	const db = database();
-	const userId = locals.user.id;
+export const load: PageServerLoad = async ({ locals }) => {
+	const user = requireUser(locals);
+
+	const { db } = productionDependencies();
+	const userId = user.id;
 	try {
 		const [listing, roles] = await Promise.all([listPeriods(db, userId), rolesOf(db, userId)]);
 		return {
@@ -88,27 +98,26 @@ export const load: PageServerLoad = async ({ locals }) => {
 			mayPublish: isAllowed(roles, ACTION.publishReports)
 		};
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	unlock: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const rawYear = String(form.get(YEAR_FIELD) ?? '').trim();
-		const rawMonth = String(form.get(MONTH_FIELD) ?? '').trim();
-		const reason = String(form.get(REASON_FIELD) ?? '').trim();
+		const rawYear = readText(form, YEAR_FIELD);
+		const rawMonth = readText(form, MONTH_FIELD);
+		const reason = readText(form, REASON_FIELD);
 		if (rawYear === '' || rawMonth === '' || reason === '') {
 			return fail(400, { message: m.adminPeriods_invalidForm() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			const reopened = await unlockPeriod(database(), systemClock, {
-				actorId: locals.user.id,
+			const reopened = await unlockPeriod(db, clock, {
+				actorId: user.id,
 				// `Number('abc')` is `NaN`, which the service refuses by name as `notACalendarMonth`
 				// rather than letting it reach a `where` clause.
 				year: Number(rawYear),
@@ -117,10 +126,11 @@ export const actions: Actions = {
 			});
 			return { message: m.adminPeriods_unlockSuccess({ period: periodLabel(reopened) }) };
 		} catch (caught) {
-			if (caught instanceof PeriodRuleError) {
-				return fail(400, { message: ruleMessage(caught.rule) });
-			}
-			throwAsRouteError(caught);
+			return failOrThrow(caught, {
+				...PAGE,
+				fallback: m.adminPeriods_invalidForm,
+				refusals: [refusal(PeriodRuleError, ({ error }) => ruleMessage(error.rule))]
+			});
 		}
 	}
 };
@@ -142,16 +152,4 @@ function ruleMessage(rule: PeriodRule): string {
 		[PERIOD_RULE.alreadyLocked]: m.adminPeriods_rule_alreadyLocked
 	};
 	return messages[rule]();
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- * Always throws — the return type is `never` so that this can sit in a `catch` block without
- * widening the type SvelteKit infers, the same helper every other admin screen carries.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminPeriods_forbidden());
-	}
-	throw caught;
 }
