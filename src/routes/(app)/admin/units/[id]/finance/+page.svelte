@@ -4,6 +4,9 @@
 	import ReleaseAllocationDialog, {
 		type ReleasableAllocation
 	} from '#lib/components/dues/release-allocation-dialog.svelte';
+	import ReverseRefundDialog, {
+		type ReversibleRefund
+	} from '#lib/components/dues/reverse-refund-dialog.svelte';
 	import VoidInvoiceDialog, {
 		type VoidableInvoice
 	} from '#lib/components/dues/void-invoice-dialog.svelte';
@@ -25,26 +28,29 @@
 	/** Whether the refund dialog is open. It names no row — the Unit comes from the route. */
 	let refunding = $state(false);
 
-	/** The heading sentence for one history entry, by which of the three actions it records. */
+	/** The Pengembalian a reversal is being written for, or nothing while that dialog is closed. */
+	let reversing = $state<ReversibleRefund | undefined>(undefined);
+
+	/** The heading sentence for one history entry, by which of the actions it records. */
 	const HISTORY_LABELS: Record<(typeof data.history)[number]['action'], () => string> = {
 		invoice_voided: m.unitFinance_actionVoided,
 		allocation_released: m.unitFinance_actionReleased,
-		credit_refunded: m.unitFinance_actionRefunded
+		credit_refunded: m.unitFinance_actionRefunded,
+		refund_reversed: m.unitFinance_actionRefundReversed
 	};
 
 	/**
-	 * A standing Tagihan's label from its allocated sum against its amount — lunas, sebagian, or
-	 * belum lunas. Deliberately not `invoiceStatus` from `queries.ts`: menunggak needs "today" in
-	 * the complex's zone, and this screen is about correcting money, not about chasing it.
+	 * The label for each status a Tagihan can have. The status itself is decided by
+	 * `invoiceStandings` in `#lib/server/services/dues/invoice-standing.ts` and carried by the screen
+	 * model (#329): this page only names it, menunggak and batal included.
 	 */
-	function allocationLabel(invoice: (typeof data.finance.invoices)[number]): string {
-		if (invoice.allocatedAmount >= invoice.amount) {
-			return m.unitFinance_statusPaid();
-		}
-		return invoice.allocatedAmount > 0
-			? m.unitFinance_statusPartial()
-			: m.unitFinance_statusUnpaid();
-	}
+	const STATUS_LABELS: Record<(typeof data.finance.invoices)[number]['status'], () => string> = {
+		paid: m.unitFinance_statusPaid,
+		partial: m.unitFinance_statusPartial,
+		unpaid: m.unitFinance_statusUnpaid,
+		overdue: m.unitFinance_statusOverdue,
+		void: m.unitFinance_statusVoid
+	};
 </script>
 
 <svelte:head>
@@ -108,9 +114,7 @@
 								<p class="text-sm text-muted-foreground">
 									{m.unitFinance_invoiceDue({ date: invoice.dueDate })}
 									·
-									{invoice.voidedAt !== null
-										? m.unitFinance_statusVoid()
-										: allocationLabel(invoice)}
+									{STATUS_LABELS[invoice.status]()}
 								</p>
 							</div>
 							{#if invoice.voidedAt === null}
@@ -178,6 +182,57 @@
 	</section>
 
 	<section class="flex flex-col gap-3">
+		<h2 class="font-medium">{m.unitFinance_refundsHeading()}</h2>
+
+		{#if data.finance.refunds.length === 0}
+			<p class="text-sm text-muted-foreground">{m.unitFinance_refundsEmpty()}</p>
+		{:else}
+			<ul class="flex flex-col gap-3">
+				{#each data.finance.refunds as refund (refund.refundId)}
+					<li class="flex flex-col gap-2 rounded-lg border border-border p-4">
+						<div class="flex flex-wrap items-center justify-between gap-2">
+							<div class="flex min-w-0 flex-col gap-0.5">
+								<p class="font-medium">
+									{m.unitFinance_refundLine({
+										amount: formatRupiah(refund.amount),
+										date: refund.occurredOn
+									})}
+								</p>
+								<p class="text-sm break-all text-muted-foreground">
+									{m.unitFinance_refundFromPayment({ paymentId: refund.paymentId })}
+								</p>
+							</div>
+							{#if refund.inForce}
+								<Button
+									type="button"
+									variant="outline"
+									class="h-11"
+									onclick={() => {
+										reversing = {
+											id: refund.refundId,
+											paymentId: refund.paymentId,
+											occurredOn: refund.occurredOn,
+											amount: formatRupiah(refund.amount)
+										};
+									}}
+								>
+									{m.unitFinance_reverseRefundButton()}
+								</Button>
+							{/if}
+						</div>
+						<p class="text-sm">{m.unitFinance_refundReason({ reason: refund.reason })}</p>
+						{#if refund.reversalReason !== null}
+							<p class="text-sm text-muted-foreground">
+								{m.unitFinance_refundReversedNote({ reason: refund.reversalReason })}
+							</p>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
+
+	<section class="flex flex-col gap-3">
 		<h2 class="font-medium">{m.unitFinance_historyHeading()}</h2>
 
 		{#if data.history.length === 0}
@@ -233,5 +288,13 @@
 	open={refunding}
 	onClose={() => {
 		refunding = false;
+	}}
+/>
+
+<ReverseRefundDialog
+	action="?/reverseRefund"
+	refund={reversing}
+	onClose={() => {
+		reversing = undefined;
 	}}
 />

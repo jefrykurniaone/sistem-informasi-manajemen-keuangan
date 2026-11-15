@@ -1,13 +1,18 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type { Rupiah } from '#lib/money.ts';
 import { ACTION, requirePermission, type DatabaseWriter } from '../../authz';
 import type { Database } from '../../db';
 import { allocations } from '../../db/schema/allocation';
 import { auditLog } from '../../db/schema/audit';
 import { user } from '../../db/schema/auth';
+import { cashTransactions } from '../../db/schema/cash-transaction';
 import { invoices } from '../../db/schema/invoice';
+import { payments } from '../../db/schema/payment';
+import { refunds } from '../../db/schema/refund';
 import { units } from '../../db/schema/unit';
-import { creditBalanceOfUnit } from './credit-balance';
+import type { Clock } from '../../ports/clock';
+import { creditBalanceOfUnit, refundInForce } from './credit-balance';
 import {
 	DUES_CORRECTION_ACTIONS,
 	DUES_CORRECTION_UNIT_KEY,
@@ -17,12 +22,13 @@ import {
 	type DuesCorrectionAction,
 	type DuesCorrectionSummary
 } from './dues-correction';
-import { allocatedAmountsOf } from './invoice-standing';
+import { invoiceStandings, type InvoiceStatus } from './invoice-standing';
 import { UnitNotFoundError } from './queries';
 
 /**
  * The reads behind the unit finance screen: one Unit's Saldo Titipan, its Tagihan with their
- * Alokasi laid out for the void and release controls, and the history of the dues corrections, so
+ * Alokasi laid out for the void and release controls, its Pengembalian laid out for the reversal
+ * control (#329), and the history of the dues corrections, so
  * `src/routes/(app)/admin/units/[id]/finance/+page.server.ts` calls a service and composes no query
  * of its own. The corrections themselves, and the typed Audit Log record each one leaves, are the
  * dues-correction module's, `./dues-correction.ts`.
@@ -32,8 +38,10 @@ import { UnitNotFoundError } from './queries';
  * reuse `invoiceHistoryForUnit` in `./queries.ts`, which is guarded by `ACTION.readOverdue`
  * (`admin`'s), because a superuser who is not also an admin must be able to open this screen, and
  * because this screen needs each Alokasi as a row (id, payment, amount) where that one needs only
- * the sums. The sums themselves are `allocatedAmountsOf`'s, in `./invoice-standing.ts`: this module
- * adds up no Alokasi of its own.
+ * the sums. The sums and the status of each Tagihan are `invoiceStandings`'s, in
+ * `./invoice-standing.ts` (#320): this module adds up no Alokasi of its own, and since #329 the
+ * screen no longer decides lunas, sebagian or belum lunas itself either. It shows the status the
+ * model carries, menunggak included.
  *
  * ## Why the history is read from the audit log, and only from there
  *
@@ -77,18 +85,46 @@ export interface FinanceAllocationRow {
 /** One Tagihan on the finance screen, with its Alokasi as rows rather than only a sum. */
 export interface FinanceInvoiceRow {
 	readonly invoiceId: string;
+	readonly unitId: string;
 	/** The calendar month it is for, as `YYYY-MM`. */
 	readonly period: string;
 	readonly amount: Rupiah;
 	readonly allocatedAmount: Rupiah;
 	/** `amount` less `allocatedAmount`. */
 	readonly remainingAmount: Rupiah;
+	/** Where the Tagihan stands on today's WIB day, as `invoiceStandings` decides it. */
+	readonly status: InvoiceStatus;
 	readonly dueDate: string;
 	/** When this Tagihan was cancelled, or `null` while it stands. */
 	readonly voidedAt: Date | null;
 	readonly voidReason: string | null;
 	/** Oldest first. Empty for a Tagihan nothing has paid toward. */
 	readonly allocations: readonly FinanceAllocationRow[];
+}
+
+/**
+ * One Pengembalian on the finance screen: one `refunds` row and its cash expense, with whether it is
+ * still in force, for the reversal control.
+ */
+export interface FinanceRefundRow {
+	readonly refundId: string;
+	/** The Pembayaran whose remainder it consumed. */
+	readonly paymentId: string;
+	readonly amount: Rupiah;
+	/** The day the money was handed back, off its cash expense row, as `YYYY-MM-DD`. */
+	readonly occurredOn: string;
+	/** Why it was returned. */
+	readonly reason: string;
+	/**
+	 * Whether it still counts against the Saldo Titipan: `refundInForce` in `./credit-balance.ts`,
+	 * the very condition the balance shown beside it is computed with.
+	 */
+	readonly inForce: boolean;
+	/**
+	 * The reason on the Koreksi that reversed it, or `null` while it is in force. Read off the Koreksi
+	 * row itself, whose `description` is the reason the reversal was given.
+	 */
+	readonly reversalReason: string | null;
 }
 
 /** The whole answer for one Unit's finance screen, short of the history. */
@@ -100,24 +136,27 @@ export interface UnitFinance {
 	readonly creditBalance: Rupiah;
 	/** Every Tagihan the house has ever had, voided ones included, newest Periode first. */
 	readonly invoices: readonly FinanceInvoiceRow[];
+	/** Every Pengembalian of the house's Pembayaran, reversed ones included, newest first. */
+	readonly refunds: readonly FinanceRefundRow[];
 }
 
 /**
- * One Unit's Saldo Titipan and Tagihan, each Tagihan carrying its Alokasi as rows: the reads the
- * void, release and refund controls decide themselves against. No lock: this is a screen, and every
- * write path re-reads what it needs under its own locks.
+ * One Unit's Saldo Titipan, Tagihan and Pengembalian, each Tagihan carrying its Alokasi as rows and
+ * its status: the reads the void, release, refund and reversal controls decide themselves against.
+ * No lock: this is a screen, and every write path re-reads what it needs under its own locks.
  *
- * The Tagihan, their allocated sums and their Alokasi rows are read in one read-only `repeatable
- * read` transaction, one snapshot for all three statements. Each Tagihan's `allocatedAmount` is
- * then exactly the sum of the Alokasi rows listed under it, as it was when this function still
- * added those rows up itself: a correction committing between two statements cannot make the
- * screen show a sum that disagrees with its own list.
+ * Everything is read in one read-only `repeatable read` transaction, one snapshot for every
+ * statement. Each Tagihan's `allocatedAmount` is then exactly the sum of the Alokasi rows listed
+ * under it, and the Saldo Titipan is exactly what the listed Pengembalian in force leave of it: a
+ * correction committing between two statements cannot make the screen show a number that disagrees
+ * with its own list. (Before #329 the balance was read beside the snapshot, not in it.)
  *
  * @throws {PermissionDeniedError} when `actorId` may not correct dues.
  * @throws {UnitNotFoundError} when `unitId` names no house.
  */
 export async function unitFinanceFor(
 	db: Database,
+	clock: Clock,
 	actorId: string,
 	unitId: string
 ): Promise<UnitFinance> {
@@ -132,45 +171,44 @@ export async function unitFinanceFor(
 		throw new UnitNotFoundError(unitId);
 	}
 
-	const [creditBalance, invoiceRows] = await Promise.all([
-		creditBalanceOfUnit(db, unitId),
-		db.transaction(
-			// One client, so its three statements run one after another: `Promise.all` over a
-			// transaction is what `tests/unit/no-concurrent-client-query.test.ts` guards against.
-			async (transaction) => {
-				const rows = await transaction
-					.select({
-						invoiceId: invoices.id,
-						period: invoices.period,
-						amount: invoices.amount,
-						dueDate: invoices.dueDate,
-						voidedAt: invoices.voidedAt,
-						voidReason: invoices.voidReason
-					})
-					.from(invoices)
-					.where(eq(invoices.unitId, unitId))
-					.orderBy(desc(invoices.period), asc(invoices.id));
-				const withAmounts = await allocatedAmountsOf(transaction, rows);
-				const allocationsByInvoice = await allocationRowsByInvoice(
-					transaction,
-					rows.map((row) => row.invoiceId)
-				);
-				return withAmounts.map((row) => ({
+	return db.transaction(
+		// One client, so its statements run one after another: `Promise.all` over a transaction is
+		// what `tests/unit/no-concurrent-client-query.test.ts` guards against.
+		async (transaction) => {
+			const creditBalance = await creditBalanceOfUnit(transaction, unitId);
+			const rows = await transaction
+				.select({
+					invoiceId: invoices.id,
+					unitId: invoices.unitId,
+					period: invoices.period,
+					amount: invoices.amount,
+					dueDate: invoices.dueDate,
+					voidedAt: invoices.voidedAt,
+					voidReason: invoices.voidReason
+				})
+				.from(invoices)
+				.where(eq(invoices.unitId, unitId))
+				.orderBy(desc(invoices.period), asc(invoices.id));
+			const standings = await invoiceStandings(transaction, clock, rows);
+			const allocationsByInvoice = await allocationRowsByInvoice(
+				transaction,
+				rows.map((row) => row.invoiceId)
+			);
+			const refundRows = await refundRowsOfUnit(transaction, unitId);
+			return {
+				unitId: unit.id,
+				block: unit.block,
+				number: unit.number,
+				creditBalance,
+				invoices: standings.map((row) => ({
 					...row,
 					allocations: allocationsByInvoice.get(row.invoiceId) ?? []
-				}));
-			},
-			{ isolationLevel: 'repeatable read', accessMode: 'read only' }
-		)
-	]);
-
-	return {
-		unitId: unit.id,
-		block: unit.block,
-		number: unit.number,
-		creditBalance,
-		invoices: invoiceRows
-	};
+				})),
+				refunds: refundRows
+			};
+		},
+		{ isolationLevel: 'repeatable read', accessMode: 'read only' }
+	);
 }
 
 /** One line of the corrections history, whichever action it records. */
@@ -234,6 +272,14 @@ export async function correctionsHistoryFor(
 			return [];
 		}
 		const record = readDuesCorrectionRecord(row);
+		if (!record) {
+			// Said in the log, because on the screen this row looks like a correction whose reason was
+			// never given: a check in `RECORD_KINDS` that a new action's writer does not satisfy would
+			// otherwise pass as missing data.
+			console.warn(
+				`Audit log row "${row.id}" (action "${row.action}") is not the record its action writes; the corrections history shows it with a blank reason and no amount.`
+			);
+		}
 		const shown = record
 			? { reason: record.after.reason, ...duesCorrectionSummary(record) }
 			: UNREADABLE_RECORD;
@@ -286,4 +332,46 @@ async function allocationRowsByInvoice(
 		}
 	}
 	return grouped;
+}
+
+/** The name the Koreksi row goes by in `refundRowsOfUnit`'s subquery. */
+const REVERSAL_ALIAS = 'reversal';
+
+/**
+ * Every Pengembalian of `unitId`'s Pembayaran, whatever the Pembayaran's status, newest money first,
+ * each with its day off its cash expense row and whether it is still in force. The day lives only on
+ * the cash row (`src/lib/server/db/schema/refund.ts`: "No `occurredOn` column"), so the join is the
+ * one place it can come from.
+ */
+async function refundRowsOfUnit(
+	db: DatabaseWriter,
+	unitId: string
+): Promise<readonly FinanceRefundRow[]> {
+	// Its own name for the Koreksi row, so the subquery's columns are told apart from the outer
+	// join's `cash_transactions`. Inside a raw `sql` template the alias renders as its bare name,
+	// so the `from` names the table and the alias explicitly.
+	const reversal = alias(cashTransactions, REVERSAL_ALIAS);
+	return db
+		.select({
+			refundId: refunds.id,
+			paymentId: refunds.paymentId,
+			amount: refunds.amount,
+			occurredOn: cashTransactions.occurredOn,
+			reason: refunds.reason,
+			inForce: sql<boolean>`${refundInForce()}`,
+			// A scalar subquery rather than a join, so a line can never be listed twice. At most one
+			// Koreksi exists per line (the writer's line lock), and `refundInForce` reads the same rows.
+			reversalReason: sql<string | null>`(
+				select ${reversal.description}
+				from ${cashTransactions} as ${sql.identifier(REVERSAL_ALIAS)}
+				where ${reversal.correctionOf} = ${refunds.cashTransactionId}
+				order by ${reversal.createdAt}, ${reversal.id}
+				limit 1
+			)`
+		})
+		.from(refunds)
+		.innerJoin(payments, eq(payments.id, refunds.paymentId))
+		.innerJoin(cashTransactions, eq(cashTransactions.id, refunds.cashTransactionId))
+		.where(eq(payments.unitId, unitId))
+		.orderBy(desc(cashTransactions.occurredOn), desc(refunds.createdAt), desc(refunds.id));
 }
