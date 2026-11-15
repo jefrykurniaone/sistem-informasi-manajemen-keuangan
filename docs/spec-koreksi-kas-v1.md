@@ -6,6 +6,7 @@
 | Run | `perdalam-v1` |
 | Peta eksekusi | [#334](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/334) |
 | Disalin pada | 2026-11-15, dari `main` @ `0cf7be0` |
+| Lintasan penutup | 2026-11-16, sesudah Gelombang 6 (`feat/perdalam-v1` @ `cac5bf0`): dibuat ulang dari item, yang kini memuat bagian "Catatan penyerahan" dengan klaim yang dibalik ditandai; tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang; item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
 
@@ -170,3 +171,43 @@ Per 2026-11-15, buku kas punya empat masalah, dan koreksi iuran punya dua.
 - Spec ini menyentuh invarian uang dan urutan kunci. Tiket-tiketnya dinilai high-consequence di Stage 3.
 - **Data produksi yang sudah ada.** Sebelum run ini, Admin boleh mengoreksi baris "Iuran warga". Kalau produksi sudah punya Koreksi atas baris Pengembalian, keputusan 6 membuat Pengembalian itu terhitung batal dan Saldo Titipan Unitnya naik. Kalau sudah ada Koreksi atas baris pemasukan iuran, Pembayaran-nya tetap terverifikasi dan kasnya tetap berselisih. Pemeriksaan baca-saja atas produksi, dan penanganan apa pun yang dibutuhkan, adalah langkah pemilik sesudah run ditutup. Perbaikan data di produksi hanya dijalankan sesudah dry run-nya diposting dan disetujui.
 
+
+## Catatan penyerahan (run perdalam-v1, 2026-11-16)
+
+**1. Yang masuk.** Semua di `feat/perdalam-v1`, belum di `main` (PR run dibuka di tail, #334).
+
+- #315 Penulis buku kas: merge `5228362` ke feat/perdalam-v1. `src/lib/server/services/cash/writer.ts` (`writeCashTransaction`, `CASH_WRITE_KIND`) dan `cash/balance.ts` (`cashBalanceBefore`, `monthDayRange`).
+- #322 Saldo awal yang berlaku satu: merge `02658e3` ke feat/perdalam-v1. `OpeningBalanceAfterEarliestCashTransactionError`; rute menjawab `fail(400)`.
+- #323 Koreksi biasa menolak baris Iuran warga: merge `a44ee44` ke feat/perdalam-v1. `CashCorrectionTargetError` dengan `reason`; `/admin/cash` lewat `route-action.ts`.
+- #324 Modul koreksi iuran: merge `382c9b8` ke feat/perdalam-v1. `src/lib/server/services/dues/dues-correction.ts`: `voidInvoice`, `releaseAllocation`, `refundCredit`; `planCreditSpend` di `allocation.ts`.
+- #329 Pembatalan Pengembalian: merge `9ed7147` ke feat/perdalam-v1. `reverseRefund` di `dues-correction.ts`; `refundInForce()` di `credit-balance.ts`.
+- #331 Pembatalan verifikasi Pembayaran: merge `e41120b` ke feat/perdalam-v1. `unverifyPayment` di `dues-correction.ts`; `verifiedPayments` di layar Keuangan Unit.
+- #337 Sapu komentar basi penulis buku kas: merge `f25eb5e` ke feat/perdalam-v1. 16 berkas, hanya komentar dan satu import tipe.
+
+**2. Klaim spec yang dibalik atau digeser run ini.** Tidak ada yang dihapus dari badan spec di atas.
+
+- "Baris saldo awal tetap bisa dikoreksi dengan Koreksi biasa": hanya selama belum dibalik. Koreksi atas Koreksi saldo awal ditolak (`reason: 'reversedOpeningBalance'`), dan saldo awal yang sudah dibalik diganti dengan mencatat yang baru. Aturan ini ditemukan #322 (dua saldo awal bisa berlaku), dimasukkan ke #323, dan dipertahankan pemilik 2026-11-15.
+- Aturan tanda "arah baris dibaca dari Kategori Kas-nya, kecuali Koreksi yang berlawanan": kalimat Koreksi di `CONTEXT.md` kini "berlawanan dengan arah transaksi yang dikoreksinya" (komit `67e8366`, disetujui pemilik 2026-11-15, dibutuhkan #329). Kalimat lama salah untuk Koreksi atas Pengembalian dan Koreksi atas Koreksi.
+- "Jenis entri ... Koreksi yang ditulis kedua pembatalan baru": ada tujuh jenis (`manual`, `duesIncome`, `duesRefund`, `openingBalance`, `correction`, `unverifyCorrection`, `refundReverseCorrection`). Dua jenis terakhir hanya menerima baris asli "Iuran warga" berarah tepat, dan menolak dengan `CashCorrectionTargetError`. Pin ekspor hanya pada `writer.ts`; #323 hanya menambah tipe `CashCorrectionTargetReason` (#315, #323).
+- "Satu modul koreksi iuran ...": `invoice-void.ts`, `allocation-release.ts`, dan `credit-refund.ts` tetap ada sebagai ekspor ulang objek yang sama. Baris baru di modul: `unverifyPayment` (`payment_unverified`, `UnverifyRuleError`, `UnverifyRefusedRefundedError`) dan `reverseRefund` (`refund_reversed`, `ReverseRefundRuleError`, `RefundNotFoundError`) (#324, #329, #331).
+- "urutan kunci ... (Pembayaran dulu, lalu Tagihan)": urutan nyata pembatalan verifikasi adalah Pembayaran, Pengembalian berlaku, Tagihan berurutan (period, id), Alokasi, baris kas lewat Koreksi, lalu Periode (#331). Pembatalan Pengembalian: Pembayaran, baris kas, Periode (#329).
+- "Tanggalnya harus jatuh di Periode terbuka" dan "Kunci kategori ... tetap dipakai": bulan yang hanya berisi saldo awal kini punya baris `periods` terbuka (#315). Kunci tambahan yang diusulkan orchestrator tidak dipasang karena deadlock `40P01` lewat pemeriksaan foreign key; kunci kategori cukup, dibuktikan tes koneksi kedua (#322).
+- Layar Keuangan Unit (keputusan 7): label Tagihan kini dari `invoiceStandings`, jadi lewat jatuh tempo yang belum lunas atau sebagian berlabel "Menunggak" (#329). Id non-UUID pada `void`/`release` kini dijawab `unitFinance_invalidForm`, bukan 500 (#331). Tidak ada di spec.
+- "Pemeriksaan baca-saja atas produksi ... langkah pemilik sesudah run ditutup": delegasi pemilik Q33 memindahkan pemeriksaan baca-saja ke tail langkah 6 di dalam run; perbaikan data tetap langkah pemilik setelah dry run diposting dan disetujui (peta #334). Cakupannya melebar, lihat bagian 3.
+- Pesan "sudah dikoreksi" dan teks tombol: `adminCash_correctionAlreadyCorrected` masih menyarankan "koreksilah baris koreksi itu", padahal kini ditolak untuk baris Iuran warga dan saldo awal; di luar cakupan run (#323).
+- Surface dilebarkan: satu asersi di `tests/unit/cash-correction.test.ts` (#322); `tests/unit/opening-balance.test.ts` dan komentar `inForceAmong` di `cash/opening-balance.ts` (#323, orchestrator); `writes:` #337 untuk komentar di delapan berkas (#324).
+
+**3. Cacat dan tindak lanjut yang diajukan.**
+
+- #337 (di dalam run, ditutup): komentar basi di berkas tanpa pemilik, ditemukan verifikasi kedua #315.
+- #339 (di luar run, terbuka): index `cash_transactions.correction_of`, butuh migrasi; temuan verifikasi kedua #329.
+- Tail langkah 6, baca-saja produksi, belum dijalankan per peta 2026-11-16 01.35 WIB: (a) Koreksi Admin dari sebelum #323 atas baris pemasukan iuran: Pembayaran itu tidak bisa dibatalkan verifikasinya dari aplikasi dan layarnya menyebut alasannya (#331); (b) Koreksi atas Koreksi di "Iuran warga": `refundInForce` menganggap Pengembalian batal padahal buku kas berkata uangnya keluar, tidak bisa diperbaiki dari aplikasi (#329).
+- Untuk pemilik (#337): komentar yang masih menyebut `transaction.ts`/`correction.ts` di `cash/transaction-form.svelte:45`, `cash/correction-dialog.svelte:33`, `cash/opening-balance.ts:51`; dan komentar kelonggaran UTC `assertReceiptDay` di `dues/verification.ts:774-779` dan `dues/payment.ts`.
+- Catatan terbuka #331: komentar bobot di tes invarian salah (aksi 2 hanya muncul sekali), satu baris header 150 karakter.
+
+**4. Verifikasi.**
+
+- #315 (`executor-fable-high`): kesepuluh pemeriksaan bertahan, tidak ada blocker.
+- #324 (`executor-fable-high`): ketujuh invarian dan keempat belas keputusan diterima, tanpa blocker; pesan galat, urutan pemeriksaan, JSON Audit Log, dan urutan kunci tidak berubah.
+- #329 (`executor-fable-high`, adversarial): tanpa blocker. Tes balapan dua koneksi sementara lewat service sungguhan seimbang tanpa deadlock; mutan tanpa saringan "berlaku" menggagalkan 5 sampai 11 tes.
+- #331 (`executor-fable-high`, adversarial): kode service bertahan di sepuluh skenario balapan. Satu blocker: `unit-money-invariant.test.ts` tidak deterministik (gagal 2 dari 85 run); kembalian `5bdf24a` (tes dan katalog), verifikasi ulang 30 dari 30 lulus dan ketiga mutan gagal.

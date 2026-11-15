@@ -6,6 +6,7 @@
 | Run | `perdalam-v1` |
 | Peta eksekusi | [#334](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/334) |
 | Disalin pada | 2026-11-15, dari `main` @ `0cf7be0` |
+| Lintasan penutup | 2026-11-16, sesudah Gelombang 6 (`feat/perdalam-v1` @ `cac5bf0`): dibuat ulang dari item, yang kini memuat bagian "Catatan penyerahan" dengan klaim yang dibalik ditandai; tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang; item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
 
@@ -131,3 +132,32 @@ Job terjadwal punya masalah serupa:
 - Sumber: tinjauan arsitektur 2026-11-15, kandidat 05 dan 09, serta keputusan grilling run `perdalam-v1`: Q6 (tautan berhenti berlangganan) dan Q7 (aturan tidak-pernah-gagal, dengan pengecualian badan job).
 - Contoh yang sudah benar hari ini: penerbitan Laporan Bulanan menangkap kegagalan email revisinya di tempat pemanggilan, dengan alasan yang tertulis di komentarnya. Spec ini menjadikan cara itu satu helper untuk semua.
 
+
+## Catatan penyerahan (run perdalam-v1, 2026-11-16)
+
+**1. Yang masuk.** Semua di `feat/perdalam-v1`, belum di `main` (PR run dibuka di tail, #334).
+
+- #316 Modul pengumuman dan helper tidak-pernah-gagal: merge `bff4517` ke feat/perdalam-v1. `src/lib/server/email/announce.ts`: `announce`, `announceAfterCommit`, `everyResident`, `AnnounceOutcome`; `subscription/kinds.ts` memuat `NOTIFICATION_EMAIL_KIND`.
+- #317 Definisi job membawa fakta tampilannya: merge `d8068b7` ke feat/perdalam-v1. `JobDefinition` di `src/lib/server/scheduler/registry.ts`; `registerApplicationJobs` di `scheduler/index.ts`.
+- #325 Pemberitahuan iuran, Keluhan, dan Laporan Bulanan lewat modul pengumuman: merge `ba89eba` ke feat/perdalam-v1. Tujuh jenis email lewat `announce`.
+- #330 Tautan berhenti berlangganan di email new-post dan new-complaint: merge `a5df9b4` ke feat/perdalam-v1.
+
+**2. Klaim spec yang dibalik atau digeser run ini.** Tidak ada yang dihapus dari badan spec di atas.
+
+- "`hooks.server.ts` menjadi satu-satunya tempat pendaftaran": komposisinya kini fungsi `registerApplicationJobs(registry = applicationJobs)` di `scheduler/index.ts`, yang memanggil `registerSchedulerJobs`, `registerEmailJobs`, `registerDuesJobs`, `registerReportJobs`. `hooks.server.ts` dan tes job memanggil fungsi yang sama. Tidak ada modul yang mendaftar saat diimpor, termasuk job pemangkasan `job_runs` (#317).
+- "kunci teks tampilan": definisi membawa `display?: { title(locale), purpose(locale) }`, `failures?: { name, explain(period, locale) }[]`, dan `Schedule.formatPeriod?`; tidak ada kunci `messages` baru. Pencocokan galat dikenal dilakukan `knownFailureOf(job, error)` di penjadwal, bukan di halaman. Halaman `/admin/jobs` identik byte demi byte (#317).
+- "helper tidak-pernah-gagal ... tidak meneruskan galatnya": `announce` sendiri tetap melempar `AnnounceError` di akhir (satu penerima gagal tidak menghentikan yang lain); yang tidak pernah gagal adalah `announceAfterCommit`, yang berjalan sesudah commit dan menolak handle transaksi (#316, #325 memakai `is(db, PgTransaction)`). "Kegagalan dicatat ke console": galat yang dicatat bisa memuat alamat penerima dan tautan bertanda tangan (catatan terbuka #316).
+- Daftar pemakai helper (Post, status Keluhan, Laporan Bulanan, verifikasi): #325 mencakup tujuh jenis, yaitu `invoice-issued`, `payment-verified`, `payment-rejected`, `new-complaint`, `own-complaint-status-changed`, `monthly-report`, `monthly-report-revised`. `announce.ts` juga mendapat kait `except` dan `AnnounceOutcome.skipped` untuk aturan "sudah terkirim" Laporan Bulanan; penerima `new-complaint` adalah `adminResidents` lalu opt-in disaring `announce`. Tidak ada di spec.
+- "Satu kosakata nama jenis": `NOTIFICATION_EMAIL_KIND`, `governingSubscriptionKind`, `isOptInEmailKind` di `kinds.ts` (#316); `NEW_POST_KIND` kini `SUBSCRIPTION_KIND.newPost`, dan `KIND_LABEL`/`KIND_DESCRIPTION` di `/profile/notifications` bertipe `Record<SubscriptionKind, ...>` sehingga `check` gagal bila jenis ditambah tanpa label (#330).
+- "Template ... mendapat tautan": #325 hanya menaruh `unsubscribeUrl` di payload `new-complaint`; templat baru merender di #330, teks saja tanpa bagian HTML. Baris antrean lama tanpa `unsubscribeUrl` (atau `null`) dirender tanpa blok tautan; nilai bukan string melempar `TypeError` (#330).
+- Satu-satunya perubahan perilaku `new-post` selain tautan: urutan penerima kini deterministik (#316).
+- Surface #317 dilebarkan: `tests/unit/invoice-issuance.test.ts`, `tests/unit/scheduler-backoff.test.ts`, `tests/unit/dashboard.test.ts` (satu tes, di-merge sesudah #313).
+
+**3. Cacat dan tindak lanjut yang diajukan.**
+
+- Tidak ada cacat yang diajukan untuk spec ini, di dalam maupun di luar run, dan tidak ada yang diserahkan ke tail atau pemilik selain catatan terbuka #316 di atas (galat yang dicatat bisa memuat alamat dan tautan bertanda tangan, sama seperti catch lama di modul iuran, Keluhan, dan Laporan).
+- Teks pesan `adminCash_correctionAlreadyCorrected`, #335, dan #338 dicatat di spec lain.
+
+**4. Verifikasi.**
+
+- #316 (`executor-fable-high`): kesembilan pemeriksaan bertahan, tidak ada blocker. Catatan non-blocker diteruskan ke #325, #330, #331, dan #337.

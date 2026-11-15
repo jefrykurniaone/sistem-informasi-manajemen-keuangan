@@ -6,6 +6,7 @@
 | Run | `perdalam-v1` |
 | Peta eksekusi | [#334](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/334) |
 | Disalin pada | 2026-11-15, dari `main` @ `0cf7be0` |
+| Lintasan penutup | 2026-11-16, sesudah Gelombang 6 (`feat/perdalam-v1` @ `cac5bf0`): dibuat ulang dari item, yang kini memuat bagian "Catatan penyerahan" dengan klaim yang dibalik ditandai; tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang; item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
 
@@ -129,3 +130,32 @@ Form Pembayaran juga menawarkan Tagihan yang sudah lunas. Pemilihnya tidak mengh
 - ADR-0001 tidak tersentuh.
 - Prinsip run: perilaku yang terlihat tidak berubah selain keputusan di atas. Cacat yang ditemukan di luar area tiket menjadi issue berlabel `run:perdalam-v1` dan masuk gelombang berikutnya.
 
+
+## Catatan penyerahan (run perdalam-v1, 2026-11-16)
+
+**1. Yang masuk.** Semua di `feat/perdalam-v1`, belum di `main` (PR run dibuka di tail, #334).
+
+- #313 Modul tampilan Warga atas rumahnya sendiri: merge `cc91f99` ke feat/perdalam-v1. `src/lib/server/services/occupancy/resident-view.ts`: `residentViewFor`, `unitsOccupiedToday`, `occupiesToday`, `isInvoiceVisible`; tanpa membaca peran.
+- #320 Modul posisi Tagihan: merge `21d0a01` ke feat/perdalam-v1. `src/lib/server/services/dues/invoice-standing.ts`: `invoiceStandings(db, clock, invoices, { visibleTo? })` dan `allocatedAmountsOf(db, invoices)`.
+- #328 Form Pembayaran hanya menawarkan Tagihan belum lunas: merge `e4af601` ke feat/perdalam-v1. Pemilih memakai `invoiceStandings` dengan `visibleTo`; `remainingAmount` pada `PayableInvoice` dan `PaymentFormInvoice`.
+- #335 Email verifikasi Pembayaran tanpa Tagihan di luar Masa Huni pencatat: merge `3a3367a` ke feat/perdalam-v1. `notifyPaymentVerified` menyaring lewat `isInvoiceVisible`.
+
+**2. Klaim spec yang dibalik atau digeser run ini.** Tidak ada yang dihapus dari badan spec di atas.
+
+- "Visibilitas Unit ... hanya dipakai layar riwayat admin": premis itu salah. `unitVisibilityFor` tetap ada tetapi tanpa pemanggil produksi; komentarnya dibetulkan (#313).
+- "Fungsi status murni ... tidak lagi dipanggil langsung oleh layar": `INVOICE_STATUS` dan `invoiceStatus` pindah ke `invoice-standing.ts` dan diekspor ulang dari `dues/queries.ts`, jadi jalur impor lama masih sah (#320). Label status di layar Keuangan Unit baru ikut lewat #329.
+- "Jumlah teralokasi ... di satu modul saja": #320 menemukan salinan kelima di `corrections-history.ts:150`, di luar `writes:`-nya. Ditutup oleh acceptance criterion tambahan #324 (`unitFinanceFor` lewat `invoiceStandings`, label dari #329). `allocatedAmountsOf` adalah pintu kedua tanpa jam dan tanpa kunci untuk verifikasi (#320).
+- "Kosakata statusnya tetap kosakata yang sudah ada": di layar Keuangan Unit, Tagihan lewat jatuh tempo yang belum lunas atau baru sebagian kini berlabel "Menunggak"; dulu "Sebagian" atau "Belum lunas" (#329, status dihitung #320). Layar itu juga masih memakai "Belum lunas"/"Batal" sedangkan badge bersama "Belum bayar"/"Dibatalkan".
+- "Perilaku lain form tidak berubah": teks `payments_form_invoicesEmpty` diganti ("Tidak ada tagihan yang belum lunas untuk rumah ini. ..."), dan kunci baru `payments_form_invoiceOptionPartial` ("{period} · sisa {remaining} dari {amount} · jatuh tempo {dueDate}") (#328).
+- Daftar layar pribadi (Tagihan saya, kartu Warga, form Pembayaran) bertambah satu: email `payment-verified`. Keputusan pemilik 2026-11-15, pilihan A (#335): hanya Tagihan di dalam Masa Huni pencatat disebut satu per satu; sisanya satu baris tanpa Periode (`emailPaymentVerified_outsideTenureLine`). Urutan Alokasi tidak berubah, jadi non-goal spec utuh. Surface #335 dilebarkan orchestrator ke fixture `tests/unit/payment-verification.test.ts`.
+- Walk spec ("superuser yang punya Masa Huni di data contoh"): Data Contoh memulai setiap Masa Huni pada hari semai, jadi Tagihan bulan berjalan tidak terlihat oleh Warga mana pun. Walk #313 dan #328 memasang Masa Huni tambahan sendiri (#313, #328; cacat #338).
+
+**3. Cacat dan tindak lanjut yang diajukan.**
+
+- #335 (di dalam run, ditutup): ditemukan verifikasi kedua #313; email verifikasi menyebut Tagihan dari sebelum Masa Huni pencatat.
+- #338 (di luar run, terbuka): Masa Huni Data Contoh mulai pada hari semai (ditemukan walk #328, dipakai lagi walk #335).
+- Untuk pemilik (#329, #335): kosakata label status ganda di layar Keuangan Unit, dan email ke admin pencatat Pembayaran tunai untuk Unit yang tidak ia huni kini hanya memuat judul dan satu baris "Tagihan Unit di luar Masa Huni Anda: Rp X"; layar admin tetap merinci.
+
+**4. Verifikasi.**
+
+- #313 (verifikasi kedua `executor-fable-high`): tidak ada blocker. Kembalian 1 menutup empat temuan (urutan rumah di pemilih, path impor di tes batas, tes wiring Warga yang sudah pindah, komentar `unitVisibilityFor`); verifikasi ulang delta menutup keempatnya. Satu non-blocker diterima: tes batas tidak memindai ekspor ulang lewat `occupancy/index.ts` (tidak ada hari ini).
