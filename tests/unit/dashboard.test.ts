@@ -340,6 +340,9 @@ describe('adminDashboard', () => {
 	});
 
 	it('reports every registered job, with no run behind it yet', async () => {
+		// What `src/hooks.server.ts` does: since ticket #317 no module registers a job on import.
+		const { registerApplicationJobs } = await import('#lib/server/scheduler/index.ts');
+		registerApplicationJobs();
 		const summary = await adminDashboard(testDb.db, new FakeClock(DURING_MONTH), pengurus.userId);
 
 		const prune = summary.jobs?.find((job) => job.name === JOB_RUN_PRUNE_JOB_NAME);

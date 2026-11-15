@@ -17,6 +17,7 @@ import {
 	JOB_OUTCOME,
 	listJobsWithLastRun,
 	monthlySchedule,
+	registerApplicationJobs,
 	runDueJobs,
 	runJob,
 	triggerJob,
@@ -41,6 +42,28 @@ import { _describeRunError, _formatPeriod } from '../../src/routes/(app)/admin/j
  */
 
 const testDb = testDatabase();
+
+/**
+ * Every job of this application, composed as `src/hooks.server.ts` composes them, so that the
+ * screen's words are read off the same definitions `/admin/jobs` reads them off (ticket #317).
+ */
+const COMPOSED_JOBS = composedJobs();
+
+/** A registry filled by `registerApplicationJobs`. */
+function composedJobs(): JobRegistry {
+	const registry = new JobRegistry();
+	registerApplicationJobs(registry);
+	return registry;
+}
+
+/** One composed job, by its permanent name. */
+function composedJob(name: string): JobDefinition {
+	const job = COMPOSED_JOBS.get(name);
+	if (!job) {
+		throw new TypeError(`Expected "${name}" to be composed, and it was not.`);
+	}
+	return job;
+}
 
 /** The instant every clock in this file starts at, unless a test is about a month boundary. */
 const START = '2026-01-01T00:00:00.000Z';
@@ -404,10 +427,11 @@ describe('a missing Tarif, as /admin/jobs explains it', () => {
 		expect(outcome).toMatchObject({ period: '2026-09', outcome: JOB_OUTCOME.failed });
 		const [row] = (await runsOf(outcome.jobName)).filter((run) => run.period === '2026-09');
 		expect(isFailureNamed(row.error, 'NoDuesRateError')).toBe(true);
-		expect(_describeRunError(row.error, row.period, 'id')).toBe(
+		const issuance = composedJob(outcome.jobName);
+		expect(_describeRunError(issuance, row.error, row.period, 'id')).toBe(
 			'Belum ada Tarif yang berlaku pada 1 September 2026, jadi Tagihan September 2026 belum terbit. Isi Tarif, lalu Jalankan sekarang.'
 		);
-		expect(_describeRunError(row.error, row.period, 'en')).toBe(
+		expect(_describeRunError(issuance, row.error, row.period, 'en')).toBe(
 			'No dues rate is in force on 1 September 2026, so the invoices for September 2026 have not been issued. Set a dues rate, then press Run now.'
 		);
 	});
@@ -420,12 +444,13 @@ describe('a missing Tarif, as /admin/jobs explains it', () => {
 		],
 		['a failure of some other named error', 'TypeError: something else went wrong']
 	])('shows %s as the text that was recorded', (_label, error) => {
-		expect(_describeRunError(error, '2026-09', 'id')).toBe(error);
-		expect(_describeRunError(error, '2026-09', 'en')).toBe(error);
+		const issuance = composedJob('issue-invoices');
+		expect(_describeRunError(issuance, error, '2026-09', 'id')).toBe(error);
+		expect(_describeRunError(issuance, error, '2026-09', 'en')).toBe(error);
 	});
 
 	it('shows no message for a run that has none', () => {
-		expect(_describeRunError(null, '2026-09', 'id')).toBeUndefined();
+		expect(_describeRunError(composedJob('issue-invoices'), null, '2026-09', 'id')).toBeUndefined();
 	});
 });
 
@@ -433,24 +458,28 @@ describe('a period marker, as /admin/jobs shows it', () => {
 	/** What the page must never show: a raw ISO instant. */
 	const ISO_INSTANT = /\d{4}-\d{2}-\d{2}T\d{2}:/;
 
+	// The job whose schedule produces each marker, by its permanent name: since ticket #317 a marker
+	// is read by the formatter of the schedule that chose its shape.
 	it.each([
-		['a month, in Indonesian', '2026-09', 'id', 'September 2026'],
-		['a month, in English', '2026-09', 'en', 'September 2026'],
-		['a day, as its WIB date', '2026-09-24', 'id', '24 Sep 2026'],
+		['a month, in Indonesian', 'issue-invoices', '2026-09', 'id', 'September 2026'],
+		['a month, in English', 'issue-invoices', '2026-09', 'en', 'September 2026'],
+		['a day, as its WIB date', 'send-monthly-report', '2026-09-24', 'id', '24 Sep 2026'],
 		[
 			'a window of minutes, as its WIB date and time',
+			'email-queue-drain',
 			'2026-09-24T07:36:00.000Z',
 			'en',
 			'24 Sep 2026, 14.36 WIB'
 		],
 		[
 			'the daily prune window, which starts at 07:00 WIB',
+			'job-run-history-prune',
 			'2026-09-24T00:00:00.000Z',
 			'id',
 			'24 Sep 2026, 07.00 WIB'
 		]
-	] as const)('reads %s', (_label, period, locale, expected) => {
-		const formatted = _formatPeriod(period, locale);
+	] as const)('reads %s', (_label, jobName, period, locale, expected) => {
+		const formatted = _formatPeriod(composedJob(jobName), period, locale);
 
 		expect(formatted).toBe(expected);
 		expect(formatted).not.toMatch(ISO_INSTANT);

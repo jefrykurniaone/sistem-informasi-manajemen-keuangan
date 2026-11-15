@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { applicationJobs, registerApplicationJobs } from '#lib/server/scheduler/index.ts';
 import {
 	dailySchedule,
 	everyMinutesSchedule,
@@ -136,6 +137,47 @@ describe('everyMinutesSchedule', () => {
 
 	it.each([0, -1, 1.5, Number.NaN])('refuses %p as a number of minutes', (minutes) => {
 		expect(() => everyMinutesSchedule(minutes)).toThrow(TypeError);
+	});
+});
+
+describe('a schedule reading its own period markers back', () => {
+	it.each([
+		['a month, in Indonesian', monthlySchedule(JAKARTA), '2026-09', 'id', 'September 2026'],
+		['a month, in English', monthlySchedule(JAKARTA), '2026-09', 'en', 'September 2026'],
+		['a day, as its WIB date', dailySchedule(JAKARTA), '2026-09-24', 'en', '24 Sep 2026'],
+		[
+			'a window of minutes, as its WIB date and time',
+			everyMinutesSchedule(1),
+			'2026-09-24T07:36:00.000Z',
+			'id',
+			'24 Sep 2026, 14.36 WIB'
+		],
+		[
+			'a window that is not an instant, as it is',
+			everyMinutesSchedule(1),
+			'not-an-instant',
+			'id',
+			'not-an-instant'
+		]
+	] as const)('reads %s', (_label, schedule, period, locale, expected) => {
+		expect(schedule.formatPeriod?.(period, locale)).toBe(expected);
+	});
+});
+
+describe('src/hooks.server.ts', () => {
+	it('registers exactly the jobs registerApplicationJobs composes, and nothing else does', async () => {
+		// Nothing in this file composes `applicationJobs`, so it is empty until the hooks module runs.
+		// Importing it under Vitest starts no timer: `isSchedulerProcess` is false here.
+		expect(applicationJobs.list()).toEqual([]);
+
+		await import('../../src/hooks.server');
+
+		const composed = new JobRegistry();
+		registerApplicationJobs(composed);
+		expect(applicationJobs.list().map((entry) => entry.name)).toEqual(
+			composed.list().map((entry) => entry.name)
+		);
+		expect(applicationJobs.list()).toHaveLength(4);
 	});
 });
 

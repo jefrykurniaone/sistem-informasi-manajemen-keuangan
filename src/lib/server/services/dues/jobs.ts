@@ -1,3 +1,5 @@
+import * as m from '#lib/paraglide/messages.js';
+import { formatMonthLabel } from '../../../time';
 import {
 	applicationJobs,
 	monthlySchedule,
@@ -18,7 +20,7 @@ import {
  * `src/lib/server/scheduler/index.ts`, because decision 4 there is explicit — `applicationJobs` holds
  * the scheduler's own housekeeping and nothing else, and "every other job is registered by whoever
  * owns the work". `src/lib/server/email/jobs.ts` is the pattern this file copies, down to the
- * idempotent registration and the call at module scope.
+ * idempotent registration.
  *
  * Decisions settled here:
  *
@@ -48,8 +50,13 @@ import {
  *    `void`, so this is the only place the count of what was issued and what was skipped can be
  *    observed at runtime.
  *
- * Nothing here is registered unless something imports this module, and `src/hooks.server.ts` is the
- * one composition root that does — see the section it carries on why that file and no other.
+ * 5. **The definition carries what `/admin/jobs` says about it** (ticket #317): its title and
+ *    purpose, and the one failure it explains in a sentence, a missing Tarif. The month in that
+ *    sentence is the run's own period, read by the schedule's formatter.
+ *
+ * Nothing here is registered by importing this module. `registerDuesJobs` is called by
+ * `registerApplicationJobs` in `src/lib/server/scheduler/index.ts`, which `src/hooks.server.ts`
+ * calls — see decision 4 there.
  */
 
 /**
@@ -57,6 +64,14 @@ import {
  * forever — see decision 1 above.
  */
 export const INVOICE_ISSUANCE_JOB_NAME = 'issue-invoices';
+
+/**
+ * `NoDuesRateError`'s `name`, as `./issuance.ts` declares it with `override readonly name`. Written
+ * out rather than read off the class, whose own `name` a bundler is free to shorten;
+ * `tests/unit/scheduler-backoff.test.ts` runs the real issuance job against a database with no Tarif
+ * and proves the two still agree.
+ */
+const NO_DUES_RATE_ERROR_NAME = 'NoDuesRateError';
 
 /** What an issuance job may have handed to it instead of the production wiring. */
 export interface InvoiceIssuanceJobSettings {
@@ -81,15 +96,24 @@ export function invoiceIssuanceJob(settings: InvoiceIssuanceJobSettings = {}): J
 		schedule: monthlySchedule(COMPLEX_TIME_ZONE),
 		run: async ({ db, clock, period }) => {
 			report(await issueInvoicesForPeriod(db, clock, period));
-		}
+		},
+		display: {
+			title: (locale) => m.adminJobs_job_issueInvoices_title({}, { locale }),
+			purpose: (locale) => m.adminJobs_job_issueInvoices_purpose({}, { locale })
+		},
+		failures: [
+			{
+				name: NO_DUES_RATE_ERROR_NAME,
+				explain: (period, locale) =>
+					m.adminJobs_error_noDuesRate({ month: formatMonthLabel(period, locale) }, { locale })
+			}
+		]
 	};
 }
 
 /**
- * Puts the issuance job in a registry, once.
- *
- * Called at module scope below, so that importing this module is all a composition root has to do —
- * and called again by nothing, because doing it twice is a no-op by decision 3 above.
+ * Puts the issuance job in a registry, once: doing it twice is a no-op by decision 3 above. Called
+ * by `registerApplicationJobs` in `src/lib/server/scheduler/index.ts`, never on import.
  *
  * @param registry defaults to `applicationJobs`, which is the registry `/admin/jobs` lists and the
  *   periodic trigger ticks.
@@ -100,8 +124,6 @@ export function registerDuesJobs(registry: JobRegistry = applicationJobs): void 
 	}
 	registry.register(invoiceIssuanceJob());
 }
-
-registerDuesJobs();
 
 /**
  * Where a run's summary goes by default. The console the server already writes its scheduler errors

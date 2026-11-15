@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
 import type { PoolClient } from 'pg';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
 import { user } from '#lib/server/db/schema/auth.ts';
 import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
@@ -51,6 +51,7 @@ import {
 	JOB_OUTCOME,
 	JOB_RUN_PRUNE_JOB_NAME,
 	listJobsWithLastRun,
+	registerApplicationJobs,
 	runJob,
 	startJobScheduler,
 	stopJobScheduler,
@@ -58,9 +59,9 @@ import {
 	type JobDefinition,
 	type Schedule
 } from '#lib/server/scheduler/index.ts';
-// Importing these two, like the email import above, is what registers `issue-invoices` and
-// `send-monthly-report` into `applicationJobs` for this file — see the comment on the superuser
-// screen test below for why that import has to be here rather than assumed.
+// Imported for their names only. Since ticket #317 importing an owner's module registers nothing:
+// `registerApplicationJobs`, called below exactly as `src/hooks.server.ts` calls it, is what puts
+// every job into `applicationJobs`.
 import { INVOICE_ISSUANCE_JOB_NAME } from '#lib/server/services/dues/jobs.ts';
 import { MONTHLY_REPORT_JOB_NAME } from '#lib/server/services/report/jobs.ts';
 
@@ -105,6 +106,12 @@ const FAILURE_MESSAGE = 'this job always throws';
 
 /** The address every queued email in this file is addressed to. */
 const RECIPIENT = 'warga@komplek.local';
+
+beforeAll(() => {
+	// What `src/hooks.server.ts` does at module scope, so that `applicationJobs` holds in this file
+	// exactly what it holds on a running server.
+	registerApplicationJobs();
+});
 
 afterEach(() => {
 	// Every scheduler is process-wide, so a test that started one must not leave it ticking into the
@@ -346,8 +353,8 @@ describe('the email queue drain job', () => {
 		expect(registered?.schedule.description).toBe(`every ${EMAIL_QUEUE_DRAIN_MINUTES} minutes`);
 	});
 
-	it('is registered once however often the module that registers it is evaluated', () => {
-		// `vite dev` re-executes a changed server module against the same registry. Registering has to
+	it('is registered once however often its registration runs', () => {
+		// `vite dev` re-executes `src/hooks.server.ts` against the same registry. Registering has to
 		// survive that rather than throwing on the duplicate name.
 		expect(() => {
 			registerEmailJobs();
@@ -359,21 +366,62 @@ describe('the email queue drain job', () => {
 	});
 });
 
+describe('registerApplicationJobs, the composition src/hooks.server.ts calls', () => {
+	it('registers every job of this application into an empty registry, by its permanent name', () => {
+		// The names are written out rather than read off the owners' constants: a job name is
+		// permanent, and a rename has to fail here. A job that registered only when its module was
+		// imported (the prune job did, before ticket #317) is missing from a fresh registry.
+		const registry = new JobRegistry();
+
+		registerApplicationJobs(registry);
+
+		expect(registry.list().map((job) => job.name)).toEqual([
+			'email-queue-drain',
+			'issue-invoices',
+			'job-run-history-prune',
+			'send-monthly-report'
+		]);
+	});
+
+	it('registers each job once however often it is called', () => {
+		const registry = new JobRegistry();
+
+		expect(() => {
+			registerApplicationJobs(registry);
+			registerApplicationJobs(registry);
+		}).not.toThrow();
+		expect(registry.list()).toHaveLength(4);
+	});
+
+	it('gives every composed job its own words, period formatter and failure kinds', () => {
+		// The display fields are optional on `JobDefinition` so a test can build a job in one line;
+		// this is what keeps a production job from falling back to its technical name on /admin/jobs.
+		const registry = new JobRegistry();
+		registerApplicationJobs(registry);
+
+		for (const job of registry.list()) {
+			for (const locale of ['id', 'en'] as const) {
+				expect(job.display?.title(locale), `${job.name} title in ${locale}`).toMatch(/\S/);
+				expect(job.display?.title(locale)).not.toBe(job.name);
+				expect(job.display?.purpose(locale), `${job.name} purpose in ${locale}`).toMatch(/\S/);
+			}
+			expect(job.schedule.formatPeriod, `${job.name} period formatter`).toBeTypeOf('function');
+			expect(job.failures, `${job.name} failure kinds`).toBeDefined();
+		}
+		expect(registry.get(INVOICE_ISSUANCE_JOB_NAME)?.failures?.map((kind) => kind.name)).toEqual([
+			'NoDuesRateError'
+		]);
+	});
+});
+
 describe('the superuser screen, through the exact call /admin/jobs makes', () => {
 	it('lists every registered job with its last run', async () => {
 		// `src/routes/(app)/admin/jobs/+page.server.ts` calls `listJobsWithLastRun` with
 		// `applicationJobs` and nothing else, so what that page shows is whatever is registered into
-		// `applicationJobs` by the time it runs. On a real server that is all four jobs:
-		// `src/hooks.server.ts` imports `#lib/server/email/jobs.ts`, `#lib/server/services/dues/jobs.ts` and
-		// `#lib/server/services/report/jobs.ts` unconditionally (`registerEmailJobs`, `registerDuesJobs`,
-		// `registerReportJobs`), and `#lib/server/scheduler/index.ts` registers `jobRunPruneJob` itself. This
-		// file's own import list at the top pulls in all of those same modules for the same reason —
-		// not to run their jobs, just for the registration each one does at module scope — so that
-		// this test states what `/admin/jobs` actually shows rather than a subset that only holds
-		// because Vitest isolates module state per file. A version of this test that only imported
-		// the email module would still pass after a change added a fifth job elsewhere, and would keep
-		// passing right up until the day this file's isolation from other tests' modules stopped
-		// existing.
+		// `applicationJobs` by the time it runs. On a real server that is all four jobs, because
+		// `src/hooks.server.ts` calls `registerApplicationJobs()`; this file's `beforeAll` makes the
+		// same call, so this test states what `/admin/jobs` actually shows. Each summary also carries
+		// the job's definition, which is where the page's words come from (ticket #317).
 		const superuserId = await insertSuperuser('Pengurus Pekerjaan Email');
 		const clock = new FakeClock(DRAIN_LISTED_AT);
 		await runJob({
@@ -397,6 +445,7 @@ describe('the superuser screen, through the exact call /admin/jobs makes', () =>
 			MONTHLY_REPORT_JOB_NAME
 		]);
 		const drain = listed.find((job) => job.name === EMAIL_QUEUE_DRAIN_JOB_NAME);
+		expect(drain?.definition).toBe(applicationJobs.get(EMAIL_QUEUE_DRAIN_JOB_NAME));
 		expect(drain?.currentPeriod).toBe(DRAIN_LISTED_AT);
 		expect(drain?.lastRun).toMatchObject({
 			period: DRAIN_LISTED_AT,

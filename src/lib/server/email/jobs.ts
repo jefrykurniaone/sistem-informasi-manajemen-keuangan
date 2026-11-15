@@ -1,3 +1,4 @@
+import * as m from '#lib/paraglide/messages.js';
 import {
 	smtpEmailSenderFromEnvironment,
 	type EmailSender,
@@ -46,13 +47,18 @@ import { processEmailQueue } from './worker';
  *    once and kept, because a `nodemailer` transport pools its connections.
  * 3. **Registration is idempotent.** `JobRegistry.register` refuses a duplicate name on purpose, and
  *    it is right to: two jobs under one name would share a lock. But `vite dev` re-executes a
- *    changed server module while leaving its unchanged dependencies alone, so this module can be
+ *    changed server module while leaving its unchanged dependencies alone, so
+ *    `src/hooks.server.ts`, which composes every job through `registerApplicationJobs`, can be
  *    evaluated a second time against the very same `applicationJobs` — and a registration that
  *    threw there would break the dev server on an unrelated edit. Asking the registry first is the
  *    honest way to say "this name, once", and it does not weaken the duplicate check for anybody
  *    else.
  * 4. **Nothing here awaits the queue inside a request.** `processEmailQueue` is called by the job's
  *    `run` and by nothing else, which is the rule `./queue.ts` has held since the queue was written.
+ * 5. **Nothing registers on import** (ticket #317). `registerEmailJobs` is called by
+ *    `registerApplicationJobs` in `../scheduler/index.ts`, which `src/hooks.server.ts` calls. The
+ *    definition carries the title and purpose `/admin/jobs` shows, and declares no failure it
+ *    explains in a sentence, so a failed run shows the text recorded on it.
  */
 
 /** The name this job is registered, locked and shown under. An identifier, so English. */
@@ -115,15 +121,18 @@ export function emailQueueDrainJob(settings: EmailQueueDrainSettings = {}): JobD
 		run: async ({ db, clock }) => {
 			sender ??= smtpEmailSenderFromEnvironment();
 			await processEmailQueue({ db, clock, sender, templates, batchSize: settings.batchSize });
-		}
+		},
+		display: {
+			title: (locale) => m.adminJobs_job_emailQueueDrain_title({}, { locale }),
+			purpose: (locale) => m.adminJobs_job_emailQueueDrain_purpose({}, { locale })
+		},
+		failures: []
 	};
 }
 
 /**
- * Puts the drain job in a registry, once.
- *
- * Called at module scope below, so that importing this module is all a composition root has to do —
- * and called again by nothing, because doing it twice is a no-op by decision 3 above.
+ * Puts the drain job in a registry, once: doing it twice is a no-op by decision 3 above. Called by
+ * `registerApplicationJobs` in `../scheduler/index.ts`, never on import.
  *
  * @param registry defaults to `applicationJobs`, which is the registry `/admin/jobs` lists and the
  *   periodic trigger ticks.
@@ -134,5 +143,3 @@ export function registerEmailJobs(registry: JobRegistry = applicationJobs): void
 	}
 	registry.register(emailQueueDrainJob());
 }
-
-registerEmailJobs();

@@ -1,3 +1,4 @@
+import { formatDateTime, formatDay, formatMonthLabel, type InterfaceLocale } from '../../time';
 import type { Database } from '../db';
 import type { Clock } from '../ports/clock';
 
@@ -7,6 +8,15 @@ import type { Clock } from '../ports/clock';
  * Nothing in this file touches the database or the clock: a registry is a map, and a schedule is a
  * pure function from an instant to the period that instant falls in. The lock and the history live
  * in `./lock.ts`, and `./index.ts` is what puts the two together.
+ *
+ * Since ticket #317 a definition also carries the facts `/admin/jobs` shows about it: its title and
+ * purpose (`JobDefinition.display`), how its period markers read (`Schedule.formatPeriod`, from the
+ * schedule that chose the marker's shape), and the failures it can explain in a sentence
+ * (`JobDefinition.failures`). Before that the page kept a table of words by job name, read a marker's
+ * shape back with regular expressions, and recognised a missing Tarif by matching an error name. The
+ * three are optional on the type so that a definition built by hand in a test stays one line, and
+ * `tests/unit/scheduler-jobs.test.ts` proves that every job `registerApplicationJobs` composes carries
+ * all of them.
  *
  * Decisions settled here:
  *
@@ -52,6 +62,35 @@ export interface Schedule {
 	 * nothing else.
 	 */
 	periodFor(instant: Date): string;
+
+	/**
+	 * A marker this schedule produced, as a person reads it in `locale`. Added by ticket #317, so that
+	 * the only code that reads a marker's shape back is the code that chose it. A schedule without one
+	 * has its markers shown as they are.
+	 */
+	formatPeriod?(period: string, locale: InterfaceLocale): string;
+}
+
+/** How a job is named and explained on `/admin/jobs`, in the language the reader chose. */
+export interface JobDisplay {
+	/** The job's human name. */
+	title(locale: InterfaceLocale): string;
+	/** One sentence on what the job does. */
+	purpose(locale: InterfaceLocale): string;
+}
+
+/**
+ * A failure a job knows it can come to, and how to explain it better than the text that was recorded.
+ *
+ * Recognised by the error's `name`, which `describeFailure` in `./index.ts` puts in front of the
+ * message on the run, never by the message's wording. `knownFailureOf` in `./index.ts` is the one
+ * place that reads the name back.
+ */
+export interface JobFailureKind {
+	/** The thrown error's `name`, exactly as the error declares it. */
+	readonly name: string;
+	/** The sentence a reader sees instead of the recorded text, built from the run's own period. */
+	explain(period: string, locale: InterfaceLocale): string;
 }
 
 /** Everything a job's own function is handed when it runs. */
@@ -80,13 +119,21 @@ export interface JobDefinition {
 	 * on the run, and releases the lock so the period can be attempted again.
 	 */
 	run(context: JobContext): Promise<void>;
+	/** Its title and purpose on `/admin/jobs`. Without one the screen shows `name` alone. */
+	readonly display?: JobDisplay;
+	/**
+	 * The failures the screen explains in a sentence. A failure not listed here, or a job with none,
+	 * shows the text recorded on the run.
+	 */
+	readonly failures?: readonly JobFailureKind[];
 }
 
 /**
  * Every job an application knows about.
  *
- * A registry is built and filled at module scope — see `applicationJobs` in `./index.ts` — and read
- * from there by whatever ticks it and by the superuser screen.
+ * A registry starts empty and is filled by `registerApplicationJobs` in `./index.ts`, which
+ * `src/hooks.server.ts` calls; whatever ticks it and the superuser screen read it from there.
+ * Importing a module never registers anything (ticket #317).
  */
 export class JobRegistry {
 	readonly #jobs = new Map<string, JobDefinition>();
@@ -130,7 +177,8 @@ export function monthlySchedule(timeZone: string): Schedule {
 	const formatter = civilDateFormatter(timeZone);
 	return {
 		description: `monthly in ${timeZone}`,
-		periodFor: (instant) => civilDate(formatter, instant).slice(0, MONTH_MARKER_LENGTH)
+		periodFor: (instant) => civilDate(formatter, instant).slice(0, MONTH_MARKER_LENGTH),
+		formatPeriod: (period, locale) => formatMonthLabel(period, locale)
 	};
 }
 
@@ -144,7 +192,8 @@ export function dailySchedule(timeZone: string): Schedule {
 	const formatter = civilDateFormatter(timeZone);
 	return {
 		description: `daily in ${timeZone}`,
-		periodFor: (instant) => civilDate(formatter, instant)
+		periodFor: (instant) => civilDate(formatter, instant),
+		formatPeriod: (period) => formatCivilDay(period)
 	};
 }
 
@@ -167,8 +216,34 @@ export function everyMinutesSchedule(minutes: number): Schedule {
 		periodFor: (instant) => {
 			const start = Math.floor(instant.getTime() / windowMilliseconds) * windowMilliseconds;
 			return new Date(start).toISOString();
-		}
+		},
+		formatPeriod: (period) => formatWindowStart(period)
 	};
+}
+
+/**
+ * Noon in WIB as a UTC hour. `formatDay` in `../../time.ts` reads an instant in WIB, and a civil
+ * date read at its noon never slips to the day before or after.
+ */
+const NOON_WIB_AS_UTC_HOUR = 5;
+
+/**
+ * A daily marker, `2026-09-24`, as `formatDay` writes a date: `24 Sep 2026`. Its locale is `id-ID`
+ * whatever the interface language (decision 2 in `../../time.ts`), so `locale` is not needed.
+ */
+function formatCivilDay(period: string): string {
+	const [year, month, day] = period.split('-').map(Number);
+	return formatDay(new Date(Date.UTC(year, month - 1, day, NOON_WIB_AS_UTC_HOUR)));
+}
+
+/**
+ * A window marker, the ISO instant the window starts at, as its WIB date and time:
+ * `24 Sep 2026, 14.36 WIB`. A marker that is not an instant is shown as it is, as the page did
+ * before ticket #317.
+ */
+function formatWindowStart(period: string): string {
+	const instant = new Date(period);
+	return Number.isNaN(instant.getTime()) ? period : formatDateTime(instant);
 }
 
 /** A formatter that renders an instant as a civil date in one zone. */
