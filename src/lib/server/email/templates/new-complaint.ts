@@ -12,6 +12,10 @@ import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
  * The same Paraglide-with-explicit-locale shape as `./new-post.ts` — see that file's doc comment
  * for why: the schema stores no per-resident language, so every call carries an explicit `locale`
  * in its payload, defaulting to the base locale `id`.
+ *
+ * **The unsubscribe link is read from the payload and is optional here**, as in `./new-post.ts`:
+ * `announce` writes it into every row queued from now on, and a row queued before that change
+ * lacks it and must still render rather than fail permanently.
  */
 
 /** The `kind` stored on the queue row, and the key this template is registered under. */
@@ -41,19 +45,24 @@ export function newComplaintPayload(values: NewComplaintEmailValues): EmailPaylo
 
 /** Writes the new-complaint notification email, in the payload's own `locale`. */
 export const newComplaintTemplate: EmailTemplate = (payload) => {
-	const { title, category, url, locale } = payload;
+	const { title, category, url, locale, unsubscribeUrl } = payload;
 	if (
 		typeof title !== 'string' ||
 		typeof category !== 'string' ||
 		typeof url !== 'string' ||
 		typeof locale !== 'string' ||
-		!(locales as readonly string[]).includes(locale)
+		!(locales as readonly string[]).includes(locale) ||
+		(unsubscribeUrl !== undefined && unsubscribeUrl !== null && typeof unsubscribeUrl !== 'string')
 	) {
 		throw new TypeError(
-			`An email of kind "${NEW_COMPLAINT_KIND}" needs a title, a category and a url, all strings, and a locale that is one of ${locales.join(', ')}.`
+			`An email of kind "${NEW_COMPLAINT_KIND}" needs a title, a category and a url, all strings, a locale that is one of ${locales.join(', ')}, and an unsubscribeUrl that is a string when it is present.`
 		);
 	}
 	const resolvedLocale = locale as Locale;
+	const unsubscribeLines =
+		typeof unsubscribeUrl === 'string'
+			? [m.emailNewComplaint_unsubscribeLabel({}, { locale: resolvedLocale }), unsubscribeUrl, '']
+			: [];
 
 	return {
 		subject: m.emailNewComplaint_subject({ title }, { locale: resolvedLocale }),
@@ -65,6 +74,7 @@ export const newComplaintTemplate: EmailTemplate = (payload) => {
 			m.emailNewComplaint_linkLabel({}, { locale: resolvedLocale }),
 			url,
 			'',
+			...unsubscribeLines,
 			m.emailNewComplaint_footer({}, { locale: resolvedLocale })
 		].join('\n')
 	};

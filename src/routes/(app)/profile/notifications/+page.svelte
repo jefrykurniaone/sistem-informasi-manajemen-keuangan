@@ -3,6 +3,7 @@
 	import { pageTitle } from '#lib/complex-name.ts';
 	import * as m from '#lib/paraglide/messages.js';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import type { SubscriptionKind } from '#lib/server/services/subscription/kinds.ts';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -10,9 +11,12 @@
 	/**
 	 * Label and description per kind, on this page only — the kind string itself stays the value
 	 * `#lib/server/services/subscription/kinds.ts` names it, the same split
-	 * `(app)/admin/roles/+page.svelte`'s `ROLE_LABEL` makes for role names.
+	 * `(app)/admin/roles/+page.svelte`'s `ROLE_LABEL` makes for role names. The maps are keyed by
+	 * `SubscriptionKind`, imported as a type because everything under `#lib/server/` is server-only:
+	 * a kind added to `SUBSCRIPTION_KIND` without a label here fails `check`, and a key that is not a
+	 * kind fails it too.
 	 */
-	const KIND_LABEL: Record<string, () => string> = {
+	const KIND_LABEL: Record<SubscriptionKind, () => string> = {
 		'invoice-issued': m.profile_notifications_kind_invoiceIssued_label,
 		'payment-verified': m.profile_notifications_kind_paymentVerified_label,
 		'own-complaint-status-changed': m.profile_notifications_kind_ownComplaintStatusChanged_label,
@@ -21,7 +25,7 @@
 		'new-complaint': m.profile_notifications_kind_newComplaint_label
 	};
 
-	const KIND_DESCRIPTION: Record<string, () => string> = {
+	const KIND_DESCRIPTION: Record<SubscriptionKind, () => string> = {
 		'invoice-issued': m.profile_notifications_kind_invoiceIssued_description,
 		'payment-verified': m.profile_notifications_kind_paymentVerified_description,
 		'own-complaint-status-changed':
@@ -30,6 +34,19 @@
 		'new-post': m.profile_notifications_kind_newPost_description,
 		'new-complaint': m.profile_notifications_kind_newComplaint_description
 	};
+
+	/** `data.preferences` carries `kind` as a plain string; a string that is no known kind shows as itself. */
+	function isKnownKind(kind: string): kind is SubscriptionKind {
+		return Object.hasOwn(KIND_LABEL, kind);
+	}
+
+	function labelOf(kind: string): string {
+		return isKnownKind(kind) ? KIND_LABEL[kind]() : kind;
+	}
+
+	function descriptionOf(kind: string): string {
+		return isKnownKind(kind) ? KIND_DESCRIPTION[kind]() : '';
+	}
 </script>
 
 <svelte:head>
@@ -65,9 +82,9 @@
 			{#each data.preferences as preference (preference.kind)}
 				<li class="flex items-center justify-between gap-4 rounded-lg border border-border p-4">
 					<div class="flex flex-col gap-1">
-						<span class="font-medium">{KIND_LABEL[preference.kind]?.() ?? preference.kind}</span>
+						<span class="font-medium">{labelOf(preference.kind)}</span>
 						<span class="text-sm text-muted-foreground">
-							{KIND_DESCRIPTION[preference.kind]?.() ?? ''}
+							{descriptionOf(preference.kind)}
 						</span>
 					</div>
 
