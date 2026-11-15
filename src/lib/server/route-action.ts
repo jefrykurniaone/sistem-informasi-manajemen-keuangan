@@ -164,8 +164,14 @@ import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-st
  *
  * ## The Elysia API
  *
- * `src/lib/server/api/app.ts` keeps its own `onError` for now; whether it reads `errorCategoryOf` is
- * #333's decision, and its current answer for anything but a permission refusal is a 500.
+ * `src/lib/server/api/app.ts` keeps its own `onError` and does not read `errorCategoryOf` (#333).
+ * The two surfaces answer differently on purpose: the API maps a permission refusal to 403 and
+ * everything else, rule violations and not-founds included, to a fixed 500 body, because it has no
+ * route sentences and no form to put one on, while this module's whole job is choosing a route's
+ * sentence. Reading `errorCategoryOf` from there would also pull `@sveltejs/kit`, `auth.ts` and every
+ * service module into the API's import graph (this module imports each error class), and would
+ * change what a caller of a rule violation sees from 500 to 400. Keeping the two apart changes no behaviour; if the API ever needs categories, move
+ * `errorCategoryOf` and its lists into a module with no SvelteKit import first.
  */
 
 /** A sentence the route says, read only when it is said, so it is in the request's language. */
