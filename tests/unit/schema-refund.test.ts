@@ -27,7 +27,7 @@ import { testDatabase } from '#lib/server/db/test-helpers.ts';
  * What is deliberately not tested here, because it is a fact about sums across rows that a
  * PostgreSQL `CHECK` cannot see: that a refund never exceeds its payment's unallocated remainder,
  * and that a refund row's amount agrees with its cash row's. Both are the one writer's
- * (`src/lib/server/services/dues/credit-refund.ts`) and are held in
+ * (`refundCredit` in `src/lib/server/services/dues/dues-correction.ts`) and are held in
  * `tests/unit/credit-refund.test.ts`.
  */
 

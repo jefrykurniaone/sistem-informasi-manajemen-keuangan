@@ -25,7 +25,7 @@
 	 *
 	 * There is **one** of these on the page rather than one per invoice: the page keeps which
 	 * Tagihan is being cancelled in a single piece of state and hands it over here. The only field
-	 * is the reason, because `src/lib/server/services/dues/invoice-void.ts` reads everything else
+	 * is the reason, because `src/lib/server/services/dues/dues-correction.ts` reads everything else
 	 * off the row itself and refuses by name whatever else could be wrong. A native `<dialog>`
 	 * opened with `showModal()` rather than a hand-built overlay, so focus trapping, the backdrop
 	 * and closing on Escape are the browser's job — the shape

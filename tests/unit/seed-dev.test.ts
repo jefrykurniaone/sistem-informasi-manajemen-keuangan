@@ -198,8 +198,8 @@ async function countEverything(): Promise<SeedCounts> {
  *
  * `count(*)::text` rather than `rows.length`, and `::text` rather than a bare `count(*)`: PostgreSQL
  * types `count` as `bigint`, which the driver hands back as a string only sometimes depending on how
- * it is configured — the same idiom `allocatedAmountsByInvoice` in
- * `src/lib/server/services/dues/queries.ts` records.
+ * it is configured — the same idiom `allocatedByInvoice` in
+ * `src/lib/server/services/dues/invoice-standing.ts` records.
  */
 async function countRows(table: PgTable): Promise<number> {
 	const [row] = await testDb.db.select({ total: sql<string>`count(*)::text` }).from(table);

@@ -67,7 +67,7 @@ import type { Clock } from '../../ports/clock';
  *   two callers of either, contend on one row rather than on a read each of them already made.
  *
  * The lock order is the same everywhere money is written — the row being corrected first (held by
- * `./correction.ts`), then the Periode — so there is no pair of transactions that can take these
+ * `writeCashTransaction` in `./writer.ts`), then the Periode — so there is no pair of transactions that can take these
  * two locks in opposite orders, which is what a deadlock would need.
  *
  * ## Who may do what
@@ -118,7 +118,7 @@ const MONTH_END = 7;
  * Every rule this module refuses a request for, other than permission and other than the locked
  * month itself, which has a named error of its own.
  *
- * The same shape as `CASH_RULE` in `./transaction.ts`, and for the same reason: the period screen
+ * The same shape as `CASH_RULE` in `./writer.ts`, and for the same reason: the period screen
  * maps these through an exhaustive `Record`, so a rule added here is a type error on that screen
  * until somebody writes the sentence a person reads. These are refusals of a *request*, never of
  * the caller — the superuser was inside their rights — so a route answers them with `fail(400, …)`
@@ -213,10 +213,11 @@ export function periodLabel(month: CalendarMonth): string {
  *
  * **This is the contract every write path that dates money takes**, and the reason it takes a
  * `Transaction` rather than a `Database` is that the answer is only true for as long as the
- * caller's transaction holds the lock. `./transaction.ts` calls it after the category is known and
- * before the insert; `./correction.ts` calls it against the *corrected row's* `occurredOn`, inside
- * the transaction that already holds that row's lock. #29's payment verification writes a Transaksi
- * Kas of its own and calls it the same way.
+ * caller's transaction holds the lock. `writeCashTransaction` in `./writer.ts`, the only insert into
+ * `cash_transactions`, calls it for every kind of entry: after the category is known and before the
+ * insert, and for a Koreksi against the *corrected row's* `occurredOn`, inside the transaction that
+ * already holds that row's lock. Payment verification and the dues corrections in
+ * `../dues/dues-correction.ts` write their cash rows through that same function.
  *
  * @throws {TypeError} when `occurredOn` is not shaped `YYYY-MM-DD`. Every caller has already checked
  *   that, or read it back out of a `date` column, so reaching this is a mistake in calling code.

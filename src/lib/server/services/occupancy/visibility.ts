@@ -219,14 +219,15 @@ export function visibilityDateFilter(
 /**
  * Today, as the calendar day `YYYY-MM-DD` that the occupancy table's `date` columns compare against.
  *
- * **This is not how the Penanggung Jawab slot is read.** Since
+ * Since
  * `docs/adr/0001-penanggung-jawab-berpindah.md`, the Penanggung Jawab is the Masa Huni marked
- * `isPrimaryOccupant` that is living here today, and that invariant is kept by the service under the
- * Unit's row lock — `lockUnit` and `movePrimaryOccupantMarker` in
- * `src/lib/server/services/occupancy/index.ts` — not by a query this function's day feeds. The
- * partial unique index `occupancies_primary_occupant_unique` does key on `ended_on is null`, which
- * remains true of the index itself, but nothing asks that as a question about who holds the flag
- * today; see that module's doc comment for what the index does and does not cover.
+ * `isPrimaryOccupant` that is living here today. `primaryOccupantsOn` in
+ * `src/lib/server/services/occupancy/index.ts` answers that question for a given day and takes this
+ * function's day; the invariant that at most one stay holds the flag is kept by the service under
+ * the Unit's row lock (`lockUnit` and `movePrimaryOccupantMarker` in the same module). The partial
+ * unique index `occupancies_primary_occupant_unique` keys on `ended_on is null`, which is a fact
+ * about the index itself, not how the slot is read; see that module's doc comment for what the
+ * index does and does not cover.
  *
  * What this day *does* feed is *"is this person living here now?"*, which is `isStillRunningOn`
  * below. An end date written before it arrives — someone announcing in March that they move out next

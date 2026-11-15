@@ -43,8 +43,8 @@ import {
 /**
  * The status vocabulary, and its pure rule, re-exported from `./invoice-standing.ts` where they now
  * live. The re-export keeps the imports outside #320's surface compiling unchanged: the type in
- * `src/lib/components/dues/invoice-status-badge.svelte` and `invoice-card.svelte`, and the rule in
- * `tests/unit/invoice-void.test.ts`. A new caller imports from `./invoice-standing.ts`.
+ * `invoice-card.svelte` beside `invoice-status-badge.svelte` (which now imports it from
+ * `./invoice-standing.ts`). A new caller imports from `./invoice-standing.ts`.
  */
 export { INVOICE_STATUS, invoiceStatus, type InvoiceStatus } from './invoice-standing';
 

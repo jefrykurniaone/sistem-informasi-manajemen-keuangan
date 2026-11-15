@@ -8,8 +8,9 @@ import type { EmailPayload, EmailTemplate, EmailTemplates } from '#lib/server/po
  *
  * **Transactional, not a Langganan** — the same shape `./registration-approved.ts` takes, and for
  * the same reason: it answers something the recorder themselves did (recording a payment), so it is
- * not one a resident may switch off. `src/lib/server/services/subscription/kinds.ts` is deliberately
- * not touched by this kind.
+ * not one a resident may switch off. this kind is in `NOTIFICATION_EMAIL_KIND` in
+ * `src/lib/server/services/subscription/kinds.ts`, the list of transactional kinds, and not in
+ * `SUBSCRIPTION_KIND`.
  *
  * The same Paraglide-with-explicit-locale shape as `./invoice-issued.ts` — see that file's doc
  * comment for why.

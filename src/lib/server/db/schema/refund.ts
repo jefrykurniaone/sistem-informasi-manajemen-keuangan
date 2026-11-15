@@ -29,7 +29,7 @@ import { payments } from './payment';
  * figure would be invisible to those remainders, and the next issuance would spend the refunded
  * rupiah a second time. So a refund is attributed exactly the way an Alokasi is: to the one
  * Pembayaran whose remainder it consumed, and a payment's remainder becomes
- * `amount − allocations − refunds`. One refund action that drains several payments writes one row
+ * `amount − allocations − refunds in force`. One refund action that drains several payments writes one row
  * here per payment drained — the same shape one verification writing several `allocations` rows
  * already has.
  *
@@ -44,12 +44,12 @@ import { payments } from './payment';
  *   group `allocations`.
  * - **`refunds_cash_transaction_id_unique` makes each refund one cash row, and each cash row one
  *   refund.** The money leaves the buku kas as an expense in the system category "Iuran warga"
- *   (`src/lib/server/services/cash/transaction.ts` owns that insert), one cash row per payment
+ *   (`writeCashTransaction` in `src/lib/server/services/cash/writer.ts` owns that insert), one cash row per payment
  *   drained — the mirror of verification, which writes one income row per payment verified. The
  *   unique index is the row-local half the database can enforce of "setiap Pengembalian merujuk
  *   tepat satu baris kas keluar": no second refund can ever claim a cash row that is already
  *   spoken for. That the amounts agree is a cross-row fact, held by the one writer in
- *   `src/lib/server/services/dues/credit-refund.ts` and asserted in its tests.
+ *   `refundCredit` in `src/lib/server/services/dues/dues-correction.ts` and asserted in its tests.
  * - **No `unit_id` column, on purpose.** `cash_transactions` has no `unit_id`, so the attribution
  *   to a Unit lives here — through `payment_id`, whose row carries `payments.unitId`, exactly as an
  *   Alokasi is a Unit's through its payment. A second, direct `unit_id` column would be a copy the
