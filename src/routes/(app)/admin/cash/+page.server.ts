@@ -1,25 +1,31 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
 import { formatRupiah } from '#lib/money.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
 import type { FileStore } from '#lib/server/ports/file-store.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	requireUser,
+	throwRouteError,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import {
 	CASH_BOOK_MONTH_PATTERN,
 	cashBook,
 	type CashBookEntry,
 	type CashBookFilter
 } from '#lib/server/services/cash/balance.ts';
+import { duesCategory } from '#lib/server/services/cash/category.ts';
 import {
+	CashCorrectionTargetError,
 	CashTransactionAlreadyCorrectedError,
 	CashTransactionNotFoundError,
-	recordCashCorrection
+	recordCashCorrection,
+	type CashCorrectionTargetReason
 } from '#lib/server/services/cash/correction.ts';
 import { PeriodLockedError } from '#lib/server/services/cash/period.ts';
-import { CashRuleError } from '#lib/server/services/cash/transaction.ts';
-import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -28,9 +34,20 @@ import type { Actions, PageServerLoad } from './$types';
  * no edit action and no delete action, because the service layer offers neither; see
  * `src/lib/server/services/cash/transaction.ts`.
  *
- * Follows the shape `src/routes/(app)/admin/units/+page.server.ts` settled: nobody who is not signed
- * in reaches the service layer, `PermissionDeniedError` becomes `error(403, …)` here and never in
- * the service, and every rule the service refuses comes back as a rejected form.
+ * Follows the shape `src/lib/server/route-action.ts` settled (#318): nobody who is not signed in
+ * reaches the service layer, `PermissionDeniedError` becomes `error(403, …)` here and never in the
+ * service, and every rule the service refuses comes back as a rejected form. A rule this action does
+ * not name is the fallback sentence rather than a 500.
+ *
+ * ## A line in "Iuran warga" offers no Koreksi button
+ *
+ * The ordinary Koreksi refuses every line in the system category "Iuran warga" (#323), because such
+ * a line is reversed from the Keuangan Unit screen, where the Payment, its Alokasi and its Invoice
+ * follow the cash. `load` marks each row with `isDuesLine`, the table draws a note instead of the
+ * button, and the action still answers a posted dues line with the service's refusal, since the
+ * button is a courtesy and the service is the rule. `CashCorrectionTargetError` is deliberately not
+ * categorised in `route-action.ts` (from the dues-correction module it is a defect), so this action
+ * names it with `refusal`.
  *
  * ## The receipt links
  *
@@ -66,44 +83,46 @@ const TRANSACTION_ID_FIELD = 'transactionId';
 /** The form field carrying a correction's reason. */
 const REASON_FIELD = 'reason';
 
+/** The sentences the page says when it refuses a request outright. */
+const PAGE = { forbidden: m.adminCash_forbidden } satisfies PageMessages;
+
 export const load: PageServerLoad = async ({ locals, url }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+	const user = requireUser(locals);
 
 	const filter = filterFrom(url);
+	const dependencies = productionDependencies();
 	try {
-		const book = await cashBook(database(), locals.user.id, filter);
-		const fileStore = localFileStoreFromEnvironment(systemClock);
+		const book = await cashBook(dependencies.db, user.id, filter);
+		const dues = await duesCategory(dependencies.db);
+		const fileStore = dependencies.fileStore;
 		return {
 			filter,
 			openingBalance: book.openingBalance,
 			closingBalance: book.closingBalance,
 			categories: book.categories,
 			months: book.months,
-			rows: await Promise.all(book.entries.map((entry) => toRow(entry, fileStore)))
+			rows: await Promise.all(book.entries.map((entry) => toRow(entry, dues.id, fileStore)))
 		};
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	correct: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const transactionId = String(form.get(TRANSACTION_ID_FIELD) ?? '').trim();
-		const reason = String(form.get(REASON_FIELD) ?? '').trim();
+		const transactionId = readText(form, TRANSACTION_ID_FIELD);
+		const reason = readText(form, REASON_FIELD);
 		if (transactionId === '' || reason === '') {
 			return fail(400, { message: m.adminCash_correctionInvalidForm() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			const correction = await recordCashCorrection(database(), systemClock, {
-				actorId: locals.user.id,
+			const correction = await recordCashCorrection(db, clock, {
+				actorId: user.id,
 				transactionId,
 				reason
 			});
@@ -114,7 +133,18 @@ export const actions: Actions = {
 				})
 			};
 		} catch (caught) {
-			return failAsRejectedForm(caught);
+			return failOrThrow(caught, {
+				...PAGE,
+				fallback: m.adminCash_correctionInvalidForm,
+				refusals: [
+					refusal(CashTransactionAlreadyCorrectedError, m.adminCash_correctionAlreadyCorrected),
+					refusal(CashTransactionNotFoundError, m.adminCash_correctionNotFound),
+					refusal(PeriodLockedError, ({ error }) =>
+						m.adminCash_periodLocked({ period: error.period })
+					),
+					refusal(CashCorrectionTargetError, ({ error }) => targetRefusal(error.reason))
+				]
+			});
 		}
 	}
 };
@@ -129,8 +159,11 @@ function filterFrom(url: URL): CashBookFilter {
 	};
 }
 
-/** One cash book line as the table renders it, with its receipt already signed for. */
-async function toRow(entry: CashBookEntry, fileStore: FileStore) {
+/**
+ * One cash book line as the table renders it, with its receipt already signed for. `duesCategoryId`
+ * is the id of "Iuran warga": a line in it is flagged, so the table draws a note and no button.
+ */
+async function toRow(entry: CashBookEntry, duesCategoryId: string, fileStore: FileStore) {
 	return {
 		id: entry.id,
 		occurredOn: entry.occurredOn,
@@ -141,37 +174,25 @@ async function toRow(entry: CashBookEntry, fileStore: FileStore) {
 		balance: entry.balance,
 		isCorrection: entry.correctionOf !== null,
 		isCorrected: entry.correctedBy !== null,
+		isDuesLine: entry.categoryId === duesCategoryId,
 		recordedByName: entry.recordedByName,
 		receiptUrl:
 			entry.attachmentKey === null ? null : await fileStore.signedLink(entry.attachmentKey)
 	};
 }
 
-/** Turns each refusal the correction service names into a rejected form. */
-function failAsRejectedForm(caught: unknown) {
-	if (caught instanceof CashTransactionAlreadyCorrectedError) {
-		return fail(400, { message: m.adminCash_correctionAlreadyCorrected() });
-	}
-	if (caught instanceof CashTransactionNotFoundError) {
-		return fail(400, { message: m.adminCash_correctionNotFound() });
-	}
-	if (caught instanceof CashRuleError) {
-		return fail(400, { message: m.adminCash_correctionInvalidForm() });
-	}
-	if (caught instanceof PeriodLockedError) {
-		return fail(400, { message: m.adminCash_periodLocked({ period: caught.period }) });
-	}
-	throwAsRouteError(caught);
-}
-
 /**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- * `never`, so it can end a `catch` block without widening what SvelteKit infers — the same helper
- * the units and cash category screens carry, for the same reason.
+ * The sentence for why the ordinary Koreksi refused its line. `notThisKind` only comes from the
+ * Pembatalan kinds, which this screen never writes, so it takes the same sentence as a malformed
+ * request rather than inventing a screen text for a state it cannot reach.
  */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminCash_forbidden());
+function targetRefusal(reason: CashCorrectionTargetReason): string {
+	switch (reason) {
+		case 'duesLine':
+			return m.adminCash_correctionDuesLine();
+		case 'reversedOpeningBalance':
+			return m.adminCash_correctionReversedOpeningBalance();
+		case 'notThisKind':
+			return m.adminCash_correctionInvalidForm();
 	}
-	throw caught;
 }

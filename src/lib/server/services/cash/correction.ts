@@ -6,7 +6,12 @@ import { cashTransactions, type CashTransaction } from '../../db/schema/cash-tra
 import type { Clock } from '../../ports/clock';
 import { CASH_WRITE_KIND, writeCashTransaction } from './writer';
 
-export { CashTransactionAlreadyCorrectedError, CashTransactionNotFoundError } from './writer';
+export {
+	CashCorrectionTargetError,
+	CashTransactionAlreadyCorrectedError,
+	CashTransactionNotFoundError
+} from './writer';
+export type { CashCorrectionTargetReason } from './writer';
 
 /**
  * The ordinary Koreksi: the way an Admin puts a mistake in the buku kas right. `CONTEXT.md` defines
@@ -18,8 +23,10 @@ export { CashTransactionAlreadyCorrectedError, CashTransactionNotFoundError } fr
  * writer's `correction` kind. Everything about that row is decided there: it reads type, amount,
  * category and date off the line being corrected, takes that line's row lock so it is corrected at
  * most once, checks the Periode of the line's own day, and holds the rule about which lines a Koreksi
- * may point at. This module keeps what makes a Koreksi an Admin's act: the permission and the audit
- * row. The two error classes are re-exported from the writer, because the cash screen imports them
+ * may point at: the ordinary Koreksi refuses every line in "Iuran warga" (those are reversed from the
+ * Keuangan Unit screen) and a Koreksi of a Saldo awal (a reversed Saldo awal is replaced by recording
+ * a new one). This module keeps what makes a Koreksi an Admin's act: the permission and the audit
+ * row. The three error classes are re-exported from the writer, because the cash screen imports them
  * from here.
  *
  * `ACTION.recordCashTransactions` in `src/lib/server/authz.ts` is granted to `admin` alone, and
@@ -59,6 +66,8 @@ export interface RecordCashCorrectionRequest {
  * @throws {CashRuleError} `descriptionMissing` when the reason is empty after trimming.
  * @throws {CashTransactionNotFoundError} when `transactionId` names no transaction.
  * @throws {CashTransactionAlreadyCorrectedError} when it has already been corrected.
+ * @throws {CashCorrectionTargetError} `duesLine` when the line is in "Iuran warga", and
+ *   `reversedOpeningBalance` when it is a Koreksi in the opening-balance category.
  * @throws {PeriodLockedError} when the corrected row's own `occurredOn` falls inside a Periode that
  *   is locked. The Koreksi waits for the unlock; it is never re-dated into an open month.
  */

@@ -47,8 +47,8 @@ import { requireOpenPeriodFor } from './period';
  * |                           | Pengembalian                                     | `income`                    |
  *
  * The last two are prepared by #315 and used from #329 and #331. They are the only Koreksi that may
- * reverse a line in the system category "Iuran warga" once #323 closes that category to the ordinary
- * Koreksi, which is why nothing outside the dues-correction module may call them.
+ * reverse a line in the system category "Iuran warga", which #323 closed to the ordinary Koreksi,
+ * which is why nothing outside the dues-correction module may call them.
  * `tests/unit/cash-transaction.test.ts` refuses a reference to either name anywhere under `src/`
  * outside this file and `src/lib/server/services/dues/`. That test allows the directory rather
  * than one file because how the dues-correction module is laid out is #324's decision, not this
@@ -184,7 +184,7 @@ export class CashTransactionAlreadyCorrectedError extends Error {
 
 	constructor(transactionId: string, correctionId: string) {
 		super(
-			`Cash transaction "${transactionId}" has already been corrected by "${correctionId}". A transaction is corrected once; correcting the correction is how a wrong correction is put right.`
+			`Cash transaction "${transactionId}" has already been corrected by "${correctionId}". A transaction is corrected once. A wrong correction outside "Iuran warga" and the opening-balance category is put right by correcting the correction.`
 		);
 		this.transactionId = transactionId;
 		this.correctionId = correctionId;
@@ -192,14 +192,28 @@ export class CashTransactionAlreadyCorrectedError extends Error {
 }
 
 /**
+ * Why a Koreksi was refused its target line.
+ *
+ * - `duesLine`: the ordinary Koreksi was pointed at a line in "Iuran warga", of any kind. Only the
+ *   Pembatalan verifikasi and the Pembatalan Pengembalian reverse those, from the Keuangan Unit
+ *   screen.
+ * - `reversedOpeningBalance`: the ordinary Koreksi was pointed at a Koreksi in the opening-balance
+ *   category. Reversing it would put the reversed Saldo awal back in force beside the one recorded to
+ *   replace it, so a reversed Saldo awal is replaced by recording a new one.
+ * - `notThisKind`: a Pembatalan was pointed at a line it does not reverse.
+ */
+export type CashCorrectionTargetReason = 'duesLine' | 'reversedOpeningBalance' | 'notThisKind';
+
+/**
  * Thrown when a kind of Koreksi is pointed at a line it does not reverse: a Pembatalan verifikasi
- * at anything but a dues income row, or a Pembatalan Pengembalian at anything but a Pengembalian's
- * expense row.
+ * at anything but a dues income row, a Pembatalan Pengembalian at anything but a Pengembalian's
+ * expense row, or the ordinary Koreksi at a line in "Iuran warga" or at a Koreksi of a Saldo awal.
  *
  * From the dues-correction module this means the line was found through the wrong Audit Log entry
- * or the wrong `refunds` row, so it is a defect rather than a request to refuse politely. It is a
- * class of its own, carrying the kind, so that a later rule about the ordinary Koreksi (#323 closes
- * "Iuran warga" to it) can refuse with the same class and a route can tell the cases apart.
+ * or the wrong `refunds` row, so it is a defect rather than a request to refuse politely. From the
+ * ordinary Koreksi it is a polite refusal of an Admin's request, which the cash screen names with
+ * `refusal(...)` and answers by `reason`. One class carrying the kind and the reason lets a route
+ * tell the cases apart.
  */
 export class CashCorrectionTargetError extends Error {
 	override readonly name = 'CashCorrectionTargetError';
@@ -208,11 +222,19 @@ export class CashCorrectionTargetError extends Error {
 	readonly transactionId: string;
 	/** The kind of Koreksi that refused it. */
 	readonly kind: CashCorrectionKind;
+	/** Why it was refused: what a screen says to the person who asked. */
+	readonly reason: CashCorrectionTargetReason;
 
-	constructor(transactionId: string, kind: CashCorrectionKind, detail: string) {
+	constructor(
+		transactionId: string,
+		kind: CashCorrectionKind,
+		reason: CashCorrectionTargetReason,
+		detail: string
+	) {
 		super(`A "${kind}" Koreksi may not reverse cash transaction "${transactionId}": ${detail}`);
 		this.transactionId = transactionId;
 		this.kind = kind;
+		this.reason = reason;
 	}
 }
 
@@ -590,10 +612,14 @@ async function correctionRow(
 /**
  * Which lines each kind of Koreksi may point at: the one place spec #308 decision 2 is held.
  *
- * - **`correction`, the ordinary Koreksi, accepts any line today.** Any line, ordinary or
- *   reversing, takes one Koreksi, because a Koreksi written against the wrong line is itself a
- *   mistake and has to be correctable. Closing "Iuran warga" to it is #323's change, and it belongs
- *   in this `case`.
+ * - **`correction`, the ordinary Koreksi, accepts any line outside two exceptions.** An ordinary or
+ *   reversing line takes one Koreksi, because a Koreksi written against the wrong line is itself a
+ *   mistake and has to be correctable. The exceptions (#323, spec #308 decision 2): every line in
+ *   "Iuran warga" is refused, because the Payment, its Alokasi and its Invoice would not follow the
+ *   cash, so only the two dues kinds below reverse those; and a Koreksi in the opening-balance
+ *   category is refused, because reversing it would put the reversed Saldo awal back in force beside
+ *   the one recorded to replace it. A reversed Saldo awal is replaced by recording a new one.
+ *   The original Saldo awal still takes its Koreksi.
  * - **The two dues kinds accept only the line they exist to reverse.** A Pembatalan verifikasi
  *   reverses a dues income row, and a Pembatalan Pengembalian reverses a Pengembalian's expense
  *   row. Neither reverses a Koreksi: a dues Koreksi is not reopened by writing a second one.
@@ -607,11 +633,44 @@ async function assertCorrectableBy(
 ): Promise<void> {
 	switch (kind) {
 		case CASH_WRITE_KIND.correction:
-			return;
+			return assertOrdinarilyCorrectable(transaction, corrected);
 		case CASH_WRITE_KIND.unverifyCorrection:
 			return assertDuesLine(transaction, kind, corrected, CASH_CATEGORY_TYPE.income);
 		case CASH_WRITE_KIND.refundReverseCorrection:
 			return assertDuesLine(transaction, kind, corrected, CASH_CATEGORY_TYPE.expense);
+	}
+}
+
+/**
+ * Refuses an ordinary Koreksi of a line in "Iuran warga" and of a Koreksi in the opening-balance
+ * category. Both categories are read without a lock: the line itself is locked, and the category
+ * rows are seeded and never change.
+ *
+ * @throws {CashCorrectionTargetError} `duesLine` or `reversedOpeningBalance`.
+ */
+async function assertOrdinarilyCorrectable(
+	transaction: Transaction,
+	corrected: CashTransaction
+): Promise<void> {
+	const dues = await duesCategory(transaction);
+	if (corrected.categoryId === dues.id) {
+		throw new CashCorrectionTargetError(
+			corrected.id,
+			CASH_WRITE_KIND.correction,
+			'duesLine',
+			'the line is in the system category "Iuran warga", which only a Pembatalan verifikasi or a Pembatalan Pengembalian reverses, from the Keuangan Unit screen.'
+		);
+	}
+	if (corrected.correctionOf !== null) {
+		const openingBalance = await openingBalanceCategory(transaction);
+		if (corrected.categoryId === openingBalance.id) {
+			throw new CashCorrectionTargetError(
+				corrected.id,
+				CASH_WRITE_KIND.correction,
+				'reversedOpeningBalance',
+				`the line is itself a Koreksi of the opening balance "${corrected.correctionOf}"; a reversed opening balance is replaced by recording a new one.`
+			);
+		}
 	}
 }
 
@@ -630,6 +689,7 @@ async function assertDuesLine(
 		throw new CashCorrectionTargetError(
 			corrected.id,
 			kind,
+			'notThisKind',
 			'the line is not in the system category "Iuran warga".'
 		);
 	}
@@ -637,6 +697,7 @@ async function assertDuesLine(
 		throw new CashCorrectionTargetError(
 			corrected.id,
 			kind,
+			'notThisKind',
 			`the line is itself a Koreksi of "${corrected.correctionOf}".`
 		);
 	}
@@ -644,6 +705,7 @@ async function assertDuesLine(
 		throw new CashCorrectionTargetError(
 			corrected.id,
 			kind,
+			'notThisKind',
 			`the line moves money as ${corrected.type}, and this Koreksi reverses only ${type}.`
 		);
 	}
