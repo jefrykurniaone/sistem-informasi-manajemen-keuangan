@@ -39,6 +39,7 @@ import {
 	PRIMARY_OCCUPANT_MARKED_ACTION,
 	PrimaryOccupantAlreadyEndedError,
 	PrimaryOccupantNotStartedError,
+	primaryOccupantsOn,
 	recordOccupancy,
 	ResidentNotFoundError,
 	setPrimaryOccupant
@@ -150,18 +151,25 @@ async function insertUnitRow(block = unique('B')): Promise<string> {
 async function insertOccupancyRow(
 	unitId: string,
 	residentId: string,
-	overrides: Partial<{ startedOn: string; endedOn: string | null; isPrimaryOccupant: boolean }> = {}
+	overrides: Partial<{
+		id: string;
+		startedOn: string;
+		endedOn: string | null;
+		isPrimaryOccupant: boolean;
+		createdAt: string;
+	}> = {}
 ): Promise<string> {
 	const [row] = await testDb.db
 		.insert(occupancies)
 		.values({
+			...(overrides.id === undefined ? {} : { id: overrides.id }),
 			unitId,
 			residentId,
 			role: OCCUPANCY_ROLE.owner,
 			startedOn: overrides.startedOn ?? STARTED_ON,
 			endedOn: overrides.endedOn ?? null,
 			isPrimaryOccupant: overrides.isPrimaryOccupant ?? false,
-			createdAt: new Date(START)
+			createdAt: new Date(overrides.createdAt ?? START)
 		})
 		.returning();
 	return row.id;
@@ -343,6 +351,7 @@ describe('the Masa Huni module surface', () => {
 			'listUnitOccupanciesGrouped',
 			'occupiedUnitsForUser',
 			'occupiedUnitsForUserGrouped',
+			'primaryOccupantsOn',
 			'recordOccupancy',
 			'setPrimaryOccupant'
 		]);
@@ -1530,6 +1539,172 @@ describe('setPrimaryOccupant', () => {
 				occupancyId
 			})
 		).rejects.toThrow(PermissionDeniedError);
+	});
+});
+
+describe('primaryOccupantsOn', () => {
+	// The one answer to "who is this house's Penanggung Jawab on this day". Four screens and two
+	// services used to answer it for themselves, and an invoice email, a Unit summary and an audit
+	// entry could name three different people when a unit still held two flagged rows from before
+	// ADR 0001. The pick order is the read's alone: the latest start day, then the latest recorded,
+	// then the id.
+
+	it('picks the flagged stay that started last, whichever was written first', async () => {
+		const unitId = await insertUnitRow();
+		const older = await insertResident('Warga Penanda Lama');
+		const newer = await insertResident('Warga Penanda Baru');
+		await insertOccupancyRow(unitId, older.residentId, {
+			startedOn: STARTED_ON,
+			endedOn: FUTURE_END,
+			isPrimaryOccupant: true
+		});
+		const newerId = await insertOccupancyRow(unitId, newer.residentId, {
+			startedOn: '2026-02-01',
+			isPrimaryOccupant: true
+		});
+
+		const picked = (await primaryOccupantsOn(testDb.db, TODAY, [unitId])).get(unitId);
+
+		expect(picked).toMatchObject({
+			unitId,
+			occupancyId: newerId,
+			residentId: newer.residentId,
+			name: 'Warga Penanda Baru',
+			email: `${newer.userId}@komplek.local`,
+			startedOn: '2026-02-01',
+			endedOn: null
+		});
+	});
+
+	it('breaks a tie on the start day by the stay recorded last, then by the greater id', async () => {
+		const tiedOnRecording = await insertUnitRow();
+		const earlier = await insertResident('Warga Dicatat Duluan');
+		const later = await insertResident('Warga Dicatat Belakangan');
+		await insertOccupancyRow(tiedOnRecording, earlier.residentId, {
+			isPrimaryOccupant: true,
+			createdAt: '2026-01-01T01:00:00.000Z'
+		});
+		const laterId = await insertOccupancyRow(tiedOnRecording, later.residentId, {
+			endedOn: FUTURE_END,
+			isPrimaryOccupant: true,
+			createdAt: '2026-01-01T02:00:00.000Z'
+		});
+
+		const tiedOnBoth = await insertUnitRow();
+		const low = await insertResident('Warga Id Kecil');
+		const high = await insertResident('Warga Id Besar');
+		const highId = '00000000-0000-4000-8000-0000000000f2';
+		await insertOccupancyRow(tiedOnBoth, high.residentId, { id: highId, isPrimaryOccupant: true });
+		await insertOccupancyRow(tiedOnBoth, low.residentId, {
+			id: '00000000-0000-4000-8000-0000000000f1',
+			endedOn: FUTURE_END,
+			isPrimaryOccupant: true
+		});
+
+		const picked = await primaryOccupantsOn(testDb.db, TODAY, [tiedOnRecording, tiedOnBoth]);
+
+		expect(picked.get(tiedOnRecording)?.occupancyId).toBe(laterId);
+		expect(picked.get(tiedOnBoth)?.occupancyId).toBe(highId);
+	});
+
+	it('reads a flag only on a stay running on that day, for many units at once', async () => {
+		const running = await insertUnitRow();
+		const ended = await insertUnitRow();
+		const arriving = await insertUnitRow();
+		const unflagged = await insertUnitRow();
+		const leavingToday = await insertUnitRow();
+		const a = await insertResident('Warga Berjalan');
+		const b = await insertResident('Warga Sudah Pergi');
+		const c = await insertResident('Warga Belum Masuk');
+		const d = await insertResident('Warga Tanpa Penanda');
+		const e = await insertResident('Warga Hari Terakhir');
+		const runningId = await insertOccupancyRow(running, a.residentId, { isPrimaryOccupant: true });
+		await insertOccupancyRow(ended, b.residentId, { endedOn: YESTERDAY, isPrimaryOccupant: true });
+		await insertOccupancyRow(arriving, c.residentId, {
+			startedOn: TOMORROW,
+			isPrimaryOccupant: true
+		});
+		await insertOccupancyRow(unflagged, d.residentId);
+		const leavingId = await insertOccupancyRow(leavingToday, e.residentId, {
+			endedOn: TODAY,
+			isPrimaryOccupant: true
+		});
+
+		const picked = await primaryOccupantsOn(testDb.db, TODAY, [
+			running,
+			ended,
+			arriving,
+			unflagged,
+			leavingToday
+		]);
+
+		expect([...picked.keys()].sort()).toEqual([running, leavingToday].sort());
+		expect(picked.get(running)?.occupancyId).toBe(runningId);
+		expect(picked.get(leavingToday)).toMatchObject({ occupancyId: leavingId, endedOn: TODAY });
+		expect((await primaryOccupantsOn(testDb.db, TODAY, [])).size).toBe(0);
+	});
+
+	it('gives the invoice email, the Unit summary, both screens and the audit entry the same person when a unit holds two flagged running stays', async () => {
+		// Data left over from before ADR 0001: two flagged stays, both running today. Every reader of
+		// "the Penanggung Jawab today" must name the later-started one, not whichever its own query
+		// reached, and exactly one badge may show on each screen.
+		const superuserId = await insertSuperuser('Pengurus Dua Penanda Sisa');
+		const unitId = await insertUnitRow();
+		const older = await insertResident('Anton Penanda Lama');
+		const newer = await insertResident('Budi Penanda Baru');
+		const housemate = await insertResident('Citra Serumah');
+		const olderId = await insertOccupancyRow(unitId, older.residentId, {
+			endedOn: FUTURE_END,
+			isPrimaryOccupant: true
+		});
+		const newerId = await insertOccupancyRow(unitId, newer.residentId, {
+			startedOn: '2026-02-01',
+			isPrimaryOccupant: true
+		});
+		const housemateId = await insertOccupancyRow(unitId, housemate.residentId);
+
+		// The invoice email.
+		expect(await invoiceRecipient(unitId, READ_CLOCK)).toBe(newer.userId);
+
+		// The Unit summary.
+		const summary = await getUnit(testDb.db, superuserId, unitId, READ_CLOCK);
+		expect(summary.activeOccupants.filter((o) => o.isPrimaryOccupant)).toEqual([
+			{ residentId: newer.residentId, name: 'Budi Penanda Baru', isPrimaryOccupant: true }
+		]);
+		expect(summary.primaryOccupantNeed).toBeNull();
+
+		// The Penghuni screen, and with it the "Jadikan penanggung jawab" button, which shows on every
+		// running stay that is not flagged.
+		const admin = await listUnitOccupanciesGrouped(testDb.db, READ_CLOCK, superuserId, unitId);
+		expect(
+			admin.current.filter((stay) => stay.isPrimaryOccupant).map((stay) => stay.occupancyId)
+		).toEqual([newerId]);
+		expect(admin.current.map((stay) => stay.occupancyId)).toContain(olderId);
+
+		// "Rumah saya", from the stay of each of the two flagged people.
+		const fromOlder = await occupiedUnitsForUserGrouped(testDb.db, READ_CLOCK, older.userId);
+		const fromNewer = await occupiedUnitsForUserGrouped(testDb.db, READ_CLOCK, newer.userId);
+		expect(fromOlder.current.map((stay) => stay.isPrimaryOccupant)).toEqual([false]);
+		expect(fromNewer.current.map((stay) => stay.isPrimaryOccupant)).toEqual([true]);
+		for (const groups of [fromOlder, fromNewer]) {
+			expect(
+				groups.current[0].occupants.filter((o) => o.isPrimaryOccupant).map((o) => o.residentId)
+			).toEqual([newer.residentId]);
+		}
+
+		// The read itself.
+		expect((await primaryOccupantsOn(testDb.db, TODAY, [unitId])).get(unitId)?.occupancyId).toBe(
+			newerId
+		);
+
+		// The audit entry of the next move names the same person as the previous holder.
+		await setPrimaryOccupant(testDb.db, TODAY_CLOCK, {
+			actorId: superuserId,
+			occupancyId: housemateId
+		});
+		expect(await markedEntriesOf(unitId)).toEqual([
+			expect.objectContaining({ before: { occupancyId: newerId, residentId: newer.residentId } })
+		]);
 	});
 });
 
