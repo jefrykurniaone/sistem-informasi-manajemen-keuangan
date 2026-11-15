@@ -13,7 +13,10 @@ import { units } from '#lib/server/db/schema/unit.ts';
 import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import { FakeClock } from '#lib/server/ports/fakes.ts';
 import * as allocationReleasePath from '#lib/server/services/dues/allocation-release.ts';
-import { correctionsHistoryFor } from '#lib/server/services/dues/corrections-history.ts';
+import {
+	correctionsHistoryFor,
+	unitFinanceFor
+} from '#lib/server/services/dues/corrections-history.ts';
 import * as creditRefundPath from '#lib/server/services/dues/credit-refund.ts';
 import * as duesCorrection from '#lib/server/services/dues/dues-correction.ts';
 import {
@@ -349,6 +352,63 @@ describe('the corrections history', () => {
 		expect([...DUES_CORRECTION_ACTIONS].sort()).toEqual(
 			[ALLOCATION_RELEASED_ACTION, CREDIT_REFUNDED_ACTION, INVOICE_VOIDED_ACTION].sort()
 		);
+	});
+});
+
+describe('the unit finance screen model', () => {
+	it('sums each Tagihan through the module of where a Tagihan stands, agreeing with the rows it lists', async () => {
+		// #324 moved the per-Tagihan sum out of `unitFinanceFor` into `allocatedAmountsOf`, read in one
+		// snapshot with the Alokasi rows, so the total shown and the rows listed under it still agree.
+		const actorId = await insertRegisteredSuperuser('Pengurus Layar Keuangan');
+		const unitId = await insertUnit();
+		const january = await insertInvoice(unitId, '2026-01', rupiah(150_000));
+		const february = await insertInvoice(unitId, '2026-02', rupiah(150_000));
+		const march = await insertInvoice(unitId, '2026-03', rupiah(150_000));
+		const older = await insertVerifiedPayment(unitId, rupiah(200_000));
+		const newer = await insertVerifiedPayment(unitId, rupiah(100_000));
+		const first = await insertAllocation(older, january, rupiah(150_000));
+		const second = await insertAllocation(older, february, rupiah(50_000));
+		const third = await insertAllocation(newer, february, rupiah(40_000));
+		await voidInvoice(testDb.db, new FakeClock(START), {
+			actorId,
+			invoiceId: march,
+			reason: VOID_REASON
+		});
+
+		const finance = await unitFinanceFor(testDb.db, actorId, unitId);
+
+		// Rp300.000 verified, Rp240.000 allocated.
+		expect(finance.creditBalance).toBe(60_000);
+		expect(
+			finance.invoices.map((invoice) => ({
+				invoiceId: invoice.invoiceId,
+				allocatedAmount: invoice.allocatedAmount,
+				remainingAmount: invoice.remainingAmount,
+				voided: invoice.voidedAt !== null,
+				listed: invoice.allocations.map((allocation) => allocation.allocationId).sort()
+			}))
+		).toEqual([
+			{ invoiceId: march, allocatedAmount: 0, remainingAmount: 150_000, voided: true, listed: [] },
+			{
+				invoiceId: february,
+				allocatedAmount: 90_000,
+				remainingAmount: 60_000,
+				voided: false,
+				listed: [second, third].sort()
+			},
+			{
+				invoiceId: january,
+				allocatedAmount: 150_000,
+				remainingAmount: 0,
+				voided: false,
+				listed: [first]
+			}
+		]);
+		for (const invoice of finance.invoices) {
+			expect(invoice.allocatedAmount).toBe(
+				invoice.allocations.reduce((total, allocation) => total + allocation.amount, 0)
+			);
+		}
 	});
 });
 
