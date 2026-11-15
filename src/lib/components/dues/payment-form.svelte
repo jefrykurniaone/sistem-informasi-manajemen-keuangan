@@ -70,9 +70,10 @@
 	 * for a Tagihan nothing has been paid on, only the remainder for a part-paid one. A Tagihan paid in
 	 * full is not offered at all. The ticking is **not** submitted, because there is nowhere for it to
 	 * be recorded: the only table that maps a Pembayaran to a Tagihan is `allocations`, and writing one
-	 * before anybody has checked that the money arrived is exactly what the spec's "sampai diverifikasi, belum ada uang yang masuk ke kas mana pun" forbids. The
-	 * pengurus decides the allocation at verification, oldest Tagihan first, and the hint under the
-	 * picker says so rather than letting the resident believe they have chosen it.
+	 * before anybody has checked that the money arrived is exactly what the spec's "sampai
+	 * diverifikasi, belum ada uang yang masuk ke kas mana pun" forbids. The pengurus decides the
+	 * allocation at verification, oldest Tagihan first, and the hint under the picker says so rather
+	 * than letting the resident believe they have chosen it.
 	 *
 	 * ## The nominal field needs JavaScript
 	 *
