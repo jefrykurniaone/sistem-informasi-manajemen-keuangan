@@ -95,8 +95,20 @@ async function verificationToken(recipient: string): Promise<string> {
 	throw new Error(`No verification email was queued for ${recipient}.`);
 }
 
+/**
+ * What `signUpAccount` grants after the address is verified: `admin` is the admin role and a
+ * `residents` row, `resident` is the `residents` row alone (a Warga), `none` is neither (an account
+ * still waiting for a superuser, which the `(app)` layout sends to `/pending-approval`).
+ */
+type Grant = 'admin' | 'resident' | 'none';
+
 /** Registers a resident, verifies their address, signs them in, and grants them the admin role. */
 async function signUpAdmin(page: Page, email: string): Promise<void> {
+	await signUpAccount(page, email, 'admin');
+}
+
+/** Registers an account, verifies its address, grants it `grant`, and signs it in. */
+async function signUpAccount(page: Page, email: string, grant: Grant): Promise<void> {
 	await open(page, '/register');
 	await page.getByLabel('Nama').fill('Pengurus E2E');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
@@ -119,11 +131,15 @@ async function signUpAdmin(page: Page, email: string): Promise<void> {
 	if (!userId) {
 		throw new Error(`No "user" row was found for ${email} after verifying.`);
 	}
-	await pool().query(
-		"insert into user_roles (user_id, role, created_at) values ($1, 'admin', now())",
-		[userId]
-	);
-	await pool().query('insert into residents (user_id, created_at) values ($1, now())', [userId]);
+	if (grant === 'admin') {
+		await pool().query(
+			"insert into user_roles (user_id, role, created_at) values ($1, 'admin', now())",
+			[userId]
+		);
+	}
+	if (grant !== 'none') {
+		await pool().query('insert into residents (user_id, created_at) values ($1, now())', [userId]);
+	}
 
 	await open(page, '/login');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
@@ -135,7 +151,8 @@ async function signUpAdmin(page: Page, email: string): Promise<void> {
 	// `/admin/posts/new` answers a request with no session by redirecting to `/login`, where there
 	// is no `Judul` field, and the test then spends its whole timeout waiting for one. Measured on
 	// #112, at six workers.
-	await expect(page).toHaveURL(/\/$/);
+	// An account with nothing granted is sent on to `/pending-approval` by the `(app)` layout.
+	await expect(page).toHaveURL(grant === 'none' ? /\/pending-approval$/ : /\/$/);
 }
 
 /**
@@ -197,6 +214,21 @@ const EVENT_START_TIME = '19:00';
 
 /** The end time, an hour after `EVENT_START_TIME`. */
 const EVENT_END_TIME = '20:00';
+
+/**
+ * What "inside the app shell" means on the announcement board, for a signed-in viewer at desktop
+ * width: the sidebar is on screen, its "Pengumuman & Kegiatan" link is the current page, and the
+ * page still has exactly one `main` landmark (#187). The link is named after its group, because a
+ * group of one renders as a plain link (see `tests/e2e/layout.spec.ts`).
+ */
+async function expectShellWithAnnouncementsLit(page: Page): Promise<void> {
+	const nav = page.getByRole('navigation', { name: 'Navigasi utama' });
+	await expect(nav).toBeVisible();
+	await expect(
+		nav.getByRole('link', { name: 'Pengumuman & Kegiatan', exact: true })
+	).toHaveAttribute('aria-current', 'page');
+	await expect(page.getByRole('main')).toHaveCount(1);
+}
 
 test('an admin publishes a kegiatan, and a browser with no session opens it from the board and reads it', async ({
 	page,
@@ -295,6 +327,36 @@ test('an admin publishes a kegiatan, and a browser with no session opens it from
 	).toBeVisible();
 
 	await anonymousContext.close();
+
+	// The same link opened by the signed-in admin who published it: since #319 a Post opens inside
+	// the app shell for anyone the `(app)` group lets in, with "Pengumuman" lit in the menu and still
+	// exactly one `main` landmark.
+	await page.goto(`/posts/${postId}`);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText(title);
+	await expectShellWithAnnouncementsLit(page);
+});
+
+test('a signed-in Warga opens the board inside the app shell, with Pengumuman lit and one main landmark', async ({
+	page
+}) => {
+	await signUpAccount(page, anAddress('warga'), 'resident');
+
+	await page.goto('/posts');
+	await expect(page.getByRole('heading', { level: 1, name: 'Papan pengumuman' })).toBeVisible();
+	await expectShellWithAnnouncementsLit(page);
+	// Not the light header: the shell's own header carries no "Beranda" button.
+	await expect(page.getByRole('banner').getByRole('link', { name: 'Beranda' })).toHaveCount(0);
+});
+
+test('an account still waiting for approval keeps the light header on the board', async ({
+	page
+}) => {
+	await signUpAccount(page, anAddress('menunggu'), 'none');
+
+	await page.goto('/posts');
+	await expect(page.locator('[data-sidebar]')).toHaveCount(0);
+	await expect(page.getByRole('main')).toHaveCount(1);
+	await expect(page.getByRole('banner').getByRole('link', { name: 'Beranda' })).toBeVisible();
 });
 
 test('a draft Post answers 404 to a browser with no session, even with its real id', async ({

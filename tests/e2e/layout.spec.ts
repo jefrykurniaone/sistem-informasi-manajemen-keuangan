@@ -206,7 +206,7 @@ test('/posts without a session shows a header with the complex name and a Masuk 
 	await expect(page).toHaveURL(/\/login$/);
 });
 
-test('with a session, / carries the shell with the complex name as its brand, and /posts greets the account and links back to Beranda', async ({
+test('with a session, / carries the shell with the complex name as its brand, and /posts carries the same shell with Pengumuman & Kegiatan as the current page', async ({
 	page
 }) => {
 	await signedInSuperuser(page);
@@ -218,14 +218,20 @@ test('with a session, / carries the shell with the complex name as its brand, an
 	await openDrawer(page, MENU_BUTTON_ID, nav);
 	await expect(page.locator('[data-sidebar="header"]')).toContainText(COMPLEX_NAME);
 
+	// Since #319 the board opens inside the same shell for an account the `(app)` group lets in,
+	// not under the light header: the sidebar parts are there, there is no "Masuk" link, and the page
+	// still has exactly one `main` landmark. Counted before the drawer opens, because an open drawer
+	// is modal and hides the page behind it from the accessibility tree.
 	await open(page, '/posts');
-	await expect(page.locator(ANY_SIDEBAR_PART)).toHaveCount(0);
-	const header = page.getByRole('banner');
-	await expect(header).toContainText(ACCOUNT_NAME);
-	await expect(header.getByRole('link', { name: 'Masuk' })).toHaveCount(0);
+	await expect(page.locator(ANY_SIDEBAR_PART).first()).toBeAttached();
+	await expect(page.getByRole('button', { name: MENU_BUTTON_ID })).toBeVisible();
+	await expect(page.getByRole('main')).toHaveCount(1);
 
-	await header.getByRole('link', { name: 'Beranda' }).click();
-	await expect(page).toHaveURL(/\/$/);
+	await openDrawer(page, MENU_BUTTON_ID, nav);
+	await expect(
+		nav.getByRole('link', { name: 'Pengumuman & Kegiatan', exact: true })
+	).toHaveAttribute('aria-current', 'page');
+	await expect(page.getByRole('link', { name: 'Masuk' })).toHaveCount(0);
 });
 
 test('with a session at 1920px, the sidebar is on screen beside the page and the page does not scroll sideways', async ({
