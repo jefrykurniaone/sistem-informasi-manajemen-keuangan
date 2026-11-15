@@ -57,7 +57,12 @@ import {
  *
  * The action sequence is driven by a **seeded** linear congruential generator, so a failure replays
  * exactly by re-running the file — a random sequence that cannot be reproduced proves nothing about
- * the run that failed. The actions are the real service calls, never direct writes: verification
+ * the run that failed. The seed alone is not enough for that: every pick and every service walks
+ * rows in some order, and an order that ties falls back to a random id. So the clock moves one
+ * minute before every step and every payment is stamped from it, so no two payments share a
+ * `createdAt` and every oldest-first order (`pendingPaymentsOf`, the undo's pick, and
+ * `lockUnallocatedVerifiedPayments` in the service) is total; and the reversal's pick is ordered by
+ * a key that tells apart the portions of one refund, which share an instant. The actions are the real service calls, never direct writes: verification
  * with and without explicit invoice choices, rejection, an admin's cash payment, the payer's own
  * cancellation, a superuser's refund of part of the balance, a superuser's reversal of one
  * Pengembalian, a superuser's Pembatalan verifikasi, and monthly issuance with its automatic saldo
@@ -83,11 +88,28 @@ const testDb = testDatabase();
 /** The instant every clock starts at. Its Jakarta day sits in February 2026, an open month. */
 const START = '2026-02-10T00:00:00.000Z';
 
-/** The seed. Change it only on purpose: it is what makes a failure replayable. */
-const SEED = 20260929;
+/**
+ * The seed. Change it only on purpose: it is what makes a failure replayable. #331 changed it from
+ * 20260929, together with `ACTION_TABLE`, to a sequence in which every correction clears
+ * `MINIMUM_RUNS_PER_CORRECTION` with room to spare: 10 refunds, 13 reversals, 9 Pembatalan
+ * verifikasi and 3 refused ones, the same counts on every run.
+ */
+const SEED = 20261101;
 
 /** How many random actions the sequence runs. */
-const ACTION_COUNT = 90;
+const ACTION_COUNT = 120;
+
+/**
+ * The actions a step picks from, each listed as many times as its weight. The numbers are the cases
+ * of the `switch` below. Without the weights the Pembatalan verifikasi (8) drains the verified money
+ * the refund (5) needs, and a seed could run the sequence with no Pengembalian at all: so the money
+ * flows in (0, 1, 2, 4) and the two Pengembalian actions (5, 6) carry twice the weight of the
+ * rejection (3), the issuance (7) and the undo (8).
+ */
+const ACTION_TABLE = [0, 0, 1, 1, 2, 3, 4, 4, 5, 5, 6, 6, 7, 8] as const;
+
+/** How far the sequence's clock moves before each step. */
+const STEP_MILLISECONDS = 60_000;
 
 /**
  * How many times each correction (refund, reversal, Pembatalan verifikasi) must have succeeded by the
@@ -173,11 +195,16 @@ async function insertHousehold(number: string): Promise<Household> {
 	return { unitId: unit.id, payerUserId, payerResidentId: resident.id };
 }
 
-/** A pending payment, shaped exactly as #28 leaves one for verification. */
+/**
+ * A pending payment, shaped exactly as #28 leaves one for verification, stamped from the sequence's
+ * clock: the clock moves on every step, so no two payments share a `createdAt`, and every
+ * oldest-first order over them (here and in the services) is decided by time, never by a random id.
+ */
 async function insertPendingPayment(
 	household: Household,
 	amount: Rupiah,
-	receivedOn: string
+	receivedOn: string,
+	clock: FakeClock
 ): Promise<string> {
 	const [row] = await testDb.db
 		.insert(payments)
@@ -189,7 +216,7 @@ async function insertPendingPayment(
 			method: PAYMENT_METHOD.transfer,
 			proofFileKey: `payments/${randomUUID()}/proof.jpg`,
 			status: PAYMENT_STATUS.pending,
-			createdAt: new Date(START)
+			createdAt: clock.now()
 		})
 		.returning();
 	return row.id;
@@ -369,14 +396,18 @@ describe('the unit money invariant, over a long random action sequence', () => {
 		let unverifyRefusals = 0;
 
 		for (let step = 1; step <= ACTION_COUNT; step += 1) {
+			// One minute per step, so every row a step stamps (a payment, a refund, an Alokasi) is later
+			// than every row an earlier step stamped. The rows one step writes together (the portions of
+			// one refund) are told apart by the order keys below, never by their random ids.
+			clock.advance(STEP_MILLISECONDS);
 			const household = pick(households);
-			const action = Math.floor(random() * 9);
+			const action = pick(ACTION_TABLE);
 			const label = `step ${step}, action ${action}, unit ${household.unitId}`;
 
 			switch (action) {
 				case 0: {
 					// A resident records a transfer.
-					await insertPendingPayment(household, rupiah(pick(AMOUNTS)), pick(RECEIPT_DAYS));
+					await insertPendingPayment(household, rupiah(pick(AMOUNTS)), pick(RECEIPT_DAYS), clock);
 					break;
 				}
 				case 1: {
@@ -451,25 +482,23 @@ describe('the unit money invariant, over a long random action sequence', () => {
 				case 6: {
 					// #329: the superuser reverses one Pengembalian of the unit still in force, picked at
 					// random. The real service, under the payment lock; skipped while there is none.
-					const unitPayments = await testDb.db
-						.select({ id: payments.id })
-						.from(payments)
-						.where(eq(payments.unitId, household.unitId));
-					const standing =
-						unitPayments.length === 0
-							? []
-							: await inForce(
-									await testDb.db
-										.select()
-										.from(refunds)
-										.where(
-											inArray(
-												refunds.paymentId,
-												unitPayments.map((row) => row.id)
-											)
-										)
-										.orderBy(asc(refunds.createdAt), asc(refunds.id))
-								);
+					// Ordered by a total key: the portions of one refund share its instant but each
+					// drains another Pembayaran, and no two Pembayaran share a `createdAt`.
+					const standing = await inForce(
+						(
+							await testDb.db
+								.select({ refund: refunds })
+								.from(refunds)
+								.innerJoin(payments, eq(payments.id, refunds.paymentId))
+								.where(eq(payments.unitId, household.unitId))
+								.orderBy(
+									asc(refunds.createdAt),
+									asc(payments.receivedOn),
+									asc(payments.createdAt),
+									asc(refunds.id)
+								)
+						).map((row) => row.refund)
+					);
 					if (standing.length > 0) {
 						await reverseRefund(testDb.db, clock, {
 							actorId: superuserId,
@@ -542,13 +571,16 @@ describe('the unit money invariant, over a long random action sequence', () => {
 		const invoiceCount = await testDb.db.select({ id: invoices.id }).from(invoices);
 		expect(paymentCount.length).toBeGreaterThan(0);
 		expect(invoiceCount.length).toBeGreaterThan(0);
+		// Printed before the floors below, so a sequence that misses one still says what it did.
+		console.info(
+			`unit money invariant: ${refundsMade} refunds, ${reversals} reversals, ${unverified} verification undos, ${unverifyRefusals} undo refusals`
+		);
 		// And every correction really ran, enough times to be evidence: the in-force term and the
 		// verified sum were each moved by the corrections rather than left vacuous.
 		expect(refundsMade).toBeGreaterThanOrEqual(MINIMUM_RUNS_PER_CORRECTION);
 		expect(reversals).toBeGreaterThanOrEqual(MINIMUM_RUNS_PER_CORRECTION);
 		expect(unverified).toBeGreaterThanOrEqual(MINIMUM_RUNS_PER_CORRECTION);
-		console.info(
-			`unit money invariant: ${refundsMade} refunds, ${reversals} reversals, ${unverified} verification undos, ${unverifyRefusals} undo refusals`
-		);
+		// And the refusal of an undo while a Pengembalian is in force was really met, not only skipped.
+		expect(unverifyRefusals).toBeGreaterThanOrEqual(1);
 	}, 120_000);
 });

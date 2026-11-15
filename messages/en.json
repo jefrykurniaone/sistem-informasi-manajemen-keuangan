@@ -993,7 +993,7 @@
 	"unitFinance_allocationLine": "{amount} from payment {paymentId}",
 	"unitFinance_releaseButton": "Release",
 	"unitFinance_historyHeading": "Correction history",
-	"unitFinance_historyEmpty": "No invoice voids, allocation releases, or refunds for this unit yet.",
+	"unitFinance_historyEmpty": "No invoice voids, allocation releases, refunds, refund reversals, or verification undos for this unit yet.",
 	"unitFinance_actionVoided": "Invoice voided",
 	"unitFinance_actionReleased": "Allocation released",
 	"unitFinance_actionRefunded": "Credit balance refunded",

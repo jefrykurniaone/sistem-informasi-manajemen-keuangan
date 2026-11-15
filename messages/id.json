@@ -993,7 +993,7 @@
 	"unitFinance_allocationLine": "{amount} dari pembayaran {paymentId}",
 	"unitFinance_releaseButton": "Lepas",
 	"unitFinance_historyHeading": "Riwayat koreksi",
-	"unitFinance_historyEmpty": "Belum ada pembatalan tagihan, pelepasan alokasi, atau pengembalian saldo untuk unit ini.",
+	"unitFinance_historyEmpty": "Belum ada pembatalan tagihan, pelepasan alokasi, pengembalian saldo, pembatalan Pengembalian, atau pembatalan verifikasi untuk unit ini.",
 	"unitFinance_actionVoided": "Tagihan dibatalkan",
 	"unitFinance_actionReleased": "Alokasi dilepas",
 	"unitFinance_actionRefunded": "Saldo titipan dikembalikan",

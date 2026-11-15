@@ -29,6 +29,7 @@ import {
 	recordCashCorrection
 } from '#lib/server/services/cash/correction.ts';
 import { lockPeriod, PeriodLockedError } from '#lib/server/services/cash/period.ts';
+import { CashTransactionAlreadyCorrectedError } from '#lib/server/services/cash/writer.ts';
 import { creditBalanceOfUnit } from '#lib/server/services/dues/credit-balance.ts';
 import {
 	correctionsHistoryFor,
@@ -743,6 +744,52 @@ describe('unverifyPayment', () => {
 				reason: UNVERIFY_REASON
 			})
 		).rejects.toThrow(PaymentNotFoundError);
+	});
+
+	it('refuses a Pembayaran whose income line already carries a Koreksi from before #323, and writes nothing', async () => {
+		// Before #323 an Admin's ordinary Koreksi could reverse a dues income line; it no longer can, so
+		// that Koreksi is written straight in, the way the shared-run table in
+		// `tests/unit/dues-correction.test.ts` arranges a Pengembalian. The writer refuses a second
+		// Koreksi of one line, and the whole undo rolls back with it: the Alokasi it had already
+		// deleted are back. The finance route answers this class with `unverifyPayment_cashLineCorrected`.
+		const house = await verifiedHouse('Pembatalan Koreksi Lama');
+		const [oldKoreksi] = await testDb.db
+			.insert(cashTransactions)
+			.values({
+				id: randomUUID(),
+				occurredOn: RECEIVED_ON,
+				type: CASH_CATEGORY_TYPE.expense,
+				categoryId: await duesCategoryId(),
+				amount: rupiah(400_000),
+				description: 'Koreksi Admin sebelum #323.',
+				attachmentKey: null,
+				recordedBy: house.admin.userId,
+				correctionOf: house.cashTransactionId,
+				createdAt: new Date(START)
+			})
+			.returning();
+		const cashBefore = await testDb.db.select().from(cashTransactions);
+
+		const refusal: unknown = await unverify(house).catch((error: unknown) => error);
+
+		expect(refusal).toBeInstanceOf(CashTransactionAlreadyCorrectedError);
+		expect(refusal).toMatchObject({
+			transactionId: house.cashTransactionId,
+			correctionId: oldKoreksi.id
+		});
+		expect(await testDb.db.select().from(cashTransactions)).toEqual(cashBefore);
+		const payment = await paymentRow(house.paymentId);
+		expect(payment).toMatchObject({
+			status: PAYMENT_STATUS.verified,
+			rejectionReason: null,
+			verifiedBy: house.admin.residentId
+		});
+		expect((await allocationsOf(house.paymentId)).map((row) => row.id)).toEqual([
+			house.allocationId
+		]);
+		expect(await unverifiedRecordsOf(house.paymentId)).toHaveLength(0);
+		const recipient = await emailOfResident(house.payerResidentId);
+		expect(await emailsTo(recipient, PAYMENT_REJECTED_KIND)).toHaveLength(0);
 	});
 
 	it('refuses a verified Pembayaran with no verification record, rather than guess its cash line, and writes nothing', async () => {
