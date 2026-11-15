@@ -942,6 +942,7 @@
 	"emailPaymentVerified_intro": "Your payment of {amount} has been verified by the management.",
 	"emailPaymentVerified_settlementsHeading": "This payment settled the following invoices:",
 	"emailPaymentVerified_settlementLine": "- Period {period}: {amount}",
+	"emailPaymentVerified_outsideTenureLine": "- Unit invoices outside your occupancy: {amount}",
 	"emailPaymentVerified_noSettlements": "This payment settled no invoice yet and was recorded as your house's credit balance.",
 	"emailPaymentVerified_closing": "Thank you for your payment.",
 	"emailPaymentRejected_subject": "Your payment of {amount} was rejected",

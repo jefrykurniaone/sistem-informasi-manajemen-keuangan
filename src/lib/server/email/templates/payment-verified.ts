@@ -13,6 +13,15 @@ import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
  * amount becomes saldo titipan). A variable-length list cannot be one ICU message, so this template
  * renders one line per settlement and a different closing line when the list is empty, rather than
  * asking a single message key to loop.
+ *
+ * ## What the recorder is not told (#335)
+ *
+ * A payment settles the oldest Tagihan of the whole Unit first, which can include a Tagihan from
+ * before the recorder's Masa Huni. A Warga sees only what falls inside their own Masa Huni, so
+ * `settlements` lists only the Tagihan inside it, and the part of the payment that went to the
+ * others is one whole-rupiah figure, `outsideTenureAmount`, with no Periode. The payload built
+ * before #335 has no such field; the template reads its absence as zero, because a
+ * `payment-verified` row queued before the deploy is still rendered after it.
  */
 
 /** The `kind` stored on the queue row, and the key this template is registered under. */
@@ -32,6 +41,11 @@ export interface PaymentVerifiedEmailValues {
 	readonly amount: number;
 	/** Every Tagihan the payment settled, in the order to list them. Empty when none was. */
 	readonly settlements: readonly PaymentVerifiedSettlement[];
+	/**
+	 * The part of the payment that settled Tagihan outside the recorder's own Masa Huni, summed, in
+	 * whole rupiah. Zero when none did. Written as one line without a Periode.
+	 */
+	readonly outsideTenureAmount: number;
 	/** Which catalog to render the text from. Defaults to the base locale, `id`. */
 	readonly locale?: Locale;
 }
@@ -44,6 +58,7 @@ export function paymentVerifiedPayload(values: PaymentVerifiedEmailValues): Emai
 			period: settlement.period,
 			amount: settlement.amount
 		})),
+		outsideTenureAmount: values.outsideTenureAmount,
 		locale: values.locale ?? baseLocale
 	};
 }
@@ -61,22 +76,27 @@ function isSettlementShape(value: unknown): value is PaymentVerifiedSettlement {
 /** Writes the payment-verified email, in the locale its payload names. */
 export const paymentVerifiedTemplate: EmailTemplate = (payload) => {
 	const { amount, settlements, locale } = payload;
+	// A row queued before #335 carries no `outsideTenureAmount`: that is zero, not a malformed row.
+	const outsideTenureAmount = payload.outsideTenureAmount ?? 0;
 	if (
 		typeof amount !== 'number' ||
 		!Array.isArray(settlements) ||
 		!settlements.every(isSettlementShape) ||
+		typeof outsideTenureAmount !== 'number' ||
 		typeof locale !== 'string' ||
 		!(locales as readonly string[]).includes(locale)
 	) {
 		throw new TypeError(
-			`An email of kind "${PAYMENT_VERIFIED_KIND}" needs an amount that is a number, a settlements array of { period, amount }, and a locale that is one of ${locales.join(', ')}.`
+			`An email of kind "${PAYMENT_VERIFIED_KIND}" needs an amount that is a number, a settlements array of { period, amount }, an outsideTenureAmount that is a number when present, and a locale that is one of ${locales.join(', ')}.`
 		);
 	}
 	const resolvedLocale = locale as Locale;
 	const formattedAmount = formatRupiah(rupiah(amount));
 
+	// The outside-Masa-Huni part is a settlement too: with it, the payment did settle Tagihan, and
+	// "settled none" is never the line to write.
 	const settlementLines =
-		settlements.length === 0
+		settlements.length === 0 && outsideTenureAmount <= 0
 			? [m.emailPaymentVerified_noSettlements({}, { locale: resolvedLocale })]
 			: [
 					m.emailPaymentVerified_settlementsHeading({}, { locale: resolvedLocale }),
@@ -85,7 +105,15 @@ export const paymentVerifiedTemplate: EmailTemplate = (payload) => {
 							{ period: settlement.period, amount: formatRupiah(rupiah(settlement.amount)) },
 							{ locale: resolvedLocale }
 						)
-					)
+					),
+					...(outsideTenureAmount > 0
+						? [
+								m.emailPaymentVerified_outsideTenureLine(
+									{ amount: formatRupiah(rupiah(outsideTenureAmount)) },
+									{ locale: resolvedLocale }
+								)
+							]
+						: [])
 				];
 
 	return {
