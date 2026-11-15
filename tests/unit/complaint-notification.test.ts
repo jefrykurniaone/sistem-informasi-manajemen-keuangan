@@ -41,6 +41,7 @@ import {
 	setSubscriptionPreference
 } from '#lib/server/services/subscription/index.ts';
 import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
+import { verifyUnsubscribeToken } from '#lib/server/services/subscription/unsubscribe-token.ts';
 
 /**
  * `./notification.ts` — the two emails #46 adds — and the templates they render through.
@@ -498,6 +499,61 @@ describe('newComplaintTemplate', () => {
 		);
 
 		expect(rendered.subject).toBe('New complaint: Blocked drain');
+	});
+
+	it('renders the unsubscribe link the queued row carries, a token that switches off new-complaint for that admin', async () => {
+		const clock = new FakeClock(START);
+		const adminId = await insertAdmin(unique('Pengurus Tautan Berhenti'));
+		await subscribe(adminId, clock, SUBSCRIPTION_KIND.newComplaint, true);
+		const reporterId = await insertAccount(unique('Pelapor Tautan Berhenti'));
+		const complaint = complaintFixture({ reporterId: await residentIdOf(reporterId) });
+
+		await notifyNewComplaint(testDb.db, clock, complaint);
+
+		const [row] = await emailsTo(await emailOf(adminId), NEW_COMPLAINT_KIND);
+		const rendered = newComplaintTemplate(row.payload);
+		const prefix = `${readOrigin()}/unsubscribe/`;
+		const link = rendered.text.split('\n').find((line) => line.startsWith(prefix));
+		if (!link) {
+			throw new Error('Expected the rendered text to carry an unsubscribe link, and found none.');
+		}
+		expect(verifyUnsubscribeToken(link.slice(prefix.length))).toEqual({
+			valid: true,
+			residentId: await residentIdOf(adminId),
+			kind: SUBSCRIPTION_KIND.newComplaint
+		});
+		expect(rendered.text).toContain('Berhenti berlangganan');
+	});
+
+	it('renders the unsubscribe link in the payload locale', () => {
+		const rendered = newComplaintTemplate({
+			...newComplaintPayload({ title: 't', category: 'c', url: 'u', locale: 'en' }),
+			unsubscribeUrl: 'https://komplek.local/unsubscribe/abc.def'
+		});
+
+		expect(rendered.text).toContain('Unsubscribe here:');
+		expect(rendered.text).toContain('https://komplek.local/unsubscribe/abc.def');
+	});
+
+	it('still renders a row queued before the link existed, without one', () => {
+		const rendered = newComplaintTemplate(
+			newComplaintPayload({
+				title: 't',
+				category: 'c',
+				url: 'https://komplek.local/admin/complaints/1',
+				locale: 'id'
+			})
+		);
+
+		expect(rendered.text).toContain('https://komplek.local/admin/complaints/1');
+		expect(rendered.text).not.toContain('/unsubscribe/');
+		expect(rendered.text).not.toContain('Berhenti berlangganan');
+	});
+
+	it('throws TypeError when unsubscribeUrl is present but not a string', () => {
+		const payload = { title: 't', category: 'c', url: 'u', locale: 'id', unsubscribeUrl: 1 };
+
+		expect(() => newComplaintTemplate(payload)).toThrow(TypeError);
 	});
 
 	it.each([

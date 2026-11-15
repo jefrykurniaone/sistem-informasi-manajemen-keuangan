@@ -18,6 +18,7 @@ import { createPost, type PostContent } from '#lib/server/services/post/index.ts
 import { notifyNewPost } from '#lib/server/services/post/notification.ts';
 import { setSubscriptionPreference } from '#lib/server/services/subscription/index.ts';
 import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
+import { verifyUnsubscribeToken } from '#lib/server/services/subscription/unsubscribe-token.ts';
 
 /**
  * `notifyNewPost` — the recipient side of #41 — and the `new-post` template it renders through.
@@ -179,6 +180,69 @@ describe('newPostTemplate', () => {
 
 		expect(rendered.subject).toBe('New post: Weekend cleanup');
 		expect(rendered.text).toContain('Short summary.');
+	});
+
+	it('renders the unsubscribe link the queued row carries, a token that switches off new-post for that resident', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Tautan Berhenti'));
+		const clock = new FakeClock(START);
+		const subscriberId = await insertAccount(unique('Warga Tautan Berhenti'));
+		await subscribeToNewPost(subscriberId, clock, true);
+		const post = await createPost(testDb.db, clock, { actorId: adminId, ...announcementContent() });
+
+		await notifyNewPost(testDb.db, clock, post);
+
+		const subscriberEmail = await emailOf(subscriberId);
+		const own = (await newPostRowsFor(post.title)).find((row) => row.recipient === subscriberEmail);
+		if (!own) {
+			throw new Error('Expected a queued row for the subscribed resident, and found none.');
+		}
+		const rendered = newPostTemplate(own.payload);
+		const prefix = `${readOrigin()}/unsubscribe/`;
+		const link = rendered.text.split('\n').find((line) => line.startsWith(prefix));
+		if (!link) {
+			throw new Error('Expected the rendered text to carry an unsubscribe link, and found none.');
+		}
+		const [resident] = await testDb.db
+			.select({ id: residents.id })
+			.from(residents)
+			.where(eq(residents.userId, subscriberId));
+		expect(verifyUnsubscribeToken(link.slice(prefix.length))).toEqual({
+			valid: true,
+			residentId: resident.id,
+			kind: SUBSCRIPTION_KIND.newPost
+		});
+		expect(rendered.text).toContain('Berhenti berlangganan');
+	});
+
+	it('renders the unsubscribe link in the payload locale', () => {
+		const rendered = newPostTemplate({
+			...newPostPayload({ title: 't', summary: 's', url: 'u', locale: 'en' }),
+			unsubscribeUrl: 'https://komplek.local/unsubscribe/abc.def'
+		});
+
+		expect(rendered.text).toContain('Unsubscribe here:');
+		expect(rendered.text).toContain('https://komplek.local/unsubscribe/abc.def');
+	});
+
+	it('still renders a row queued before the link existed, without one', () => {
+		const rendered = newPostTemplate(
+			newPostPayload({
+				title: 't',
+				summary: 's',
+				url: 'https://komplek.local/posts/1',
+				locale: 'id'
+			})
+		);
+
+		expect(rendered.text).toContain('https://komplek.local/posts/1');
+		expect(rendered.text).not.toContain('/unsubscribe/');
+		expect(rendered.text).not.toContain('Berhenti berlangganan');
+	});
+
+	it('throws TypeError when unsubscribeUrl is present but not a string', () => {
+		const payload = { title: 't', summary: 's', url: 'u', locale: 'id', unsubscribeUrl: 1 };
+
+		expect(() => newPostTemplate(payload)).toThrow(TypeError);
 	});
 
 	it.each([
