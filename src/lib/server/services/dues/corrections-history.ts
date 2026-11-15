@@ -8,8 +8,9 @@ import { auditLog } from '../../db/schema/audit';
 import { user } from '../../db/schema/auth';
 import { cashTransactions } from '../../db/schema/cash-transaction';
 import { invoices } from '../../db/schema/invoice';
-import { payments } from '../../db/schema/payment';
+import { PAYMENT_STATUS, payments, type PaymentMethod } from '../../db/schema/payment';
 import { refunds } from '../../db/schema/refund';
+import { residents } from '../../db/schema/resident';
 import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
 import { creditBalanceOfUnit, refundInForce } from './credit-balance';
@@ -28,7 +29,8 @@ import { UnitNotFoundError } from './queries';
 /**
  * The reads behind the unit finance screen: one Unit's Saldo Titipan, its Tagihan with their
  * Alokasi laid out for the void and release controls, its Pengembalian laid out for the reversal
- * control (#329), and the history of the dues corrections, so
+ * control (#329), its verified Pembayaran laid out for the Pembatalan verifikasi control (#331), and
+ * the history of the dues corrections, so
  * `src/routes/(app)/admin/units/[id]/finance/+page.server.ts` calls a service and composes no query
  * of its own. The corrections themselves, and the typed Audit Log record each one leaves, are the
  * dues-correction module's, `./dues-correction.ts`.
@@ -127,6 +129,28 @@ export interface FinanceRefundRow {
 	readonly reversalReason: string | null;
 }
 
+/** One Alokasi of a verified Pembayaran, as the payment list summarises it: which Tagihan, how much. */
+export interface FinancePaymentAllocation {
+	readonly allocationId: string;
+	readonly invoiceId: string;
+	/** The Tagihan's Periode, as `YYYY-MM`. */
+	readonly period: string;
+	readonly amount: Rupiah;
+}
+
+/** One verified Pembayaran on the finance screen, for the Pembatalan verifikasi control. */
+export interface FinanceVerifiedPaymentRow {
+	readonly paymentId: string;
+	readonly amount: Rupiah;
+	/** The day the money changed hands, as `YYYY-MM-DD`: the day its income line and Koreksi carry. */
+	readonly receivedOn: string;
+	readonly method: PaymentMethod;
+	/** Who recorded it, by the display name of the account behind `payments.recordedBy`. */
+	readonly recordedByName: string;
+	/** Its Alokasi, oldest Periode first. Empty when all of it is Saldo Titipan. */
+	readonly allocations: readonly FinancePaymentAllocation[];
+}
+
 /** The whole answer for one Unit's finance screen, short of the history. */
 export interface UnitFinance {
 	readonly unitId: string;
@@ -138,11 +162,14 @@ export interface UnitFinance {
 	readonly invoices: readonly FinanceInvoiceRow[];
 	/** Every Pengembalian of the house's Pembayaran, reversed ones included, newest first. */
 	readonly refunds: readonly FinanceRefundRow[];
+	/** Every Pembayaran of the house that is verified right now, newest money first. */
+	readonly verifiedPayments: readonly FinanceVerifiedPaymentRow[];
 }
 
 /**
- * One Unit's Saldo Titipan, Tagihan and Pengembalian, each Tagihan carrying its Alokasi as rows and
- * its status: the reads the void, release, refund and reversal controls decide themselves against.
+ * One Unit's Saldo Titipan, Tagihan, Pengembalian and verified Pembayaran, each Tagihan carrying its
+ * Alokasi as rows and its status: the reads the void, release, refund, reversal and Pembatalan
+ * verifikasi controls decide themselves against.
  * No lock: this is a screen, and every write path re-reads what it needs under its own locks.
  *
  * Everything is read in one read-only `repeatable read` transaction, one snapshot for every
@@ -195,6 +222,7 @@ export async function unitFinanceFor(
 				rows.map((row) => row.invoiceId)
 			);
 			const refundRows = await refundRowsOfUnit(transaction, unitId);
+			const verifiedPayments = await verifiedPaymentRowsOfUnit(transaction, unitId);
 			return {
 				unitId: unit.id,
 				block: unit.block,
@@ -204,7 +232,8 @@ export async function unitFinanceFor(
 					...row,
 					allocations: allocationsByInvoice.get(row.invoiceId) ?? []
 				})),
-				refunds: refundRows
+				refunds: refundRows,
+				verifiedPayments
 			};
 		},
 		{ isolationLevel: 'repeatable read', accessMode: 'read only' }
@@ -374,4 +403,67 @@ async function refundRowsOfUnit(
 		.innerJoin(cashTransactions, eq(cashTransactions.id, refunds.cashTransactionId))
 		.where(eq(payments.unitId, unitId))
 		.orderBy(desc(cashTransactions.occurredOn), desc(refunds.createdAt), desc(refunds.id));
+}
+
+/**
+ * Every verified Pembayaran of `unitId`, newest money first (`receivedOn`, then `createdAt`, then
+ * `id`, the reverse of the order a spender drains them in), each with its recorder's name and its
+ * Alokasi. Read in the caller's snapshot, so the Alokasi listed here are the ones listed under the
+ * Tagihan beside them.
+ */
+async function verifiedPaymentRowsOfUnit(
+	db: DatabaseWriter,
+	unitId: string
+): Promise<readonly FinanceVerifiedPaymentRow[]> {
+	const rows = await db
+		.select({
+			paymentId: payments.id,
+			amount: payments.amount,
+			receivedOn: payments.receivedOn,
+			method: payments.method,
+			recordedByName: user.name
+		})
+		.from(payments)
+		.innerJoin(residents, eq(residents.id, payments.recordedBy))
+		.innerJoin(user, eq(user.id, residents.userId))
+		.where(and(eq(payments.unitId, unitId), eq(payments.status, PAYMENT_STATUS.verified)))
+		.orderBy(desc(payments.receivedOn), desc(payments.createdAt), desc(payments.id));
+	if (rows.length === 0) {
+		return [];
+	}
+
+	const allocated = await db
+		.select({
+			allocationId: allocations.id,
+			paymentId: allocations.paymentId,
+			invoiceId: allocations.invoiceId,
+			period: invoices.period,
+			amount: allocations.amount
+		})
+		.from(allocations)
+		.innerJoin(invoices, eq(invoices.id, allocations.invoiceId))
+		.where(
+			inArray(
+				allocations.paymentId,
+				rows.map((row) => row.paymentId)
+			)
+		)
+		.orderBy(asc(invoices.period), asc(allocations.createdAt), asc(allocations.id));
+
+	const byPayment = new Map<string, FinancePaymentAllocation[]>();
+	for (const row of allocated) {
+		const entry = {
+			allocationId: row.allocationId,
+			invoiceId: row.invoiceId,
+			period: row.period,
+			amount: row.amount
+		};
+		const existing = byPayment.get(row.paymentId);
+		if (existing) {
+			existing.push(entry);
+		} else {
+			byPayment.set(row.paymentId, [entry]);
+		}
+	}
+	return rows.map((row) => ({ ...row, allocations: byPayment.get(row.paymentId) ?? [] }));
 }

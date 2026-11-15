@@ -21,7 +21,11 @@ import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
 import { creditBalanceOfUnit } from '#lib/server/services/dues/credit-balance.ts';
 import { refundCredit } from '#lib/server/services/dues/credit-refund.ts';
-import { reverseRefund } from '#lib/server/services/dues/dues-correction.ts';
+import {
+	reverseRefund,
+	UnverifyRefusedRefundedError,
+	unverifyPayment
+} from '#lib/server/services/dues/dues-correction.ts';
 import { issueInvoicesForPeriod } from '#lib/server/services/dues/issuance.ts';
 import { cancelOwnPayment } from '#lib/server/services/dues/payment.ts';
 import { openInvoicesOfUnit } from '#lib/server/services/dues/allocation.ts';
@@ -45,14 +49,21 @@ import {
  * `refunds` rows is the term the equation carries — no longer identically zero. Since #329 the
  * sequence also reverses random Pengembalian through the real `reverseRefund` (Pembatalan
  * Pengembalian), and the term counts only the Pengembalian in force: those whose cash row has no
- * Koreksi, recomputed here from raw rows rather than through the production predicate.
+ * Koreksi, recomputed here from raw rows rather than through the production predicate. Since #331 it
+ * also undoes the verification of random verified Pembayaran through the real `unverifyPayment`
+ * (Pembatalan verifikasi): the Pembayaran leaves the verified sum, its Alokasi leave the allocated
+ * sum, and its income line gets a Koreksi, so every equation below must still close. A pick that
+ * still has a Pengembalian in force must be refused by name, and that refusal is asserted too.
  *
  * The action sequence is driven by a **seeded** linear congruential generator, so a failure replays
  * exactly by re-running the file — a random sequence that cannot be reproduced proves nothing about
  * the run that failed. The actions are the real service calls, never direct writes: verification
  * with and without explicit invoice choices, rejection, an admin's cash payment, the payer's own
  * cancellation, a superuser's refund of part of the balance, a superuser's reversal of one
- * Pengembalian, and monthly issuance with its automatic saldo titipan consumption.
+ * Pengembalian, a superuser's Pembatalan verifikasi, and monthly issuance with its automatic saldo
+ * titipan consumption. Each of the three corrections must really run at least
+ * `MINIMUM_RUNS_PER_CORRECTION` times, so a seed that rarely reaches one of them fails loudly
+ * instead of proving nothing about it.
  *
  * Beyond the headline equation, four supporting invariants are asserted after every action,
  * because each is a way the equation could hold while the books were still wrong:
@@ -77,6 +88,12 @@ const SEED = 20260929;
 
 /** How many random actions the sequence runs. */
 const ACTION_COUNT = 90;
+
+/**
+ * How many times each correction (refund, reversal, Pembatalan verifikasi) must have succeeded by the
+ * end of the sequence, so the run is evidence about each of them rather than about one lucky step.
+ */
+const MINIMUM_RUNS_PER_CORRECTION = 3;
 
 /** The monthly rate the issuance actions bill at. */
 const MONTHLY_RATE = rupiah(150_000);
@@ -346,11 +363,14 @@ describe('the unit money invariant, over a long random action sequence', () => {
 		const clock = new FakeClock(START);
 		const fileStore = new FakeFileStore(clock);
 		let nextMonth = 3; // Issuance walks 2026-03 onward, one new Periode per issuance action.
+		let refundsMade = 0;
 		let reversals = 0;
+		let unverified = 0;
+		let unverifyRefusals = 0;
 
 		for (let step = 1; step <= ACTION_COUNT; step += 1) {
 			const household = pick(households);
-			const action = Math.floor(random() * 8);
+			const action = Math.floor(random() * 9);
 			const label = `step ${step}, action ${action}, unit ${household.unitId}`;
 
 			switch (action) {
@@ -424,6 +444,7 @@ describe('the unit money invariant, over a long random action sequence', () => {
 							occurredOn: pick(RECEIPT_DAYS),
 							reason: 'Sebagian saldo titipan dikembalikan kepada warganya.'
 						});
+						refundsMade += 1;
 					}
 					break;
 				}
@@ -459,6 +480,43 @@ describe('the unit money invariant, over a long random action sequence', () => {
 					}
 					break;
 				}
+				case 8: {
+					// #331: the superuser undoes the verification of one verified payment of the unit,
+					// picked at random. The real service, under the payment lock. A pick that still has a
+					// Pengembalian in force must be refused by name and change nothing; any other pick
+					// must succeed. Skipped while the unit has no verified payment.
+					const verified = await testDb.db
+						.select({ id: payments.id })
+						.from(payments)
+						.where(
+							and(
+								eq(payments.unitId, household.unitId),
+								eq(payments.status, PAYMENT_STATUS.verified)
+							)
+						)
+						.orderBy(asc(payments.createdAt), asc(payments.id));
+					if (verified.length > 0) {
+						const paymentId = pick(verified).id;
+						const blocking = await inForce(
+							await testDb.db.select().from(refunds).where(eq(refunds.paymentId, paymentId))
+						);
+						const request = {
+							actorId: superuserId,
+							paymentId,
+							reason: 'Uangnya ternyata tidak pernah masuk, verifikasi dibatalkan.'
+						};
+						if (blocking.length > 0) {
+							await expect(unverifyPayment(testDb.db, clock, request), label).rejects.toThrow(
+								UnverifyRefusedRefundedError
+							);
+							unverifyRefusals += 1;
+						} else {
+							await unverifyPayment(testDb.db, clock, request);
+							unverified += 1;
+						}
+					}
+					break;
+				}
 				default: {
 					// A new month's issuance, which also consumes saldo titipan — for every unit at once.
 					if (nextMonth <= 12) {
@@ -484,7 +542,13 @@ describe('the unit money invariant, over a long random action sequence', () => {
 		const invoiceCount = await testDb.db.select({ id: invoices.id }).from(invoices);
 		expect(paymentCount.length).toBeGreaterThan(0);
 		expect(invoiceCount.length).toBeGreaterThan(0);
-		// And the reversal really ran, so the in-force term was exercised rather than vacuous.
-		expect(reversals).toBeGreaterThan(0);
+		// And every correction really ran, enough times to be evidence: the in-force term and the
+		// verified sum were each moved by the corrections rather than left vacuous.
+		expect(refundsMade).toBeGreaterThanOrEqual(MINIMUM_RUNS_PER_CORRECTION);
+		expect(reversals).toBeGreaterThanOrEqual(MINIMUM_RUNS_PER_CORRECTION);
+		expect(unverified).toBeGreaterThanOrEqual(MINIMUM_RUNS_PER_CORRECTION);
+		console.info(
+			`unit money invariant: ${refundsMade} refunds, ${reversals} reversals, ${unverified} verification undos, ${unverifyRefusals} undo refusals`
+		);
 	}, 120_000);
 });

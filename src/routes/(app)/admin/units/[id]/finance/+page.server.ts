@@ -28,25 +28,32 @@ import {
 	RefundRuleError,
 	ReleaseRuleError,
 	ReverseRefundRuleError,
+	UNVERIFY_RULE,
+	UnverifyRefusedRefundedError,
+	UnverifyRuleError,
 	VOID_RULE,
 	VoidRefusedAllocatedError,
 	VoidRuleError,
 	refundCredit,
 	releaseAllocation,
 	reverseRefund,
+	unverifyPayment,
 	voidInvoice,
 	type RefundRule,
 	type ReleaseRule,
 	type ReverseRefundRule,
+	type UnverifyRule,
 	type VoidRule
 } from '#lib/server/services/dues/dues-correction.ts';
+import { PaymentNotFoundError } from '#lib/server/services/dues/verification.ts';
 import { isUuid } from '#lib/server/services/identifier.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
  * The unit finance screen: one Unit's saldo titipan, its Tagihan with their Alokasi, its
- * Pengembalian, the history of the superuser's dues corrections, and the four actions themselves
- * (#30's three, and #329's Pembatalan Pengembalian), which all come from the dues-correction module,
+ * Pengembalian, its verified Pembayaran, the history of the superuser's dues corrections, and the
+ * five actions themselves (#30's three, #329's Pembatalan Pengembalian and #331's Pembatalan
+ * verifikasi), which all come from the dues-correction module,
  * `#lib/server/services/dues/dues-correction.ts`, with the screen's reads in
  * `corrections-history.ts` beside it.
  *
@@ -57,6 +64,10 @@ import type { Actions, PageServerLoad } from './$types';
  * screen's invalid-form sentence rather than a 500. `CashCorrectionTargetError` is deliberately not
  * named: from the dues-correction module it means the wrong cash line was found, a defect that must
  * reach the log, as `route-action.ts` records.
+ *
+ * Every id a form posts names a `uuid` column, so an id of any other shape is answered with the
+ * invalid-form sentence before it can reach PostgreSQL as a driver error and a 500: the screen only
+ * ever posts the ids it rendered.
  *
  * Every action and the `load` are `ACTION.correctDues`'s, superuser's alone: this screen is only
  * useful to whoever may press its buttons, the reasoning
@@ -71,6 +82,9 @@ const ALLOCATION_ID_FIELD = 'allocationId';
 
 /** The form field naming which Pengembalian is being reversed. */
 const REFUND_ID_FIELD = 'refundId';
+
+/** The form field naming which Pembayaran's verification is being undone. */
+const PAYMENT_ID_FIELD = 'paymentId';
 
 /** The form field carrying each action's required reason. */
 const REASON_FIELD = 'reason';
@@ -113,7 +127,7 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const invoiceId = readText(form, INVOICE_ID_FIELD);
 		const reason = readText(form, REASON_FIELD);
-		if (invoiceId === '') {
+		if (!isUuid(invoiceId)) {
 			return fail(400, { message: m.unitFinance_invalidForm() });
 		}
 		const { db, clock } = productionDependencies();
@@ -148,7 +162,7 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const allocationId = readText(form, ALLOCATION_ID_FIELD);
 		const reason = readText(form, REASON_FIELD);
-		if (allocationId === '') {
+		if (!isUuid(allocationId)) {
 			return fail(400, { message: m.unitFinance_invalidForm() });
 		}
 		const { db, clock } = productionDependencies();
@@ -212,8 +226,6 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const refundId = readText(form, REFUND_ID_FIELD);
 		const reason = readText(form, REASON_FIELD);
-		// `refunds.id` is a `uuid` column, and an id of any other shape would reach PostgreSQL as a
-		// driver error: the screen only ever posts the ids it rendered.
 		if (!isUuid(refundId)) {
 			return fail(400, { message: m.unitFinance_invalidForm() });
 		}
@@ -242,6 +254,56 @@ export const actions: Actions = {
 					refusal(CashTransactionAlreadyCorrectedError, () =>
 						m.reverseRefund_rule_alreadyReversed()
 					)
+				]
+			});
+		}
+	},
+
+	unverify: async ({ request, locals }) => {
+		const user = requireUser(locals);
+		const form = await request.formData();
+		const paymentId = readText(form, PAYMENT_ID_FIELD);
+		const reason = readText(form, REASON_FIELD);
+		if (!isUuid(paymentId)) {
+			return fail(400, { message: m.unitFinance_invalidForm() });
+		}
+		const { db, clock } = productionDependencies();
+
+		try {
+			// The rejection email is queued inside `unverifyPayment`, after its commit, and a failure
+			// to queue it never reaches here: the correction is a success either way.
+			const outcome = await unverifyPayment(db, clock, { actorId: user.id, paymentId, reason });
+			return {
+				message: m.unverifyPayment_success({
+					amount: formatRupiah(outcome.payment.amount),
+					date: outcome.payment.receivedOn
+				})
+			};
+		} catch (caught) {
+			return failOrThrow(caught, {
+				...FORM,
+				refusals: [
+					refusal(UnverifyRuleError, ({ error }) => unverifyRuleMessage(error.rule)),
+					// The named refusal, sentence included: which Pengembalian to reverse first.
+					refusal(UnverifyRefusedRefundedError, ({ error }) =>
+						m.unverifyPayment_refusedRefunded({
+							refunds: error.refunds
+								.map((refund) =>
+									m.unverifyPayment_refundItem({
+										amount: formatRupiah(refund.amount),
+										date: refund.occurredOn
+									})
+								)
+								.join(', ')
+						})
+					),
+					refusal(PaymentNotFoundError, () => m.unverifyPayment_notFound()),
+					refusal(PeriodLockedError, ({ error }) =>
+						m.unverifyPayment_periodLocked({ period: error.period, date: error.occurredOn })
+					),
+					// Only an Admin's ordinary Koreksi from before #323 can have reversed a dues income
+					// line; the spec leaves such rows to the owner, so the screen says why it stops.
+					refusal(CashTransactionAlreadyCorrectedError, () => m.unverifyPayment_cashLineCorrected())
 				]
 			});
 		}
@@ -283,6 +345,16 @@ function reverseRefundRuleMessage(rule: ReverseRefundRule): string {
 	const messages: Record<ReverseRefundRule, () => string> = {
 		[REVERSE_REFUND_RULE.reasonMissing]: m.reverseRefund_rule_reasonMissing,
 		[REVERSE_REFUND_RULE.alreadyReversed]: m.reverseRefund_rule_alreadyReversed
+	};
+	return messages[rule]();
+}
+
+/** The sentence a superuser reads for each named Pembatalan verifikasi rule refusal. */
+function unverifyRuleMessage(rule: UnverifyRule): string {
+	const messages: Record<UnverifyRule, () => string> = {
+		[UNVERIFY_RULE.reasonMissing]: m.unverifyPayment_rule_reasonMissing,
+		[UNVERIFY_RULE.notVerified]: m.unverifyPayment_rule_notVerified,
+		[UNVERIFY_RULE.verificationRecordMissing]: m.unverifyPayment_rule_verificationRecordMissing
 	};
 	return messages[rule]();
 }

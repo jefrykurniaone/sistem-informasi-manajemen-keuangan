@@ -7,6 +7,9 @@
 	import ReverseRefundDialog, {
 		type ReversibleRefund
 	} from '#lib/components/dues/reverse-refund-dialog.svelte';
+	import UnverifyPaymentDialog, {
+		type UnverifiablePayment
+	} from '#lib/components/dues/unverify-payment-dialog.svelte';
 	import VoidInvoiceDialog, {
 		type VoidableInvoice
 	} from '#lib/components/dues/void-invoice-dialog.svelte';
@@ -31,12 +34,25 @@
 	/** The Pengembalian a reversal is being written for, or nothing while that dialog is closed. */
 	let reversing = $state<ReversibleRefund | undefined>(undefined);
 
+	/** The Pembayaran a Pembatalan verifikasi is being written for, or nothing while it is closed. */
+	let unverifying = $state<UnverifiablePayment | undefined>(undefined);
+
 	/** The heading sentence for one history entry, by which of the actions it records. */
 	const HISTORY_LABELS: Record<(typeof data.history)[number]['action'], () => string> = {
 		invoice_voided: m.unitFinance_actionVoided,
 		allocation_released: m.unitFinance_actionReleased,
 		credit_refunded: m.unitFinance_actionRefunded,
-		refund_reversed: m.unitFinance_actionRefundReversed
+		refund_reversed: m.unitFinance_actionRefundReversed,
+		payment_unverified: m.unitFinance_actionUnverified
+	};
+
+	/** The label for each way a Pembayaran can be paid. */
+	const METHOD_LABELS: Record<
+		(typeof data.finance.verifiedPayments)[number]['method'],
+		() => string
+	> = {
+		transfer: m.unitFinance_methodTransfer,
+		cash: m.unitFinance_methodCash
 	};
 
 	/**
@@ -182,6 +198,70 @@
 	</section>
 
 	<section class="flex flex-col gap-3">
+		<h2 class="font-medium">{m.unitFinance_verifiedPaymentsHeading()}</h2>
+
+		{#if data.finance.verifiedPayments.length === 0}
+			<p class="text-sm text-muted-foreground">{m.unitFinance_verifiedPaymentsEmpty()}</p>
+		{:else}
+			<ul class="flex flex-col gap-3">
+				{#each data.finance.verifiedPayments as payment (payment.paymentId)}
+					<li class="flex flex-col gap-2 rounded-lg border border-border p-4">
+						<div class="flex flex-wrap items-center justify-between gap-2">
+							<div class="flex min-w-0 flex-col gap-0.5">
+								<p class="font-medium">
+									{m.unitFinance_paymentLine({
+										amount: formatRupiah(payment.amount),
+										date: payment.receivedOn
+									})}
+								</p>
+								<p class="text-sm break-words text-muted-foreground">
+									{m.unitFinance_paymentMeta({
+										method: METHOD_LABELS[payment.method](),
+										name: payment.recordedByName
+									})}
+								</p>
+							</div>
+							<Button
+								type="button"
+								variant="outline"
+								class="h-11"
+								onclick={() => {
+									unverifying = {
+										id: payment.paymentId,
+										amount: formatRupiah(payment.amount),
+										receivedOn: payment.receivedOn,
+										recordedByName: payment.recordedByName
+									};
+								}}
+							>
+								{m.unitFinance_unverifyButton()}
+							</Button>
+						</div>
+
+						<div class="flex flex-col gap-1.5">
+							<h3 class="text-sm font-medium">{m.unitFinance_allocationsLabel()}</h3>
+							{#if payment.allocations.length === 0}
+								<p class="text-sm text-muted-foreground">{m.unitFinance_allocationsEmpty()}</p>
+							{:else}
+								<ul class="flex flex-col gap-1 text-sm">
+									{#each payment.allocations as allocation (allocation.allocationId)}
+										<li>
+											{m.unitFinance_paymentAllocationLine({
+												amount: formatRupiah(allocation.amount),
+												period: allocation.period
+											})}
+										</li>
+									{/each}
+								</ul>
+							{/if}
+						</div>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
+
+	<section class="flex flex-col gap-3">
 		<h2 class="font-medium">{m.unitFinance_refundsHeading()}</h2>
 
 		{#if data.finance.refunds.length === 0}
@@ -296,5 +376,13 @@
 	refund={reversing}
 	onClose={() => {
 		reversing = undefined;
+	}}
+/>
+
+<UnverifyPaymentDialog
+	action="?/unverify"
+	payment={unverifying}
+	onClose={() => {
+		unverifying = undefined;
 	}}
 />
