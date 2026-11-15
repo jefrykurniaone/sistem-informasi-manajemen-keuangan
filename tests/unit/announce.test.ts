@@ -358,6 +358,71 @@ describe('announce: links, language and rows', () => {
 	});
 });
 
+describe('announce: a rule of the caller that leaves a resident out', () => {
+	it('is applied after the Langganan, and counts the subscribed residents it left out as skipped', async () => {
+		const sentBefore = await insertResident('Warga Sudah Dikirimi');
+		const toSend = await insertResident('Warga Belum Dikirimi');
+		const neverSubscribed = await insertResident('Warga Tidak Berlangganan');
+		await answer(sentBefore, SUBSCRIPTION_KIND.monthlyReport, true);
+		await answer(toSend, SUBSCRIPTION_KIND.monthlyReport, true);
+		const asked: string[] = [];
+
+		const outcome = await announce(testDb.db, clock, {
+			kind: NOTIFICATION_EMAIL_KIND.monthlyReport,
+			recipients: everyResident,
+			except: (recipient) => {
+				asked.push(recipient.email);
+				return recipient.email === sentBefore.email;
+			},
+			payload: () => ({ marker: 'except' })
+		});
+
+		// Asked only about the residents the Langganan let through, and never about one who never
+		// subscribed: that resident is not "skipped", they were never going to be sent it.
+		expect(asked.sort()).toEqual(sorted(sentBefore.email, toSend.email));
+		expect(asked).not.toContain(neverSubscribed.email);
+		expect(outcome.queued.map((row) => row.recipient)).toEqual([toSend.email]);
+		expect(outcome.skipped).toBe(1);
+		expect(await queuedRecipients()).toEqual([toSend.email]);
+	});
+
+	it('applies to a kind that is not opt-in as well, and reports nothing skipped without a rule', async () => {
+		const left = await insertResident('Warga Dikecualikan');
+		const kept = await insertResident('Warga Tetap');
+
+		const withRule = await announce(testDb.db, clock, {
+			kind: NOTIFICATION_EMAIL_KIND.paymentVerified,
+			recipients: [left.residentId, kept.residentId],
+			except: (recipient) => recipient.residentId === left.residentId,
+			payload: () => ({ marker: 'rule' })
+		});
+		const withoutRule = await announce(testDb.db, clock, {
+			kind: NOTIFICATION_EMAIL_KIND.paymentVerified,
+			recipients: [kept.residentId],
+			payload: () => ({ marker: 'no rule' })
+		});
+
+		expect(withRule.skipped).toBe(1);
+		expect(withRule.queued.map((row) => row.recipient)).toEqual([kept.email]);
+		expect(withoutRule.skipped).toBe(0);
+	});
+
+	it('reports every subscribed resident as skipped, and queues nothing, when the rule leaves all out', async () => {
+		const only = await insertResident('Warga Satu-satunya');
+		await answer(only, SUBSCRIPTION_KIND.monthlyReport, true);
+
+		const outcome = await announce(testDb.db, clock, {
+			kind: NOTIFICATION_EMAIL_KIND.monthlyReport,
+			recipients: everyResident,
+			except: () => true,
+			payload: () => ({ marker: 'all out' })
+		});
+
+		expect(outcome).toEqual({ queued: [], skipped: 1 });
+		expect(await queuedRows()).toEqual([]);
+	});
+});
+
 describe('announce: the variant a job body calls throws', () => {
 	it('still queues every other recipient, then throws naming how many were queued', async () => {
 		const first = await insertResident('Warga Pertama');

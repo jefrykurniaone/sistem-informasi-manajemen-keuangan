@@ -8,6 +8,8 @@ import type { Clock } from '../../ports/clock';
 import { applyCreditToInvoice } from './allocation';
 import { isUnitExemptOn } from './exemption';
 import { dueDateOfPeriod, firstDayOfPeriod, issueInvoice } from './invoice';
+import { announceAfterCommit } from '../../email/announce';
+import { INVOICE_ISSUED_KIND } from '../../email/templates/invoice-issued';
 import { notifyInvoiceIssued } from './notification';
 import { duesRateOn } from './rate';
 
@@ -109,11 +111,10 @@ import { duesRateOn } from './rate';
  *
  * **What it decides here is when the job fires, and nothing else.** The run itself never asks the
  * clock what day it is — see this module's doc comment — so the zone cannot reach the rows that get
- * written. The one consequence worth stating: `currentDay(clock)` in
- * `src/lib/server/services/occupancy/visibility.ts` reads a **UTC** day, so between 00:00 and 07:00
- * local the two disagree by one day. That is a known gap in the screens that read `currentDay`, it
- * is recorded in that function's own comment, and it is not this module's to close — issuance reads
- * no day from the clock at all.
+ * written. The one place a day is read off the clock is the Tagihan's email, which finds the
+ * Penanggung Jawab through `currentDay(clock)` in `src/lib/server/services/occupancy/visibility.ts`:
+ * that reads the day in this same zone (`civilDayOf` in `src/lib/time.ts`), so the email's recipient
+ * and the job's schedule agree about which civil day it is, including between 00:00 and 07:00 local.
  */
 export { COMPLEX_TIME_ZONE } from '#lib/time.ts';
 
@@ -405,14 +406,22 @@ async function issueForUnit(
 	if (outcome.reason || outcome.amount === undefined) {
 		return outcome;
 	}
-	const notified = await notifyInvoiceIssued(db, clock, {
-		unitId: unit.id,
-		block: unit.block,
-		number: unit.number,
-		period: plan.period,
-		amount: outcome.amount,
-		dueDate: plan.dueDate
-	});
+	// A failure to queue the email is logged by `announceAfterCommit` and reads as "nobody was told":
+	// the Tagihan is issued either way, and the Unit is recorded in `skippedNotifications`.
+	const announcement = await announceAfterCommit(
+		`the "${INVOICE_ISSUED_KIND}" email for Unit ${unit.id}, Periode ${plan.period}`,
+		() =>
+			notifyInvoiceIssued(db, clock, {
+				unitId: unit.id,
+				block: unit.block,
+				number: unit.number,
+				period: plan.period,
+				amount: outcome.amount,
+				dueDate: plan.dueDate
+			})
+	);
+	// One recipient per Unit (its Penanggung Jawab), so one queue row is "told".
+	const notified = (announcement?.queued.length ?? 0) > 0;
 	return { ...outcome, notified };
 }
 

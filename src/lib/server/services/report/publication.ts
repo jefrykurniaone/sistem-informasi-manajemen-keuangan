@@ -8,6 +8,8 @@ import {
 	type MonthlyReportCategoryLine
 } from '../../db/schema/monthly-report';
 import { PERIOD_STATUS, periods } from '../../db/schema/period';
+import { announceAfterCommit } from '../../email/announce';
+import { MONTHLY_REPORT_REVISED_KIND } from '../../email/templates/report-revised';
 import type { Clock } from '../../ports/clock';
 import { CASH_BOOK_MONTH_PATTERN } from '../cash/balance';
 import { lockPeriod, listPeriods, periodLabel } from '../cash/period';
@@ -89,9 +91,10 @@ import { notifyReportRevised, type ReportRevisionAnnouncement } from './notifica
  * *after* `db.transaction` returns, never inside it — the same placement `publishPost` uses for
  * `notifyNewPost` and `verifyPayment` for `notifyPaymentVerified`, and the reason is in
  * `../dues/notification.ts`'s doc comment: the publication is already committed by then, so an
- * exception escaping the notification would report a published report as unpublished. The catch sits
- * here rather than inside `notifyReportRevised`, because `PublishReportSettings.notify` lets a caller
- * substitute the notifier — and the guarantee has to hold for whatever is substituted.
+ * exception escaping the notification would report a published report as unpublished. The call is
+ * wrapped in `announceAfterCommit` here rather than anything inside `notifyReportRevised`, because
+ * `PublishReportSettings.notify` lets a caller substitute the notifier — and the guarantee has to
+ * hold for whatever is substituted.
  *
  * Revision 1 queues nothing from this module. It is announced by the scheduled job in `./jobs.ts`
  * instead, which is what lets a first publication reach a resident who subscribed after the admin
@@ -241,23 +244,21 @@ export async function publishReport(
 
 	if (report.revision > FIRST_REVISION) {
 		const notify = settings.notify ?? notifyReportRevised;
-		try {
-			await notify(db, clock, {
-				period,
-				revision: report.revision,
-				// Never null above revision 1: `requireRevisionReason` refused the publication otherwise,
-				// and `monthly_reports_revision_reason_check` refused it again.
-				reason: report.revisionReason ?? ''
-			});
-		} catch (error) {
-			// The revision is committed. Letting this reach the caller would report a published report
-			// as unpublished, and the admin would publish it again — see this module's doc comment.
-			// The console is the honest place for it until this application has a logger.
-			console.error(
-				`Queuing the revision notification for ${period} revision ${report.revision} failed after the publication had already committed:`,
-				error
-			);
-		}
+		// The revision is committed. Letting a failure reach the caller would report a published report
+		// as unpublished, and the admin would publish it again — see this module's doc comment.
+		// `announceAfterCommit` logs it and goes on; it sits here, not inside `notifyReportRevised`, so
+		// it holds for whatever `settings.notify` is.
+		await announceAfterCommit(
+			`the "${MONTHLY_REPORT_REVISED_KIND}" email for ${period} revision ${report.revision}`,
+			() =>
+				notify(db, clock, {
+					period,
+					revision: report.revision,
+					// Never null above revision 1: `requireRevisionReason` refused the publication otherwise,
+					// and `monthly_reports_revision_reason_check` refused it again.
+					reason: report.revisionReason ?? ''
+				})
+		);
 	}
 
 	return report;

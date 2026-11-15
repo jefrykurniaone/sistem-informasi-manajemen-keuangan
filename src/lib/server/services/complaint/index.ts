@@ -14,6 +14,9 @@ import {
 	type ComplaintStatus,
 	type ComplaintVisibility
 } from '../../db/schema/complaint';
+import { announceAfterCommit } from '../../email/announce';
+import { COMPLAINT_STATUS_CHANGED_KIND } from '../../email/templates/complaint-status-changed';
+import { NEW_COMPLAINT_KIND } from '../../email/templates/new-complaint';
 import type { Clock } from '../../ports/clock';
 import type { FileStore } from '../../ports/file-store';
 import { storeComplaintAttachments, type ComplaintAttachmentUpload } from './attachment';
@@ -171,7 +174,9 @@ export interface CreateComplaintSettings {
  * menyalakan langganan keluhan baru" — is `notifyNewComplaint` in `./notification.ts`, called with
  * the plain database rather than `transaction`, the same ordering `publishPost` in `../post/index.ts`
  * uses for its own `new-post` email: a Keluhan whose commit is rolled back for some other reason
- * must never have already promised an email that announces it.
+ * must never have already promised an email that announces it. The call is wrapped in
+ * `announceAfterCommit`, which logs a failure and never rethrows it, so a Keluhan that is saved is
+ * never reported as failed because its email could not be queued.
  *
  * @param settings `notify` replaces `notifyNewComplaint` for this call — a test hands it a spy or a
  *   no-op so it can assert on the decision to notify without a real email being queued; production
@@ -258,7 +263,9 @@ export async function createComplaint(
 	});
 
 	const notify = settings.notify ?? notifyNewComplaint;
-	await notify(db, clock, created);
+	await announceAfterCommit(`the "${NEW_COMPLAINT_KIND}" email for Keluhan ${created.id}`, () =>
+		notify(db, clock, created)
+	);
 
 	return created;
 }
@@ -519,7 +526,10 @@ export async function changeComplaintStatus(
 	});
 
 	const notify = settings.notify ?? notifyComplaintStatusChanged;
-	await notify(db, clock, row, note);
+	await announceAfterCommit(
+		`the "${COMPLAINT_STATUS_CHANGED_KIND}" email for Keluhan ${row.id}`,
+		() => notify(db, clock, row, note)
+	);
 
 	return withAge(clock, row);
 }

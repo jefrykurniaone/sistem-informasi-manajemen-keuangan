@@ -1,4 +1,4 @@
-import { asc, eq, inArray } from 'drizzle-orm';
+import { asc, eq, inArray, is } from 'drizzle-orm';
 import { PgTransaction } from 'drizzle-orm/pg-core';
 import type { Locale } from '#lib/paraglide/runtime.js';
 import { readOrigin } from '../auth';
@@ -44,6 +44,11 @@ import { enqueueEmail } from './queue';
  *   request header a client could bend. A builder asks for one with `link('/posts/…')`.
  * - **Language.** Every email is written in `id` until a resident's own language is a stored fact.
  * - **One queue row per resident.** A resident named twice is sent one email.
+ * - **A rule of the caller's own that leaves someone out.** `request.except` is applied after the
+ *   Langganan, to the residents it would have reached, and the number it leaves out is reported as
+ *   `AnnounceOutcome.skipped`. The Laporan Bulanan's "this Periode was already sent to that
+ *   address" is such a rule: it is the caller's own fact (it reads `email_queue`), so it stays in
+ *   the caller, while the Langganan stays here and never has to be read twice.
  *
  * ## Recipients are residents
  *
@@ -123,12 +128,20 @@ export interface AnnounceRequest<K extends NotificationEmailKind> {
 	readonly recipients: AnnounceRecipients;
 	/** Builds one recipient's payload. Called once for every resident the email reaches. */
 	readonly payload: (context: AnnounceContext<K>) => EmailPayload;
+	/**
+	 * A rule of the caller's own that leaves a resident out: `true` skips them. Applied after the
+	 * Langganan filter, so it is asked only about residents the email would otherwise have reached,
+	 * and each one it skips is counted in `AnnounceOutcome.skipped`.
+	 */
+	readonly except?: (recipient: AnnounceRecipient) => boolean;
 }
 
 /** What `announce` queued. */
 export interface AnnounceOutcome {
 	/** One row per resident who was sent the email, in the order the recipients were given. */
 	readonly queued: readonly QueuedEmail[];
+	/** How many residents the email would have reached but `request.except` left out. */
+	readonly skipped: number;
 }
 
 /**
@@ -179,7 +192,9 @@ export async function announce<K extends NotificationEmailKind>(
 	clock: Clock,
 	request: AnnounceRequest<K>
 ): Promise<AnnounceOutcome> {
-	if (db instanceof PgTransaction) {
+	// `is`, not `instanceof`: it reads drizzle's own entity marker, so a second copy of `drizzle-orm`
+	// in `node_modules` (this repository has had one) cannot make a transaction look like a database.
+	if (is(db, PgTransaction)) {
 		throw new TypeError(
 			`"${request.kind}" is announced once the change it announces has committed, so announce takes the database, not a transaction.`
 		);
@@ -189,7 +204,7 @@ export async function announce<K extends NotificationEmailKind>(
 		typeof request.recipients === 'function' ? await request.recipients(db) : request.recipients
 	);
 	if (addressed.length === 0) {
-		return { queued: [] };
+		return { queued: [], skipped: 0 };
 	}
 
 	// Non-null exactly when the kind is opt-in: `isOptInEmailKind` holds only for a kind some
@@ -197,12 +212,15 @@ export async function announce<K extends NotificationEmailKind>(
 	const optInSubscription = isOptInEmailKind(request.kind)
 		? governingSubscriptionKind(request.kind)
 		: null;
-	const recipients =
+	const reachable =
 		optInSubscription === null
 			? await residentsAmong(db, addressed)
 			: await subscribedAmong(db, optInSubscription, addressed);
+	const except = request.except;
+	const recipients = except ? reachable.filter((recipient) => !except(recipient)) : reachable;
+	const skipped = reachable.length - recipients.length;
 	if (recipients.length === 0) {
-		return { queued: [] };
+		return { queued: [], skipped };
 	}
 
 	const origin = readOrigin();
@@ -243,7 +261,7 @@ export async function announce<K extends NotificationEmailKind>(
 	if (failures.length > 0) {
 		throw new AnnounceError(request.kind, failures, queued.length);
 	}
-	return { queued };
+	return { queued, skipped };
 }
 
 /**

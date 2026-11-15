@@ -28,6 +28,9 @@ import {
 	type OpenInvoice,
 	type PlannedAllocation
 } from './allocation';
+import { announceAfterCommit } from '../../email/announce';
+import { PAYMENT_REJECTED_KIND } from '../../email/templates/payment-rejected';
+import { PAYMENT_VERIFIED_KIND } from '../../email/templates/payment-verified';
 import { notifyPaymentRejected, notifyPaymentVerified } from './notification';
 import { PAYMENT_RECORDED_ACTION } from './payment';
 import { UnitNotFoundError } from './queries';
@@ -116,8 +119,9 @@ import { UnitNotFoundError } from './queries';
  * that wires it, through `./notification.ts`. `verifyPayment`, `recordCashPayment` and
  * `rejectPayment` each call it **after** their `db.transaction` has resolved, never from inside the
  * transaction callback above — an email announcing a verification that rolled back is worse than a
- * late one. `notifyPaymentVerified`/`notifyPaymentRejected` never throw: see that module's doc
- * comment for why a notification failure must never look like this transaction failed too.
+ * late one. Each call is wrapped in `announceAfterCommit`, which logs a failure and never rethrows
+ * it: see `./notification.ts`'s doc comment for why a notification failure must never look like this
+ * transaction failed too.
  *
  * ## What is deliberately absent
  *
@@ -383,7 +387,10 @@ export async function verifyPayment(
 		});
 	});
 
-	await notifyPaymentVerified(db, clock, outcome.payment, outcome.allocations);
+	await announceAfterCommit(
+		`the "${PAYMENT_VERIFIED_KIND}" email for Pembayaran ${outcome.payment.id}`,
+		() => notifyPaymentVerified(db, clock, outcome.payment, outcome.allocations)
+	);
 	return outcome;
 }
 
@@ -446,7 +453,9 @@ export async function rejectPayment(
 		return rejected;
 	});
 
-	await notifyPaymentRejected(db, clock, row);
+	await announceAfterCommit(`the "${PAYMENT_REJECTED_KIND}" email for Pembayaran ${row.id}`, () =>
+		notifyPaymentRejected(db, clock, row)
+	);
 	return row;
 }
 
@@ -541,7 +550,10 @@ export async function recordCashPayment(
 		});
 	});
 
-	await notifyPaymentVerified(db, clock, outcome.payment, outcome.allocations);
+	await announceAfterCommit(
+		`the "${PAYMENT_VERIFIED_KIND}" email for Pembayaran ${outcome.payment.id}`,
+		() => notifyPaymentVerified(db, clock, outcome.payment, outcome.allocations)
+	);
 	return outcome;
 }
 

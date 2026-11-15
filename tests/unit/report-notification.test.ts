@@ -25,7 +25,7 @@ import {
 	reportRevisedTemplate
 } from '#lib/server/email/templates/report-revised.ts';
 import { FakeClock, FakeEmailSender, FakeFileStore } from '#lib/server/ports/fakes.ts';
-import { runJob } from '#lib/server/scheduler/index.ts';
+import { JOB_OUTCOME, runJob, type JobOutcome } from '#lib/server/scheduler/index.ts';
 import { createCashCategory } from '#lib/server/services/cash/category.ts';
 import { unlockPeriod } from '#lib/server/services/cash/period.ts';
 import { recordCashTransaction } from '#lib/server/services/cash/transaction.ts';
@@ -323,6 +323,38 @@ describe('the send-monthly-report job', () => {
 		expect(await queuedOf(MONTHLY_REPORT_KIND)).toHaveLength(1);
 	});
 
+	it('throws what the announcement threw, so the scheduler records the run as failed and the day can be tried again', async () => {
+		// The job's body calls `announce`, never `announceAfterCommit`: a failure that is swallowed here
+		// would leave a succeeded run for a day on which nobody was told, and the day would never be
+		// attempted again. The failure is `ORIGIN` going missing, which `announce` reads before it
+		// queues a single row.
+		await insertSubscriber(unique('Warga Job Gagal'));
+		await recordTheMonth();
+		await publishFirstRevision();
+		const job = monthlyReportJob({ report: () => undefined });
+		const origin = process.env.ORIGIN;
+		// A schedule period no other test in this file has run the job for: `job_runs` outlives a test.
+		clock.advance(5 * DAY_MILLISECONDS);
+
+		let failed: JobOutcome;
+		try {
+			delete process.env.ORIGIN;
+			await expect(sendMonthlyReportEmails(testDb.db, clock)).rejects.toThrow('ORIGIN');
+			failed = await runJob({ db: testDb.db, clock, job });
+		} finally {
+			process.env.ORIGIN = origin;
+		}
+
+		expect(failed).toMatchObject({ outcome: JOB_OUTCOME.failed });
+		expect(failed.error).toContain('ORIGIN');
+		expect(await queuedOf(MONTHLY_REPORT_KIND)).toEqual([]);
+
+		// The period is released by a failed run, so trying the same day again sends the email.
+		const retried = await runJob({ db: testDb.db, clock, job });
+		expect(retried).toMatchObject({ outcome: JOB_OUTCOME.succeeded });
+		expect(await queuedOf(MONTHLY_REPORT_KIND)).toHaveLength(1);
+	});
+
 	it('runs on a daily schedule in the complex time zone', () => {
 		expect(monthlyReportJob().schedule.description).toBe('daily in Asia/Jakarta');
 	});
@@ -398,8 +430,8 @@ describe('publishing a revision', () => {
 	});
 
 	it('still publishes when queuing the notification fails', async () => {
-		// The rule `../dues/notification.ts` states: the publication is already committed by the time
-		// the email is queued, so a failure there must never be reported as a failed publication.
+		// The rule `announceAfterCommit` keeps at the call site: the publication is already committed by
+		// the time the email is queued, so a failure there must never be reported as a failed publication.
 		await insertSubscriber(unique('Warga Email Gagal'));
 		await recordTheMonth();
 		await publishFirstRevision();
