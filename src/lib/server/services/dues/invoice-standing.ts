@@ -36,9 +36,8 @@ import { isInvoiceVisible, type ResidentView } from '../occupancy/resident-view'
  *
  * Both doors run the same private `allocatedByInvoice` and the same subtraction. That query is the
  * only `allocations` aggregate grouped by Tagihan under `src/lib/server`, which
- * `tests/unit/invoice-standing.test.ts` scans for. One reader still adds Alokasi up in TypeScript:
- * `unitFinanceFor` in `./corrections-history.ts`, admin's correction screen, which lists every
- * Alokasi row of a Tagihan and totals the list it already holds. It was outside #320's surface.
+ * `tests/unit/invoice-standing.test.ts` scans for. `unitFinanceFor` in `./corrections-history.ts`,
+ * admin's correction screen, no longer adds Alokasi up itself: it reads each Tagihan's standing through `invoiceStandings`.
  *
  * ## "Today" is read once, from the shared time module
  *
@@ -190,8 +189,8 @@ export interface InvoiceStatusInput {
  * due date itself a Tagihan is not yet menunggak: "lewat" means the day has passed.
  *
  * The inner rule of `invoiceStandings`, which is the door every service reads it through. It stays
- * exported for `./queries.ts`'s re-export, which keeps `tests/unit/invoice-void.test.ts` compiling;
- * no service calls it.
+ * exported for `./queries.ts`'s re-export, which keeps the imports outside #320's surface
+ * compiling; no service calls it.
  *
  * @param today the WIB day, as `YYYY-MM-DD`, that "sudah lewat jatuh tempo" is decided against.
  */

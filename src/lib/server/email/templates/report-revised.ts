@@ -10,8 +10,9 @@ import type { EmailPayload, EmailTemplate, EmailTemplates } from '#lib/server/po
  *
  * **The kind is `monthly-report-revised`, and it is not a `SUBSCRIPTION_KIND`.** A revision is not a
  * separate thing to opt into: it goes to whoever asked for the monthly report, because the figures
- * being corrected are the ones they were sent. Adding it to `../../services/subscription/kinds.ts`
- * would put a second switch on the preferences screen that nobody could answer sensibly — off would
+ * being corrected are the ones they were sent. It is listed in `NOTIFICATION_EMAIL_KIND` in
+ * `../../services/subscription/kinds.ts`, which names every email the queue carries, and nowhere in
+ * `SUBSCRIPTION_KIND`: adding it there would put a second switch on the preferences screen that nobody could answer sensibly — off would
  * mean "send me figures and never tell me they were wrong". The unsubscribe link this email carries
  * is therefore the *monthly report* link: pressing it stops both.
  *

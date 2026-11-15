@@ -1270,7 +1270,7 @@ function assertPositiveAmount(amount: Rupiah): void {
 
 /**
  * Refuses an `occurredOn` that is not a real calendar day, or one that has not arrived: the same
- * checks, with the same one-day slack past the UTC day, as `assertReceiptDay` in
+ * checks, with the same one-day slack past the WIB day (`currentDay`), as `assertReceiptDay` in
  * `./verification.ts`, thrown as this action's own rule class. Money out draws the same line as
  * money in: a cash book line dated on a day that has not happened is a lie whichever direction the
  * money moved.
