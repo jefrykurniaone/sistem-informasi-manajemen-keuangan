@@ -296,8 +296,9 @@ describe('recordCashCorrection', () => {
 			occurredOn: opening.occurredOn,
 			correctionOf: opening.id
 		});
-		// The opening balance itself is untouched, and #33 still refuses to record a second one.
-		expect(await getOpeningBalance(testDb.db, superuserId)).toBeDefined();
+		// The opening balance itself is untouched, but corrected it is no longer the one in force, so
+		// a new one may be recorded (spec #308, decision 3, reversing #33).
+		expect(await getOpeningBalance(testDb.db, superuserId)).toBeUndefined();
 		await testDb.db.delete(cashTransactions);
 	});
 
