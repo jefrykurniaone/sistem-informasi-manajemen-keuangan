@@ -9,7 +9,11 @@ import { auditLog } from '#lib/server/db/schema/audit.ts';
 import { user } from '#lib/server/db/schema/auth.ts';
 import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
 import { emailQueue } from '#lib/server/db/schema/email.ts';
-import { occupancies, OCCUPANCY_ROLE } from '#lib/server/db/schema/occupancy.ts';
+import {
+	occupancies,
+	OCCUPANCY_ROLE,
+	type OccupancyRole
+} from '#lib/server/db/schema/occupancy.ts';
 import { residents } from '#lib/server/db/schema/resident.ts';
 import { units } from '#lib/server/db/schema/unit.ts';
 import { testDatabase } from '#lib/server/db/test-helpers.ts';
@@ -17,8 +21,10 @@ import { INVOICE_ISSUED_KIND } from '#lib/server/email/templates/invoice-issued.
 import type { Clock } from '#lib/server/ports/clock.ts';
 import { FakeClock } from '#lib/server/ports/fakes.ts';
 import { notifyInvoiceIssued } from '#lib/server/services/dues/notification.ts';
+import * as occupancyModule from '#lib/server/services/occupancy/index.ts';
 import {
 	endOccupancy,
+	ensureOccupancy,
 	listAssignableResidents,
 	listUnitOccupancies,
 	listUnitOccupanciesGrouped,
@@ -304,6 +310,44 @@ async function moveFlagByHand(
 	);
 	await client.query('update occupancies set is_primary_occupant = true where id = $1', [targetId]);
 }
+
+describe('the Masa Huni module surface', () => {
+	it('exports its writers and its reads, and no lock or conflict check a caller could run alone', () => {
+		// Every Masa Huni write rests on the Unit's row lock being taken before anything it depends on
+		// is read. That held only by caller discipline while the lock and the overlap check were
+		// exported, and it failed twice (#246, #258). Now the lock lives inside the module's writers,
+		// and this list is what keeps it there: exporting `lockUnit` or `findOverlappingOccupancy`
+		// again, or adding a writer, fails here whatever it is called — the same move the cash book's
+		// surface test in `tests/unit/cash-transaction.test.ts` makes. A new writer belongs in this
+		// list only together with a second-connection lock test of its own.
+		//
+		// The writers are `recordOccupancy`, `endOccupancy`, `setPrimaryOccupant` and
+		// `ensureOccupancy`; everything else here reads or names something. The one-off data fix in
+		// `./duplicate-fix.ts` writes too, behind a lock on every unit, and is reached only by its own
+		// script.
+		expect(Object.keys(occupancyModule).sort()).toEqual([
+			'OCCUPANCY_ENDED_ACTION',
+			'OCCUPANCY_RECORDED_ACTION',
+			'OccupancyDateOrderError',
+			'OccupancyEndOverlapError',
+			'OccupancyNotFoundError',
+			'OccupancyOverlapError',
+			'PRIMARY_OCCUPANT_MARKED_ACTION',
+			'PrimaryOccupantAlreadyEndedError',
+			'PrimaryOccupantNotStartedError',
+			'ResidentNotFoundError',
+			'endOccupancy',
+			'ensureOccupancy',
+			'listAssignableResidents',
+			'listUnitOccupancies',
+			'listUnitOccupanciesGrouped',
+			'occupiedUnitsForUser',
+			'occupiedUnitsForUserGrouped',
+			'recordOccupancy',
+			'setPrimaryOccupant'
+		]);
+	});
+});
 
 describe('recordOccupancy', () => {
 	it('refuses a caller who is not a superuser, and records nothing', async () => {
@@ -766,6 +810,122 @@ describe('recordOccupancy', () => {
 			expect(
 				await testDb.db.select().from(occupancies).where(eq(occupancies.residentId, residentId))
 			).toHaveLength(1);
+		} finally {
+			await other.release();
+		}
+	});
+});
+
+describe('ensureOccupancy', () => {
+	/** The instant every row this block attaches is stamped with, distinct from `START`. */
+	const ATTACHED_AT = new Date('2026-08-01T03:00:00.000Z');
+
+	/** One call of the door, in a transaction of its own, the way each caller runs it inside theirs. */
+	function attach(
+		unitId: string,
+		residentId: string,
+		overrides: Partial<{ role: OccupancyRole; startedOn: string }> = {}
+	): Promise<boolean> {
+		return testDb.db.transaction((transaction) =>
+			ensureOccupancy(transaction, {
+				unitId,
+				residentId,
+				role: overrides.role ?? OCCUPANCY_ROLE.tenant,
+				startedOn: overrides.startedOn ?? TODAY,
+				createdAt: ATTACHED_AT
+			})
+		);
+	}
+
+	it('attaches the Warga from the given day in the given role, with no end and no flag, and no audit row', async () => {
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Dipasang Pintu');
+
+		expect(await attach(unitId, residentId)).toBe(true);
+
+		const rows = await testDb.db.select().from(occupancies).where(eq(occupancies.unitId, unitId));
+		expect(rows).toEqual([
+			expect.objectContaining({
+				residentId,
+				role: OCCUPANCY_ROLE.tenant,
+				startedOn: TODAY,
+				endedOn: null,
+				isPrimaryOccupant: false,
+				createdAt: ATTACHED_AT
+			})
+		]);
+		// Each caller writes its own audit row naming `createdOccupancy`; the door writes none.
+		expect(await auditEntriesFor(testDb.db, rows[0].id)).toEqual([]);
+	});
+
+	it('writes nothing the second time, so a repeated Undangan or Pendaftaran step leaves one Masa Huni', async () => {
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Dipasang Dua Kali');
+
+		expect(await attach(unitId, residentId)).toBe(true);
+		expect(await attach(unitId, residentId)).toBe(false);
+
+		expect(
+			await testDb.db.select().from(occupancies).where(eq(occupancies.residentId, residentId))
+		).toHaveLength(1);
+	});
+
+	it('asks from the given day: skips on a previous stay’s last day, attaches on the day after', async () => {
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Kembali Lewat Pintu');
+		await insertOccupancyRow(unitId, residentId, { startedOn: STARTED_ON, endedOn: ENDED_ON });
+
+		expect(await attach(unitId, residentId, { startedOn: ENDED_ON })).toBe(false);
+		expect(await attach(unitId, residentId, { startedOn: '2026-04-01' })).toBe(true);
+
+		const days = await testDb.db
+			.select({ startedOn: occupancies.startedOn })
+			.from(occupancies)
+			.where(eq(occupancies.residentId, residentId))
+			.orderBy(occupancies.startedOn);
+		expect(days).toEqual([{ startedOn: STARTED_ON }, { startedOn: '2026-04-01' }]);
+	});
+
+	it('refuses a unit that does not exist and a day that is not one, writing nothing', async () => {
+		const { residentId } = await insertResident('Warga Pintu Salah Alamat');
+
+		expect(await rejection(attach(randomUUID(), residentId))).toBeInstanceOf(UnitNotFoundError);
+		expect(
+			await rejection(attach(await insertUnitRow(), residentId, { startedOn: '2026-8-1' }))
+		).toBeInstanceOf(TypeError);
+		expect(
+			await testDb.db.select().from(occupancies).where(eq(occupancies.residentId, residentId))
+		).toHaveLength(0);
+	});
+
+	it('waits for a unit lock another connection holds, and skips the stay that connection committed', async () => {
+		// The other connection takes the unit row `for no key update`, which conflicts with the door's
+		// own `for update` but not with the `for key share` the door's insert takes for its foreign key.
+		// So the door can only be held back by its own lock: without it, it would read "no conflict"
+		// beside the other connection's uncommitted row and insert a second stay. The test waits until
+		// PostgreSQL reports the call blocked on that connection before it inserts and commits.
+		const unitId = await insertUnitRow();
+		const { residentId } = await insertResident('Warga Pintu Direbutkan');
+
+		const other = await connectToSchema();
+		try {
+			await other.client.query('begin');
+			await other.client.query('select id from units where id = $1 for no key update', [unitId]);
+
+			const attached = attach(unitId, residentId);
+			await waitUntilWaitingOn(other.pid);
+
+			await other.client.query(
+				`insert into occupancies (unit_id, resident_id, role, started_on, ended_on, is_primary_occupant, created_at)
+				 values ($1, $2, 'owner', $3, null, false, $4)`,
+				[unitId, residentId, STARTED_ON, START]
+			);
+			await other.client.query('commit');
+
+			expect(await attached).toBe(false);
+			expect(
+				await testDb.db.select().from(occupancies).where(eq(occupancies.residentId, residentId))
+			).toEqual([expect.objectContaining({ role: OCCUPANCY_ROLE.owner, startedOn: STARTED_ON })]);
 		} finally {
 			await other.release();
 		}
