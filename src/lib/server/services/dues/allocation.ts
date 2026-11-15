@@ -1,10 +1,11 @@
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { rupiah, type Rupiah } from '#lib/money.ts';
 import type { DatabaseWriter, Transaction } from '../../authz';
 import { allocations, type Allocation } from '../../db/schema/allocation';
 import { invoices } from '../../db/schema/invoice';
 import type { Clock } from '../../ports/clock';
 import { lockUnallocatedVerifiedPayments } from './credit-balance';
+import { allocatedAmountsOf } from './invoice-standing';
 
 /**
  * Alokasi: how much of one Pembayaran answers one Tagihan — and this module is the **only writer of
@@ -123,7 +124,8 @@ export interface OpenInvoice {
  * it, oldest Periode first, **including the fully paid ones** (their `remainingAmount` is zero, and
  * a screen deciding what to offer wants to know they exist). Fixed-width `YYYY-MM` periods make
  * "oldest first" a plain text sort, and `id` breaks a tie between two rows of one period, which the
- * unique pair `(unit, period)` prevents anyway.
+ * unique pair `(unit, period)` prevents anyway. The allocated and remaining amounts come from
+ * `allocatedAmountsOf` in `./invoice-standing.ts`; this module sums no Alokasi of its own.
  *
  * No lock and no caller: this is the read for a screen. The write path uses
  * `lockOpenInvoicesOfUnit` below, because a remaining amount read without a lock is stale the
@@ -144,7 +146,7 @@ export async function openInvoicesOfUnit(
 		.where(and(eq(invoices.unitId, unitId), isNull(invoices.voidedAt)))
 		.orderBy(asc(invoices.period), asc(invoices.id));
 
-	return withAllocatedAmounts(db, rows);
+	return allocatedAmountsOf(db, rows);
 }
 
 /**
@@ -161,7 +163,8 @@ export async function lockOpenInvoicesOfUnit(
 	unitId: string
 ): Promise<readonly OpenInvoice[]> {
 	// Locked first, aggregated second: PostgreSQL refuses `FOR UPDATE` beside an aggregate, and the
-	// totals cannot move once the row locks are held.
+	// totals cannot move once the row locks are held. The sum is `allocatedAmountsOf`'s, the second
+	// door of `./invoice-standing.ts`, run in this same transaction after these locks.
 	const rows = await transaction
 		.select({
 			invoiceId: invoices.id,
@@ -174,49 +177,7 @@ export async function lockOpenInvoicesOfUnit(
 		.orderBy(asc(invoices.period), asc(invoices.id))
 		.for('update');
 
-	return withAllocatedAmounts(transaction, rows);
-}
-
-/** The raw invoice rows both reads above select, before their allocated sums are attached. */
-interface OpenInvoiceRow {
-	readonly invoiceId: string;
-	readonly period: string;
-	readonly amount: Rupiah;
-	readonly dueDate: string;
-}
-
-/** Attaches each row's allocated total and the remainder computed from it. */
-async function withAllocatedAmounts(
-	db: DatabaseWriter,
-	rows: readonly OpenInvoiceRow[]
-): Promise<readonly OpenInvoice[]> {
-	if (rows.length === 0) {
-		return [];
-	}
-
-	const totals = await db
-		.select({
-			invoiceId: allocations.invoiceId,
-			total: sql<string>`coalesce(sum(${allocations.amount}), 0)::text`
-		})
-		.from(allocations)
-		.where(
-			inArray(
-				allocations.invoiceId,
-				rows.map((row) => row.invoiceId)
-			)
-		)
-		.groupBy(allocations.invoiceId);
-	const allocatedByInvoice = new Map(totals.map((row) => [row.invoiceId, Number(row.total)]));
-
-	return rows.map((row) => {
-		const allocatedAmount = rupiah(allocatedByInvoice.get(row.invoiceId) ?? 0);
-		return {
-			...row,
-			allocatedAmount,
-			remainingAmount: rupiah(row.amount - allocatedAmount)
-		};
-	});
+	return allocatedAmountsOf(transaction, rows);
 }
 
 /**
@@ -262,8 +223,9 @@ export interface CreditableInvoice {
  *
  * The Unit's verified payments are locked through `lockUnallocatedVerifiedPayments`, and each
  * payment's remainder is drained in turn until the Tagihan is covered or the balance runs out; a
- * partial balance leaves a partial allocation, which #27's `invoiceStatus` reads as `partial`. One
- * allocation row per payment drained, because a row maps one payment to one invoice.
+ * partial balance leaves a partial allocation, which `invoiceStandings` in `./invoice-standing.ts`
+ * reads as `partial`. One allocation row per payment drained, because a row maps one payment to one
+ * invoice.
  *
  * **No cash transaction is written and no Periode is consulted.** The money being spent here
  * entered the cash book when its payment was verified, dated on its own `receivedOn`; consuming it
