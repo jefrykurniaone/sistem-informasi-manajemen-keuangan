@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { rupiah, type Rupiah } from '#lib/money.ts';
 import { allocations } from '#lib/server/db/schema/allocation.ts';
 import { user } from '#lib/server/db/schema/auth.ts';
@@ -22,6 +22,7 @@ import {
 	applicationJobs,
 	JOB_OUTCOME,
 	listJobsWithLastRun,
+	registerApplicationJobs,
 	runJob,
 	triggerJob
 } from '#lib/server/scheduler/index.ts';
@@ -384,6 +385,11 @@ describe('describeIssuance', () => {
 });
 
 describe('the invoice issuance job', () => {
+	beforeAll(() => {
+		// What `src/hooks.server.ts` does: importing the job's module registers nothing (ticket #317).
+		registerApplicationJobs();
+	});
+
 	it('is registered in applicationJobs, monthly in the complex time zone', () => {
 		const registered = applicationJobs.get(INVOICE_ISSUANCE_JOB_NAME);
 

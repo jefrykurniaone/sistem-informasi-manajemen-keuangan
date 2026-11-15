@@ -18,13 +18,18 @@ import { createPost, type PostContent } from '#lib/server/services/post/index.ts
 import { notifyNewPost } from '#lib/server/services/post/notification.ts';
 import { setSubscriptionPreference } from '#lib/server/services/subscription/index.ts';
 import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
+import { verifyUnsubscribeToken } from '#lib/server/services/subscription/unsubscribe-token.ts';
 
 /**
  * `notifyNewPost` — the recipient side of #41 — and the `new-post` template it renders through.
  * `tests/unit/post-service.test.ts` already proves the acceptance criteria that are about
- * `publishPost` itself (queues on first publish, stays silent on an edit or a re-publish); this file
- * proves the two pieces underneath that: who `notifyNewPost` decides to email, and what
- * `newPostTemplate` writes for them.
+ * `publishPost` itself (queues on first publish, stays silent on an edit or a re-publish, never fails
+ * because of the email); this file proves the two pieces underneath that: who `notifyNewPost`
+ * addresses and what payload it builds, and what `newPostTemplate` writes for them.
+ *
+ * Which of the addressed residents a `new-post` email actually reaches — the Langganan, opt-in and
+ * off by default — and the unsubscribe link it carries are the announce module's rules, proven once
+ * for every kind in `tests/unit/announce.test.ts` (#316) rather than again here.
  */
 
 const testDb = testDatabase();
@@ -105,27 +110,28 @@ async function newPostRowsFor(postTitle: string) {
 
 describe('notifyNewPost', () => {
 	// `subscribeToNewPost` writes a row that outlives its own test — this file's schema is shared
-	// for the whole file, per `testDatabase()`'s contract — so the one test that needs to prove
-	// "queues nothing at all" runs first, before any sibling test leaves a resident subscribed
-	// behind it. Every test after it asserts by recipient rather than by a total row count, since a
-	// still-subscribed resident from an earlier test is correctly notified about a later test's
-	// Post too — that is what "subscribed" means — and is not a fact this file's own test order
-	// should be read as contradicting.
-	it('queues nothing at all when nobody is subscribed', async () => {
-		const adminId = await insertAdmin(unique('Pengurus Sepi'));
+	// for the whole file, per `testDatabase()`'s contract — so every test asserts by recipient rather
+	// than by a total row count: a still-subscribed resident from an earlier test is correctly
+	// notified about a later test's Post too.
+	it('addresses every resident, an admin as much as anyone, so each one subscribed is queued an email', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Notifikasi'));
 		const clock = new FakeClock(START);
-		await insertAccount(unique('Warga Diam Saja'));
+		const residentId = await insertAccount(unique('Warga Berlangganan'));
+		await subscribeToNewPost(residentId, clock, true);
+		await subscribeToNewPost(adminId, clock, true);
 		const post = await createPost(testDb.db, clock, { actorId: adminId, ...announcementContent() });
 
 		await notifyNewPost(testDb.db, clock, post);
 
-		expect(await newPostRowsFor(post.title)).toEqual([]);
+		const recipients = (await newPostRowsFor(post.title)).map((row) => row.recipient);
+		expect(recipients).toContain(await emailOf(residentId));
+		expect(recipients).toContain(await emailOf(adminId));
 	});
 
-	it('queues one email per resident subscribed to new-post, built from the title, the summary and the public link', async () => {
-		const adminId = await insertAdmin(unique('Pengurus Notifikasi'));
+	it('builds the payload from the title, the summary and the public link, never the body', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Isi Notifikasi'));
 		const clock = new FakeClock(START);
-		const subscriberId = await insertAccount(unique('Warga Berlangganan'));
+		const subscriberId = await insertAccount(unique('Warga Baca Notifikasi'));
 		await subscribeToNewPost(subscriberId, clock, true);
 		const post = await createPost(testDb.db, clock, { actorId: adminId, ...announcementContent() });
 
@@ -142,23 +148,7 @@ describe('notifyNewPost', () => {
 			url: `${readOrigin()}/posts/${post.id}`,
 			locale: 'id'
 		});
-	});
-
-	it('never emails a resident who switched the kind back off, but still emails one who stayed on', async () => {
-		const adminId = await insertAdmin(unique('Pengurus Diamkan'));
-		const clock = new FakeClock(START);
-		const optedOutId = await insertAccount(unique('Warga Berhenti Langganan'));
-		await subscribeToNewPost(optedOutId, clock, true);
-		await subscribeToNewPost(optedOutId, clock, false);
-		const staysSubscribedId = await insertAccount(unique('Warga Tetap Langganan'));
-		await subscribeToNewPost(staysSubscribedId, clock, true);
-		const post = await createPost(testDb.db, clock, { actorId: adminId, ...announcementContent() });
-
-		await notifyNewPost(testDb.db, clock, post);
-
-		const recipients = (await newPostRowsFor(post.title)).map((row) => row.recipient);
-		expect(recipients).toContain(await emailOf(staysSubscribedId));
-		expect(recipients).not.toContain(await emailOf(optedOutId));
+		expect(JSON.stringify(own.payload)).not.toContain(post.bodyHtml);
 	});
 });
 
@@ -190,6 +180,69 @@ describe('newPostTemplate', () => {
 
 		expect(rendered.subject).toBe('New post: Weekend cleanup');
 		expect(rendered.text).toContain('Short summary.');
+	});
+
+	it('renders the unsubscribe link the queued row carries, a token that switches off new-post for that resident', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Tautan Berhenti'));
+		const clock = new FakeClock(START);
+		const subscriberId = await insertAccount(unique('Warga Tautan Berhenti'));
+		await subscribeToNewPost(subscriberId, clock, true);
+		const post = await createPost(testDb.db, clock, { actorId: adminId, ...announcementContent() });
+
+		await notifyNewPost(testDb.db, clock, post);
+
+		const subscriberEmail = await emailOf(subscriberId);
+		const own = (await newPostRowsFor(post.title)).find((row) => row.recipient === subscriberEmail);
+		if (!own) {
+			throw new Error('Expected a queued row for the subscribed resident, and found none.');
+		}
+		const rendered = newPostTemplate(own.payload);
+		const prefix = `${readOrigin()}/unsubscribe/`;
+		const link = rendered.text.split('\n').find((line) => line.startsWith(prefix));
+		if (!link) {
+			throw new Error('Expected the rendered text to carry an unsubscribe link, and found none.');
+		}
+		const [resident] = await testDb.db
+			.select({ id: residents.id })
+			.from(residents)
+			.where(eq(residents.userId, subscriberId));
+		expect(verifyUnsubscribeToken(link.slice(prefix.length))).toEqual({
+			valid: true,
+			residentId: resident.id,
+			kind: SUBSCRIPTION_KIND.newPost
+		});
+		expect(rendered.text).toContain('Berhenti berlangganan');
+	});
+
+	it('renders the unsubscribe link in the payload locale', () => {
+		const rendered = newPostTemplate({
+			...newPostPayload({ title: 't', summary: 's', url: 'u', locale: 'en' }),
+			unsubscribeUrl: 'https://komplek.local/unsubscribe/abc.def'
+		});
+
+		expect(rendered.text).toContain('Unsubscribe here:');
+		expect(rendered.text).toContain('https://komplek.local/unsubscribe/abc.def');
+	});
+
+	it('still renders a row queued before the link existed, without one', () => {
+		const rendered = newPostTemplate(
+			newPostPayload({
+				title: 't',
+				summary: 's',
+				url: 'https://komplek.local/posts/1',
+				locale: 'id'
+			})
+		);
+
+		expect(rendered.text).toContain('https://komplek.local/posts/1');
+		expect(rendered.text).not.toContain('/unsubscribe/');
+		expect(rendered.text).not.toContain('Berhenti berlangganan');
+	});
+
+	it('throws TypeError when unsubscribeUrl is present but not a string', () => {
+		const payload = { title: 't', summary: 's', url: 'u', locale: 'id', unsubscribeUrl: 1 };
+
+		expect(() => newPostTemplate(payload)).toThrow(TypeError);
 	});
 
 	it.each([

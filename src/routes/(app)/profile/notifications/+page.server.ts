@@ -1,7 +1,7 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail, redirect } from '@sveltejs/kit';
 import { AUTH_PATHS } from '#lib/server/auth.ts';
 import { database } from '#lib/server/db/index.ts';
-import { PermissionDeniedError } from '#lib/errors.ts';
+import { failOrThrow, refusal, type FormMessages } from '#lib/server/route-action.ts';
 import { systemClock } from '#lib/server/ports/clock.ts';
 import { residentProfileForUser } from '#lib/server/services/resident/profile.ts';
 import {
@@ -26,7 +26,20 @@ import type { Actions, PageServerLoad } from './$types';
  * `MandatorySubscriptionKindError` is not a 403 — the caller is allowed to manage their own
  * subscriptions, only this one change is refused — so it becomes `fail(400, …)`, the same split
  * `(app)/admin/roles/+page.server.ts` makes between `PermissionDeniedError` and `LastSuperuserError`.
+ * Both go through `failOrThrow` in `src/lib/server/route-action.ts` (#333).
  */
+
+const UPDATE = {
+	forbidden: () => 'Anda hanya dapat mengubah preferensi notifikasi Anda sendiri.',
+	// No other rule error can reach this action today; the sentence is the form's own complaint.
+	fallback: () => 'Permintaan tidak valid.',
+	refusals: [
+		refusal(
+			MandatorySubscriptionKindError,
+			() => 'Jenis notifikasi ini wajib dan tidak bisa dimatikan.'
+		)
+	]
+} satisfies FormMessages;
 
 export const load: PageServerLoad = async ({ locals }) => {
 	if (!locals.user) {
@@ -61,13 +74,7 @@ export const actions: Actions = {
 				enabled: form.enabled
 			});
 		} catch (caught) {
-			if (caught instanceof PermissionDeniedError) {
-				throw error(403, 'Anda hanya dapat mengubah preferensi notifikasi Anda sendiri.');
-			}
-			if (caught instanceof MandatorySubscriptionKindError) {
-				return fail(400, { message: 'Jenis notifikasi ini wajib dan tidak bisa dimatikan.' });
-			}
-			throw caught;
+			return failOrThrow(caught, UPDATE);
 		}
 
 		return { saved: true };

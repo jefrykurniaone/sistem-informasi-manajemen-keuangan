@@ -1,3 +1,4 @@
+import * as m from '#lib/paraglide/messages.js';
 import {
 	applicationJobs,
 	dailySchedule,
@@ -18,7 +19,7 @@ import {
  * It sits here, next to the work it does, rather than in `src/lib/server/scheduler/index.ts`, for
  * the reason decision 4 there states — `applicationJobs` holds the scheduler's own housekeeping and
  * nothing else, and "every other job is registered by whoever owns the work". `../dues/jobs.ts` is
- * the file this one copies, down to the idempotent registration and the call at module scope.
+ * the file this one copies, down to the idempotent registration.
  *
  * Decisions settled here:
  *
@@ -47,10 +48,12 @@ import {
  *
  * Registering it is also the whole of "Superuser dapat memicu pengiriman secara manual":
  * `/admin/jobs` walks `applicationJobs` through `listJobsWithLastRun` and offers a trigger for every
- * job it finds, so that page needed no change.
+ * job it finds. Since ticket #317 the definition also carries the title and purpose that page shows,
+ * and declares no failure it explains in a sentence.
  *
- * Nothing here is registered unless something imports this module, and `src/hooks.server.ts` is the
- * one composition root that does.
+ * Nothing here is registered by importing this module. `registerReportJobs` is called by
+ * `registerApplicationJobs` in `src/lib/server/scheduler/index.ts`, which `src/hooks.server.ts`
+ * calls.
  */
 
 /**
@@ -82,15 +85,18 @@ export function monthlyReportJob(settings: MonthlyReportJobSettings = {}): JobDe
 		schedule: dailySchedule(COMPLEX_TIME_ZONE),
 		run: async ({ db, clock }) => {
 			report(await sendMonthlyReportEmails(db, clock));
-		}
+		},
+		display: {
+			title: (locale) => m.adminJobs_job_sendMonthlyReport_title({}, { locale }),
+			purpose: (locale) => m.adminJobs_job_sendMonthlyReport_purpose({}, { locale })
+		},
+		failures: []
 	};
 }
 
 /**
- * Puts the monthly report job in a registry, once.
- *
- * Called at module scope below, so that importing this module is all a composition root has to do —
- * and called again by nothing, because doing it twice is a no-op by decision 4 above.
+ * Puts the monthly report job in a registry, once: doing it twice is a no-op by decision 4 above.
+ * Called by `registerApplicationJobs` in `src/lib/server/scheduler/index.ts`, never on import.
  *
  * @param registry defaults to `applicationJobs`, which is the registry `/admin/jobs` lists and the
  *   periodic trigger ticks.
@@ -101,8 +107,6 @@ export function registerReportJobs(registry: JobRegistry = applicationJobs): voi
 	}
 	registry.register(monthlyReportJob());
 }
-
-registerReportJobs();
 
 /**
  * Where a run's summary goes by default. The console the server already writes its scheduler errors

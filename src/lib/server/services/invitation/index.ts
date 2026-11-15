@@ -11,7 +11,7 @@ import { ACTION, requirePermission, type Transaction } from '../../authz';
 import type { Database } from '../../db';
 import { account, user } from '../../db/schema/auth';
 import { invitations, type Invitation } from '../../db/schema/invitation';
-import { occupancies, OCCUPANCY_ROLE } from '../../db/schema/occupancy';
+import { OCCUPANCY_ROLE } from '../../db/schema/occupancy';
 import { residents } from '../../db/schema/resident';
 import { units } from '../../db/schema/unit';
 import { enqueueEmail } from '../../email/queue';
@@ -22,7 +22,7 @@ import {
 } from '../../email/templates/invitation';
 import type { Clock } from '../../ports/clock';
 import { withoutTrailingSlashes } from '../../url';
-import { findOverlappingOccupancy, lockUnit } from '../occupancy';
+import { ensureOccupancy } from '../occupancy';
 import { currentDay } from '../occupancy/visibility';
 import { ensureDefaultSubscriptions } from '../subscription';
 import { UnitNotFoundError } from '../unit';
@@ -76,9 +76,10 @@ import { createInvitationToken, hashInvitationToken } from './token';
  * ticket may not add one, so the admin form cannot carry a pemilik/penyewa choice; `owner` is the
  * overwhelmingly common case for an invited resident, and a superuser corrects the odd tenant on
  * the occupancy screen. Carrying the choice on the invitation is a schema follow-up, noted in the
- * PR that landed this file. The stay starts on the acceptance day per the `Clock`, is created only
- * when the resident has no running stay on that unit already, and is never marked primary occupant
- * here — that flag is a superuser decision with its own uniqueness rule, made on its own screen.
+ * PR that landed this file. The stay starts on the acceptance day per the `Clock`, is written by
+ * `ensureOccupancy` in `../occupancy` — which takes the unit's row lock itself and skips when the
+ * resident already has a stay there that has not passed — and is never marked primary occupant here:
+ * that flag is a superuser decision with its own uniqueness rule, made on its own screen.
  */
 
 /** The audit log's `action` for a newly sent invitation. */
@@ -382,7 +383,7 @@ export interface AcceptedInvitation {
 	/** The address the account signs in with, exactly as the `user` row stores it. */
 	readonly email: string;
 	readonly unitId: string;
-	/** False when a running stay on that unit already existed, so none was added. */
+	/** False when `ensureOccupancy` found a stay on that unit that has not passed, and added none. */
 	readonly createdOccupancy: boolean;
 }
 
@@ -432,13 +433,15 @@ export async function acceptInvitation(
 			now
 		});
 		const residentId = await ensureResident(transaction, clock, userId, now);
-		const createdOccupancy = await ensureOccupancy(
-			transaction,
-			clock,
-			invitation.unitId,
+		// Role `owner` and today's start: see the module doc comment. Safe to repeat — it skips when
+		// the resident already has a stay in this unit that has not passed.
+		const createdOccupancy = await ensureOccupancy(transaction, {
+			unitId: invitation.unitId,
 			residentId,
-			now
-		);
+			role: OCCUPANCY_ROLE.owner,
+			startedOn: currentDay(clock),
+			createdAt: now
+		});
 
 		await recordAuditEntry(transaction, clock, {
 			actorId: userId,
@@ -692,43 +695,6 @@ async function ensureResident(
 		.returning({ id: residents.id });
 	await ensureDefaultSubscriptions(transaction, clock, created.id);
 	return created.id;
-}
-
-/**
- * The Masa Huni the invitation promises, unless one that would overlap it already exists: role `owner`
- * (see the module doc comment for why), starting on the acceptance day, never the primary occupant.
- *
- * "Already exists" is decision 6 of `docs/spec-penghuni-v1.md`'s overlap rule, asked from today rather
- * than a chosen start date since acceptance always starts today: any stay for this resident and unit
- * whose last day has not passed today or has not been written, including one that has not started yet.
- * Skipping silently rather than refusing is the idempotent behaviour this function had before that
- * rule existed, kept as-is — only the question changed, from `stillRunningOn` to the overlap check
- * `findOverlappingOccupancy` in `../occupancy` asks under the same unit lock that service takes.
- */
-async function ensureOccupancy(
-	transaction: Transaction,
-	clock: Clock,
-	unitId: string,
-	residentId: string,
-	now: Date
-): Promise<boolean> {
-	const today = currentDay(clock);
-	await lockUnit(transaction, unitId);
-	const conflict = await findOverlappingOccupancy(transaction, residentId, unitId, today);
-	if (conflict) {
-		return false;
-	}
-
-	await transaction.insert(occupancies).values({
-		unitId,
-		residentId,
-		role: OCCUPANCY_ROLE.owner,
-		startedOn: today,
-		endedOn: null,
-		isPrimaryOccupant: false,
-		createdAt: now
-	});
-	return true;
 }
 
 /** Whether `email` belongs to a `user` row that has a `credential` account — someone who can sign in. */

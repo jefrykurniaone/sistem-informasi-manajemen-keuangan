@@ -1,4 +1,5 @@
 import { clearInterval, setInterval } from 'node:timers';
+import * as m from '#lib/paraglide/messages.js';
 import { recordAuditEntry } from '../audit';
 import { ACTION, requirePermission } from '../authz';
 import { failureCode, isConnectionFailure, type Database } from '../db';
@@ -9,11 +10,23 @@ import {
 	completeJobRun,
 	countFailedRuns,
 	failJobRun,
+	JOB_RUN_RETENTION_DAYS,
 	latestJobRun,
 	pruneJobRuns,
 	recentJobRuns
 } from './lock';
-import { everyMinutesSchedule, JobRegistry, type JobDefinition } from './registry';
+import {
+	everyMinutesSchedule,
+	JobRegistry,
+	type JobDefinition,
+	type JobFailureKind
+} from './registry';
+// The owners' registration functions, for `registerApplicationJobs`. Each of those modules imports
+// this one back, which is safe because nothing on either side calls across the cycle while the
+// modules are still being evaluated: since ticket #317 no module registers anything on import.
+import { registerEmailJobs } from '../email/jobs';
+import { registerDuesJobs } from '../services/dues/jobs';
+import { registerReportJobs } from '../services/report/jobs';
 
 /**
  * The scheduler: what actually runs a registered job, having first taken the lock that makes sure
@@ -47,13 +60,21 @@ import { everyMinutesSchedule, JobRegistry, type JobDefinition } from './registr
  *    job's name, its period, the step and the code, that job's outcome is `interrupted`, and the
  *    next job in the tick is still tried. Before that, one lost connection ended the whole tick,
  *    and every job after the failing one in name order waited for the next tick.
- * 4. **`applicationJobs` holds the scheduler's own housekeeping and nothing else.** The one job
- *    registered here is `jobRunPruneJob`, which trims `job_runs`: that table is this module's, the
- *    rule for what may be deleted from it is a rule about the lock, and no other owner exists to
- *    put it with. Every other job is registered by whoever owns the work — the email queue drain
- *    lives in `src/lib/server/email/jobs.ts`, because registering it here would mean choosing, in
- *    this module, which templates the production worker knows and which mail server it talks to.
- *    The registry is the mechanism; a spec with a job registers its own.
+ * 4. **Each job is defined and registered by whoever owns the work, and composed in one place.**
+ *    The one job this module owns is `jobRunPruneJob`, which trims `job_runs`: that table is this
+ *    module's, the rule for what may be deleted from it is a rule about the lock, and no other owner
+ *    exists to put it with. `registerSchedulerJobs` registers it. Every other job is registered by
+ *    its owner's own idempotent `register…Jobs` — the email queue drain in
+ *    `src/lib/server/email/jobs.ts`, because registering it here would mean choosing, in this
+ *    module, which templates the production worker knows and which mail server it talks to.
+ *
+ *    Since ticket #317 nothing registers on import, this module's own job included. The one list of
+ *    owners is `registerApplicationJobs`, and `src/hooks.server.ts` is the one place that calls it
+ *    for the running server; `tests/unit/scheduler-jobs.test.ts` calls the same function and checks
+ *    every permanent name. Before that each owner registered at module scope as well, so a job whose
+ *    module `src/hooks.server.ts` forgot to import still passed every test that imported the module
+ *    itself, and was missing in production. A spec with a job adds its owner's `register…Jobs` to
+ *    `registerApplicationJobs`, and its definition carries its own words for `/admin/jobs`.
  *
  * ## The periodic trigger
  *
@@ -281,6 +302,11 @@ export interface TriggerJobOptions extends ListJobsOptions {
 /** One job as the superuser screen shows it. */
 export interface JobSummary {
 	readonly name: string;
+	/**
+	 * The registered definition, which carries what the screen says about the job: its title and
+	 * purpose, how its periods read, and the failures it explains. Added by ticket #317.
+	 */
+	readonly definition: JobDefinition;
 	/** The period this job is in right now, as its own schedule marks it. */
 	readonly currentPeriod: string;
 	/** Its most recent run, or `undefined` when it has never run. */
@@ -357,6 +383,7 @@ export async function listJobsWithLastRun(
 			: undefined;
 		summaries.push({
 			name: job.name,
+			definition: job,
 			currentPeriod,
 			lastRun,
 			failuresInCurrentPeriod: ranThisPeriod
@@ -450,19 +477,8 @@ export async function triggerJob(options: TriggerJobOptions): Promise<JobOutcome
 }
 
 /**
- * The jobs this application runs — see decision 4 above for what belongs in here and what does not.
- *
- * A spec registers its job next to the function that does the work, and the module that does so has
- * to be reached by the running server for the job to exist at all. `src/hooks.server.ts` is where
- * that happens:
- *
- * ```ts
- * applicationJobs.register({
- *   name: 'issue-invoices',
- *   schedule: monthlySchedule('Asia/Jakarta'),
- *   run: async ({ db, clock, period }) => { … }
- * });
- * ```
+ * The jobs this application runs. Empty until `registerApplicationJobs` fills it, which
+ * `src/hooks.server.ts` does for the running server — see decision 4 above.
  */
 export const applicationJobs = new JobRegistry();
 
@@ -490,10 +506,45 @@ export const jobRunPruneJob: JobDefinition = {
 	schedule: everyMinutesSchedule(PRUNE_INTERVAL_MINUTES),
 	run: async ({ db, clock }) => {
 		await pruneJobRuns(db, clock);
-	}
+	},
+	display: {
+		title: (locale) => m.adminJobs_job_jobRunHistoryPrune_title({}, { locale }),
+		purpose: (locale) =>
+			m.adminJobs_job_jobRunHistoryPrune_purpose({ days: JOB_RUN_RETENTION_DAYS }, { locale })
+	},
+	failures: []
 };
 
-applicationJobs.register(jobRunPruneJob);
+/**
+ * Puts this module's own job in a registry, once. Idempotent for the reason `registerEmailJobs`
+ * records: `vite dev` re-evaluates `src/hooks.server.ts` against the very same `applicationJobs`, and
+ * a duplicate name is a `TypeError`.
+ */
+export function registerSchedulerJobs(registry: JobRegistry = applicationJobs): void {
+	if (registry.get(JOB_RUN_PRUNE_JOB_NAME)) {
+		return;
+	}
+	registry.register(jobRunPruneJob);
+}
+
+/**
+ * Registers every job this application runs, by calling each owner's `register…Jobs` — the one
+ * list of owners, and the composition `src/hooks.server.ts` calls. Idempotent, because each owner's
+ * function is.
+ *
+ * A test that needs the jobs the running server has calls this, with `applicationJobs` or with a
+ * registry of its own, rather than importing an owner's module and relying on what the import did.
+ * Added by ticket #317; see decision 4 above.
+ *
+ * @param registry defaults to `applicationJobs`, which is the registry `/admin/jobs` lists and the
+ *   periodic trigger ticks.
+ */
+export function registerApplicationJobs(registry: JobRegistry = applicationJobs): void {
+	registerSchedulerJobs(registry);
+	registerEmailJobs(registry);
+	registerDuesJobs(registry);
+	registerReportJobs(registry);
+}
 
 /**
  * How often `startJobScheduler` ticks by default: every thirty seconds.
@@ -936,14 +987,26 @@ function describeFailure(thrown: unknown): string {
 
 /**
  * Whether a run's `error` was recorded for an error whose `name` is `name`: the reading side of
- * `describeFailure`, for a screen that explains one kind of failure in its own words. Added by
- * ticket #218 for `/admin/jobs`, which recognises a missing Tarif this way.
+ * `describeFailure`. Added by ticket #218; since ticket #317 it is read through `knownFailureOf`,
+ * not by a screen.
  *
  * A run recorded before ticket #218 carries no name and answers `false`, as does any failure that
  * was a plain `Error`.
  */
 export function isFailureNamed(error: string | null | undefined, name: string): boolean {
 	return error?.startsWith(`${name}${FAILURE_NAME_SEPARATOR}`) ?? false;
+}
+
+/**
+ * Which of the failures `job` declares a run's recorded `error` is, or `undefined` when it is none
+ * of them (or there is no error). Added by ticket #317, so that `/admin/jobs` asks the definition
+ * what a failure means instead of matching an error's name itself.
+ */
+export function knownFailureOf(
+	job: JobDefinition,
+	error: string | null | undefined
+): JobFailureKind | undefined {
+	return job.failures?.find((failure) => isFailureNamed(error, failure.name));
 }
 
 /** How many failures it takes for `backoffDelayMilliseconds` to reach its cap. */

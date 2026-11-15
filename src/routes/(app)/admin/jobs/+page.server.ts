@@ -1,36 +1,35 @@
-import { error, fail, redirect } from '@sveltejs/kit';
-import { PermissionDeniedError } from '#lib/errors.ts';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
 import { getLocale } from '#lib/paraglide/runtime.js';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
 import { JOB_RUN_STATUS, type JobRunStatus } from '#lib/server/db/schema/scheduler.ts';
-import { EMAIL_QUEUE_DRAIN_JOB_NAME } from '#lib/server/email/jobs.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import {
+	productionDependencies,
+	readText,
+	requireUser,
+	throwRouteError,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import {
 	applicationJobs,
-	isFailureNamed,
 	JOB_OUTCOME,
-	JOB_RUN_PRUNE_JOB_NAME,
+	knownFailureOf,
 	listJobsWithLastRun,
 	triggerJob,
+	type JobDefinition,
 	type JobOutcome,
 	type JobSummary
 } from '#lib/server/scheduler/index.ts';
-import { JOB_RUN_RETENTION_DAYS } from '#lib/server/scheduler/lock.ts';
-import { INVOICE_ISSUANCE_JOB_NAME } from '#lib/server/services/dues/jobs.ts';
-import { MONTHLY_REPORT_JOB_NAME } from '#lib/server/services/report/jobs.ts';
-import { formatDateTime, formatDay, formatMonthLabel, type InterfaceLocale } from '#lib/time.ts';
+import { formatDateTime, type InterfaceLocale } from '#lib/time.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
  * The superuser screen for the scheduled jobs: what is registered, what each one is for, what
  * happened to it last time, and a button that runs one now.
  *
- * It follows the shape `src/routes/(app)/admin/roles/+page.server.ts` settled. Nobody who is not
- * signed in reaches the service layer: `locals.user` is checked before anything is called, because
- * there would be no caller to name. A `PermissionDeniedError` becomes `error(403, …)` here rather
- * than in the service, which is the route's job.
+ * It follows the shape `src/lib/server/route-action.ts` settled (#318). Nobody who is not signed in
+ * reaches the service layer: `requireUser` runs before anything is called, because there would be
+ * no caller to name. A `PermissionDeniedError` becomes `error(403, …)` here rather than in the
+ * service, which is the route's job; anything else a run of the scheduler throws is rethrown.
  *
  * **Pressing the button takes the same lock a scheduled run takes.** A job that has already run for
  * the period it is in now answers `skipped`, and this page says so instead of running it a second
@@ -43,56 +42,68 @@ import type { Actions, PageServerLoad } from './$types';
  * way the Beranda's `src/routes/(app)/+page.server.ts` does. Since ticket #218 that covers the job's
  * human name and purpose, periods and instants read in WIB instead of raw markers and ISO stamps,
  * and a missing Tarif explained as a sentence built from the run's own period.
+ *
+ * **Since ticket #317 every one of those facts comes from the job's definition**, which
+ * `listJobsWithLastRun` hands back beside the last run: the title and purpose from
+ * `JobDefinition.display`, a period from its schedule's `formatPeriod`, and a failure's sentence
+ * from the failure kinds the definition declares, found by `knownFailureOf`. This file no longer
+ * keeps words by job name, reads a period marker's shape, or matches an error's name.
  */
 
-export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+/** The 403 for anyone who is not a superuser. The screen has no 404 of its own. */
+const PAGE = { forbidden: m.adminJobs_forbidden } satisfies PageMessages;
 
+export const load: PageServerLoad = async ({ locals }) => {
+	const user = requireUser(locals);
+
+	const { db, clock } = productionDependencies();
 	try {
 		const jobs = await listJobsWithLastRun({
-			db: database(),
-			clock: systemClock,
+			db,
+			clock,
 			registry: applicationJobs,
-			actorId: locals.user.id
+			actorId: user.id
 		});
 		const locale = getLocale();
 		return { jobs: jobs.map((job) => jobView(job, locale)) };
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	trigger: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const jobName = String(form.get('jobName') ?? '').trim();
+		const jobName = readText(form, 'jobName');
 		if (jobName === '') {
 			return fail(400, { message: m.adminJobs_invalidRequest() });
 		}
 
+		// A job that ran and threw is an outcome `triggerJob` returns, never a rejected form, so this
+		// `catch` only ever throws: the 403, or the error itself.
+		const { db, clock } = productionDependencies();
 		let outcome: JobOutcome | undefined;
 		try {
 			outcome = await triggerJob({
-				db: database(),
-				clock: systemClock,
+				db,
+				clock,
 				registry: applicationJobs,
-				actorId: locals.user.id,
+				actorId: user.id,
 				jobName
 			});
 		} catch (caught) {
-			throwAsRouteError(caught);
+			throwRouteError(caught, PAGE);
 		}
 
-		if (!outcome) {
+		// `triggerJob` answers only for a registered name, so the definition is there whenever an
+		// outcome is; reading it back is how the outcome's words come from the job itself.
+		const job = outcome && applicationJobs.get(outcome.jobName);
+		if (!outcome || !job) {
 			return fail(400, { message: m.adminJobs_unknownJob({ name: jobName }) });
 		}
-		return { message: describeOutcome(outcome, getLocale()) };
+		return { message: describeOutcome(job, outcome, getLocale()) };
 	}
 };
 
@@ -127,54 +138,12 @@ interface FailureView {
 	readonly nextAttempt: string;
 }
 
-/** The human name and purpose of each job this application registers, by its registered name. */
-const JOB_WORDS: Readonly<
-	Partial<Record<string, (locale: InterfaceLocale) => { title: string; purpose: string }>>
-> = {
-	[EMAIL_QUEUE_DRAIN_JOB_NAME]: (locale) => ({
-		title: m.adminJobs_job_emailQueueDrain_title({}, { locale }),
-		purpose: m.adminJobs_job_emailQueueDrain_purpose({}, { locale })
-	}),
-	[INVOICE_ISSUANCE_JOB_NAME]: (locale) => ({
-		title: m.adminJobs_job_issueInvoices_title({}, { locale }),
-		purpose: m.adminJobs_job_issueInvoices_purpose({}, { locale })
-	}),
-	[JOB_RUN_PRUNE_JOB_NAME]: (locale) => ({
-		title: m.adminJobs_job_jobRunHistoryPrune_title({}, { locale }),
-		purpose: m.adminJobs_job_jobRunHistoryPrune_purpose(
-			{ days: JOB_RUN_RETENTION_DAYS },
-			{ locale }
-		)
-	}),
-	[MONTHLY_REPORT_JOB_NAME]: (locale) => ({
-		title: m.adminJobs_job_sendMonthlyReport_title({}, { locale }),
-		purpose: m.adminJobs_job_sendMonthlyReport_purpose({}, { locale })
-	})
-};
-
 /** How a run's status reads. The value in code stays English. */
 const STATUS_WORDS: Readonly<Record<JobRunStatus, (locale: InterfaceLocale) => string>> = {
 	[JOB_RUN_STATUS.running]: (locale) => m.adminJobs_status_running({}, { locale }),
 	[JOB_RUN_STATUS.succeeded]: (locale) => m.adminJobs_status_succeeded({}, { locale }),
 	[JOB_RUN_STATUS.failed]: (locale) => m.adminJobs_status_failed({}, { locale })
 };
-
-/**
- * `NoDuesRateError`'s `name`, as `src/lib/server/services/dues/issuance.ts` declares it with
- * `override readonly name`. Written out rather than read off the class, whose own `name` a bundler
- * is free to shorten; `tests/unit/scheduler-backoff.test.ts` runs the real issuance job against a
- * database with no Tarif and proves the two still agree.
- */
-const NO_DUES_RATE_ERROR_NAME = 'NoDuesRateError';
-
-/** A monthly period marker, `2026-09`. Fixed length, anchored: nothing to backtrack over. */
-const MONTH_PERIOD = /^\d{4}-\d{2}$/;
-
-/** A daily period marker, `2026-09-24`. */
-const DAY_PERIOD = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Noon in WIB as a UTC hour: a civil date read at noon never slips to the day before or after. */
-const NOON_WIB_AS_UTC_HOUR = 5;
 
 /** The locale a count is grouped in: `2.635` in Indonesian, `2,635` in English. */
 const NUMBER_FORMAT: Readonly<Record<InterfaceLocale, Intl.NumberFormat>> = {
@@ -184,20 +153,20 @@ const NUMBER_FORMAT: Readonly<Record<InterfaceLocale, Intl.NumberFormat>> = {
 
 /** One job, ready to render. */
 function jobView(job: JobSummary, locale: InterfaceLocale): JobView {
-	const words = JOB_WORDS[job.name]?.(locale);
+	const { definition } = job;
 	return {
 		name: job.name,
-		title: words?.title ?? job.name,
-		purpose: words?.purpose,
-		currentPeriod: _formatPeriod(job.currentPeriod, locale),
+		title: titleOf(definition, locale),
+		purpose: definition.display?.purpose(locale),
+		currentPeriod: _formatPeriod(definition, job.currentPeriod, locale),
 		lastRun: job.lastRun && {
-			period: _formatPeriod(job.lastRun.period, locale),
+			period: _formatPeriod(definition, job.lastRun.period, locale),
 			status: STATUS_WORDS[job.lastRun.status](locale),
 			startedAt: formatDateTime(job.lastRun.startedAt),
 			finishedAt: job.lastRun.finishedAt
 				? formatDateTime(job.lastRun.finishedAt)
 				: m.adminJobs_notFinished({}, { locale }),
-			error: _describeRunError(job.lastRun.error, job.lastRun.period, locale)
+			error: _describeRunError(definition, job.lastRun.error, job.lastRun.period, locale)
 		},
 		failure: failureView(job, locale)
 	};
@@ -220,41 +189,34 @@ function failureView(job: JobSummary, locale: InterfaceLocale): FailureView | un
 	};
 }
 
+/** A job's human name, or its registered name when its definition has no words for it. */
+function titleOf(job: JobDefinition, locale: InterfaceLocale): string {
+	return job.display?.title(locale) ?? job.name;
+}
+
 /**
- * A period marker as a person reads it, in WIB: a monthly one as `September 2026`, a daily one as
- * a date, and a window of minutes (the email drain's minute, the prune's day counted from the
- * epoch) as the date and time it starts. A marker of any other shape is shown as it is.
- *
- * The date and time use `#lib/time.ts`'s formatters, whose locale is `id-ID` whatever the interface
- * language (decision 2 there: it is what prints `WIB`); only the month name follows the language.
+ * One of `job`'s period markers as a person reads it, by the formatter of the schedule that chose
+ * the marker: in WIB, a month as `September 2026`, a day as a date, a window of minutes as the date
+ * and time it starts. A schedule without a formatter has its marker shown as it is.
  *
  * Exported, with the underscore SvelteKit asks of any extra export from a route file, for
  * `tests/unit/scheduler-backoff.test.ts`.
  */
-export function _formatPeriod(period: string, locale: InterfaceLocale): string {
-	if (MONTH_PERIOD.test(period)) {
-		return formatMonthLabel(period, locale);
-	}
-	if (DAY_PERIOD.test(period)) {
-		const [year, month, day] = period.split('-').map(Number);
-		return formatDay(new Date(Date.UTC(year, month - 1, day, NOON_WIB_AS_UTC_HOUR)));
-	}
-	const instant = new Date(period);
-	return Number.isNaN(instant.getTime()) ? period : formatDateTime(instant);
+export function _formatPeriod(job: JobDefinition, period: string, locale: InterfaceLocale): string {
+	return job.schedule.formatPeriod?.(period, locale) ?? period;
 }
 
 /**
- * What the screen says about a run's `error`: a missing Tarif as a sentence in `locale`, built
- * from the run's own period, and anything else as the text that was recorded.
- *
- * A missing Tarif is recognised by the name `describeFailure` in `src/lib/server/scheduler` puts in
- * front of the message (`isFailureNamed`), never by the English wording, which is the issuance
- * service's to change. A run recorded before ticket #218 has no name on it and shows its text.
+ * What the screen says about a run's `error`: a failure `job` declares (a missing Tarif, for the
+ * issuance job) as that failure's sentence in `locale`, built from the run's own period, and
+ * anything else as the text that was recorded. A run recorded before ticket #218 has no error name
+ * on it, so no declared failure matches it and it shows its text.
  *
  * Exported, with the underscore SvelteKit asks of any extra export from a route file, for
  * `tests/unit/scheduler-backoff.test.ts`.
  */
 export function _describeRunError(
+	job: JobDefinition,
 	error: string | null | undefined,
 	period: string,
 	locale: InterfaceLocale
@@ -262,17 +224,14 @@ export function _describeRunError(
 	if (!error) {
 		return undefined;
 	}
-	if (isFailureNamed(error, NO_DUES_RATE_ERROR_NAME) && MONTH_PERIOD.test(period)) {
-		return m.adminJobs_error_noDuesRate({ month: formatMonthLabel(period, locale) }, { locale });
-	}
-	return error;
+	return knownFailureOf(job, error)?.explain(period, locale) ?? error;
 }
 
 /** What the screen says about one attempt, in the language the superuser reads it in. */
-function describeOutcome(outcome: JobOutcome, locale: InterfaceLocale): string {
+function describeOutcome(job: JobDefinition, outcome: JobOutcome, locale: InterfaceLocale): string {
 	const subject = {
-		job: JOB_WORDS[outcome.jobName]?.(locale).title ?? outcome.jobName,
-		period: _formatPeriod(outcome.period, locale)
+		job: titleOf(job, locale),
+		period: _formatPeriod(job, outcome.period, locale)
 	};
 	if (outcome.outcome === JOB_OUTCOME.succeeded) {
 		return m.adminJobs_outcome_succeeded(subject, { locale });
@@ -280,20 +239,6 @@ function describeOutcome(outcome: JobOutcome, locale: InterfaceLocale): string {
 	if (outcome.outcome === JOB_OUTCOME.skipped) {
 		return m.adminJobs_outcome_skipped(subject, { locale });
 	}
-	const reason = _describeRunError(outcome.error, outcome.period, locale) ?? '';
+	const reason = _describeRunError(job, outcome.error, outcome.period, locale) ?? '';
 	return m.adminJobs_outcome_failed({ ...subject, error: reason }, { locale }).trim();
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- *
- * Always throws. The return type is `never` so that this can sit in a `catch` block without
- * widening the type SvelteKit infers for what an action or a load function returns, exactly as the
- * roles screen's copy of this helper explains.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminJobs_forbidden());
-	}
-	throw caught;
 }

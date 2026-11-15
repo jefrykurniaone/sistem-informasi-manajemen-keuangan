@@ -1,13 +1,20 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
 import { civilDayOf, formatDateTime, formatTime } from '#lib/time.ts';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
 import { POST_STATUS, POST_TYPES, type PostType } from '#lib/server/db/schema/post.ts';
-import { assertUuidParam } from '#lib/server/services/identifier.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
-import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	requireUser,
+	requireUuidParam,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages,
+	type RouteDependencies,
+	type SignedInUser
+} from '#lib/server/route-action.ts';
 import {
 	archivePost,
 	assertAcceptableCoverImage,
@@ -16,7 +23,6 @@ import {
 	isAllowedPostTransition,
 	POST_CATEGORIES,
 	POST_RULE,
-	PostNotFoundError,
 	PostRuleError,
 	PostTransitionError,
 	publishPost,
@@ -39,23 +45,52 @@ import type { Actions, PageServerLoad } from './$types';
  * what lets a Post be created with its picture already on it rather than published without one
  * because the admin left the screen too early.
  *
- * Follows the shape `(app)/admin/units/[id]/+page.server.ts` settled: `PermissionDeniedError`
+ * Follows the shape `src/lib/server/route-action.ts` settled (#318): `PermissionDeniedError`
  * becomes `error(403, …)` and `PostNotFoundError` becomes `error(404, …)`, both here rather than in
- * the service, while a named rule refusal or a refused status change is a rejected form —
+ * the service, while a rule refusal or a refused status change is a rejected form —
  * `fail(400, …)` — because the actor was inside their rights and the specific change is what was
  * wrong.
  */
 
+/** The 403 for anyone who may not manage Posts, and the 404 for an id that names no Post. */
+const PAGE = {
+	forbidden: m.adminPosts_forbidden,
+	notFound: m.adminPosts_notFound
+} satisfies PageMessages;
+
+/**
+ * `update`: a named rule refusal reads its own sentence, and a `TypeError` from the service's own
+ * validation reads the invalid-form sentence, as it did before #318.
+ */
+const UPDATE_FORM = {
+	...PAGE,
+	fallback: m.adminPosts_invalidForm,
+	refusals: [
+		refusal(PostRuleError, ({ error }) => ruleMessage(error.rule)),
+		refusal(TypeError, m.adminPosts_invalidForm)
+	]
+} satisfies FormMessages;
+
+/** `publish` and `archive`: a status change the Post's current status does not allow. */
+const STATUS_FORM = {
+	...PAGE,
+	fallback: m.adminPosts_invalidForm,
+	refusals: [
+		refusal(PostTransitionError, ({ error }) =>
+			m.adminPosts_transitionRefused({ from: error.from, to: error.to })
+		)
+	]
+} satisfies FormMessages;
+
 export const load: PageServerLoad = async ({ locals, params }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+	const user = requireUser(locals);
 	// `posts.id` is a `uuid` column, and a non-uuid `params.id` must be refused here rather than
 	// reach `getPost`'s comparison — see #111 and `#lib/server/services/identifier.ts`.
-	assertUuidParam(params.id, m.adminPosts_notFound());
+	const postId = requireUuidParam(params.id, PAGE);
 
+	const { db } = productionDependencies();
 	try {
-		const post = await getPost(database(), locals.user.id, params.id);
+		const post = await getPost(db, user.id, postId);
 		const startsAtFields = civilDateAndTimeOf(post.startsAt);
 		const endsAtFields = civilDateAndTimeOf(post.endsAt);
 		return {
@@ -92,16 +127,14 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 			canArchive: isAllowedPostTransition(post.status, POST_STATUS.archived)
 		};
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	update: async ({ locals, params, request }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
-		assertUuidParam(params.id, m.adminPosts_notFound());
+		const user = requireUser(locals);
+		const postId = requireUuidParam(params.id, PAGE);
 
 		const form = await request.formData();
 		const values = readPostFormValues(form);
@@ -124,15 +157,19 @@ export const actions: Actions = {
 		// Checked before anything is written, for the same reason the write screen checks it there —
 		// see `assertAcceptableCoverImage` in `#lib/server/services/post/index.ts`.
 		const coverImage = await readCoverImage(form);
-		const coverRefusal = coverImage && coverImageRefusal(coverImage);
-		if (coverRefusal) {
-			return fail(400, { message: coverRefusal, values });
+		if (coverImage) {
+			try {
+				assertAcceptableCoverImage(coverImage);
+			} catch (caught) {
+				return failOrThrow(caught, UPDATE_FORM, { values });
+			}
 		}
 
+		const dependencies = productionDependencies();
 		try {
-			await updatePost(database(), systemClock, {
-				actorId: locals.user.id,
-				postId: params.id,
+			await updatePost(dependencies.db, dependencies.clock, {
+				actorId: user.id,
+				postId,
 				type: parseType(values.type),
 				title: values.title,
 				summary: values.summary,
@@ -143,30 +180,25 @@ export const actions: Actions = {
 				location: values.location || null
 			});
 			await saveCoverImage(
-				locals.user.id,
-				params.id,
+				dependencies,
+				user.id,
+				postId,
 				coverImage,
 				form.get('removeCoverImage') !== null
 			);
 		} catch (caught) {
-			if (caught instanceof PostRuleError) {
-				return fail(400, { message: ruleMessage(caught.rule), values });
-			}
-			if (caught instanceof TypeError) {
-				return fail(400, { message: m.adminPosts_invalidForm(), values });
-			}
-			throwAsRouteError(caught);
+			return failOrThrow(caught, UPDATE_FORM, { values });
 		}
 
 		return { message: m.adminPosts_updatedMessage() };
 	},
 
 	publish: async ({ locals, params }) => {
-		return moveStatus(locals.user, params.id, publishPost, m.adminPosts_publishedMessage());
+		return moveStatus(requireUser(locals), params.id, publishPost, m.adminPosts_publishedMessage());
 	},
 
 	archive: async ({ locals, params }) => {
-		return moveStatus(locals.user, params.id, archivePost, m.adminPosts_archivedMessage());
+		return moveStatus(requireUser(locals), params.id, archivePost, m.adminPosts_archivedMessage());
 	}
 };
 
@@ -182,34 +214,25 @@ async function readCoverImage(form: FormData): Promise<CoverImageUpload | undefi
 	return { contentType: file.type, content: new Uint8Array(await file.arrayBuffer()) };
 }
 
-/** The sentence for a Sampul the service refuses, or `undefined` when it accepts it. */
-function coverImageRefusal(image: CoverImageUpload): string | undefined {
-	try {
-		assertAcceptableCoverImage(image);
-		return undefined;
-	} catch (caught) {
-		if (caught instanceof PostRuleError) {
-			return ruleMessage(caught.rule);
-		}
-		throw caught;
-	}
-}
-
 /**
  * Attaches, replaces or takes away this Post's Sampul, after its content has been saved.
  *
  * A chosen file beats a ticked "hapus Sampul". The two together are a contradiction, and of the two
  * the file is the one the person went and picked, so it is the one this honours; the checkbox on its
  * own still removes.
+ *
+ * `dependencies.fileStore` is read only inside the branch that touches the Sampul: reading it builds
+ * the store from `FILE_STORE_SECRET`, and a Post saved without touching its Sampul must not need it.
  */
 async function saveCoverImage(
+	dependencies: RouteDependencies,
 	actorId: string,
 	postId: string,
 	image: CoverImageUpload | undefined,
 	removeRequested: boolean
 ): Promise<void> {
 	if (image) {
-		await setPostCoverImage(database(), systemClock, localFileStoreFromEnvironment(systemClock), {
+		await setPostCoverImage(dependencies.db, dependencies.clock, dependencies.fileStore, {
 			actorId,
 			postId,
 			...image
@@ -217,12 +240,10 @@ async function saveCoverImage(
 		return;
 	}
 	if (removeRequested) {
-		await removePostCoverImage(
-			database(),
-			systemClock,
-			localFileStoreFromEnvironment(systemClock),
-			{ actorId, postId }
-		);
+		await removePostCoverImage(dependencies.db, dependencies.clock, dependencies.fileStore, {
+			actorId,
+			postId
+		});
 	}
 }
 
@@ -231,46 +252,40 @@ type StatusMove = typeof publishPost;
 
 /** Shared body of the `publish` and `archive` actions: they differ only in which move and message. */
 async function moveStatus(
-	actor: App.Locals['user'],
-	postId: string,
+	actor: SignedInUser,
+	postIdParam: string,
 	move: StatusMove,
 	message: string
 ) {
-	if (!actor) {
-		redirect(303, AUTH_PATHS.login);
-	}
-	assertUuidParam(postId, m.adminPosts_notFound());
+	const postId = requireUuidParam(postIdParam, PAGE);
 
+	const { db, clock } = productionDependencies();
 	try {
-		await move(database(), systemClock, { actorId: actor.id, postId });
+		await move(db, clock, { actorId: actor.id, postId });
 	} catch (caught) {
-		if (caught instanceof PostTransitionError) {
-			return fail(400, {
-				message: m.adminPosts_transitionRefused({ from: caught.from, to: caught.to })
-			});
-		}
-		throwAsRouteError(caught);
+		return failOrThrow(caught, STATUS_FORM);
 	}
 
 	return { message };
 }
 
 /**
- * What the write form carries, trimmed, as strings. `(app)/admin/posts/new/+page.server.ts` carries
- * its own copy — see the note there.
+ * What the write form carries, as strings: the typed text trimmed, the type, the category and the
+ * date and time boxes exactly as posted. `(app)/admin/posts/new/+page.server.ts` carries its own
+ * copy — see the note there.
  */
 function readPostFormValues(form: FormData) {
 	return {
 		type: String(form.get('type') ?? ''),
-		title: String(form.get('title') ?? '').trim(),
-		summary: String(form.get('summary') ?? '').trim(),
-		bodyHtml: String(form.get('bodyHtml') ?? '').trim(),
+		title: readText(form, 'title'),
+		summary: readText(form, 'summary'),
+		bodyHtml: readText(form, 'bodyHtml'),
 		category: String(form.get('category') ?? ''),
 		startsAtDate: String(form.get('startsAtDate') ?? ''),
 		startsAtTime: String(form.get('startsAtTime') ?? ''),
 		endsAtDate: String(form.get('endsAtDate') ?? ''),
 		endsAtTime: String(form.get('endsAtTime') ?? ''),
-		location: String(form.get('location') ?? '').trim()
+		location: readText(form, 'location')
 	};
 }
 
@@ -319,19 +334,4 @@ function ruleMessage(rule: PostRule): string {
 		[POST_RULE.coverImageTooLarge]: m.adminPosts_rule_coverImageTooLarge
 	};
 	return messages[rule]();
-}
-
-/**
- * Turns a caught permission refusal into a 403, or a caught missing Post into a 404, and throws it —
- * or rethrows whatever else it was. Always throws, for the same reason the unit screens' copies of
- * this helper are declared `never`.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminPosts_forbidden());
-	}
-	if (caught instanceof PostNotFoundError) {
-		throw error(404, m.adminPosts_notFound());
-	}
-	throw caught;
 }

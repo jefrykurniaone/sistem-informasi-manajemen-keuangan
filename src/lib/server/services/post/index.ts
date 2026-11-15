@@ -14,6 +14,8 @@ import {
 import { residents } from '../../db/schema/resident';
 import type { Clock } from '../../ports/clock';
 import type { FileStore } from '../../ports/file-store';
+import { announceAfterCommit } from '../../email/announce';
+import { NEW_POST_KIND } from '../../email/templates/new-post';
 import { sanitizePostHtml } from './sanitize';
 import { notifyNewPost } from './notification';
 
@@ -32,9 +34,10 @@ import { notifyNewPost } from './notification';
  *   builds the public board (#40). What that ticket needs from this one is `sanitizePostHtml` in
  *   `./sanitize.ts`, which is the security boundary and is exported for exactly that reason.
  * - **Who gets emailed about a new Post is not here either.** `./notification.ts` holds
- *   `notifyNewPost` — the `new-post` Langganan recipients, the payload it sends them, and the
- *   `readOrigin()`-built link. `publishPost` below calls it exactly once, after its own transaction
- *   has committed and only for a Post's first publication — see `publishPost`'s own doc comment.
+ *   `notifyNewPost` — who the `new-post` email is addressed to and the payload it carries — and
+ *   `src/lib/server/email/announce.ts` applies the Langganan and builds the links. `publishPost`
+ *   below calls it exactly once, after its own transaction has committed and only for a Post's first
+ *   publication, through `announceAfterCommit` — see `publishPost`'s own doc comment.
  * - **The database owns three rules and this module owns the rest.** `posts_type_check`,
  *   `posts_status_check` and `posts_time_order_check` are in `src/lib/server/db/schema/post.ts`.
  *   Everything below — an `announcement` may not carry event times, an `event` needs a start time,
@@ -562,6 +565,13 @@ export interface PublishPostSettings {
  * did not happen; see `src/lib/server/email/queue.ts`'s own doc comment for why that ordering is the
  * whole guarantee a queue gives.
  *
+ * **Queuing the email never fails the publication** (#316). By the time the notifier runs the Post
+ * is on the board, so an exception from it reaching the admin would report a published Post as
+ * unpublished, and pressing again would only answer that it is already published while the
+ * subscribers not yet reached were never sent anything. `announceAfterCommit` logs the failure and
+ * lets the publication answer as the success it is. It wraps the call here rather than inside
+ * `notifyNewPost`, so it holds for a notifier injected through `PublishPostSettings.notify` too.
+ *
  * @throws {PermissionDeniedError} when `actorId` may not manage Posts.
  * @throws {PostNotFoundError} when `postId` names no Post.
  * @throws {PostTransitionError} when the Post is already published.
@@ -582,7 +592,9 @@ export async function publishPost(
 
 	if (previousPublishedAt === null) {
 		const notify = settings.notify ?? notifyNewPost;
-		await notify(db, clock, row);
+		await announceAfterCommit(`the "${NEW_POST_KIND}" email for Post ${row.id}`, () =>
+			notify(db, clock, row)
+		);
 	}
 
 	return row;

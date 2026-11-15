@@ -6,6 +6,7 @@ import { rupiah, type Rupiah } from '#lib/money.ts';
 import { auditEntriesFor } from '#lib/server/audit.ts';
 import { allocations } from '#lib/server/db/schema/allocation.ts';
 import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
 import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
 import { invoices } from '#lib/server/db/schema/invoice.ts';
 import {
@@ -113,6 +114,32 @@ async function insertHousehold(name: string, block: string, number: string): Pro
 	const unitId = await insertUnit(block, number);
 	await insertOccupancy(unitId, residentId);
 	return { userId, residentId, unitId };
+}
+
+/** A verified Pembayaran of `amount` for the house, with one Alokasi of all of it to `invoiceId`. */
+async function allocateTo(
+	unitId: string,
+	residentId: string,
+	invoiceId: string,
+	amount: Rupiah
+): Promise<void> {
+	const [payment] = await testDb.db
+		.insert(payments)
+		.values({
+			unitId,
+			recordedBy: residentId,
+			amount,
+			receivedOn: RECEIVED_ON,
+			method: PAYMENT_METHOD.transfer,
+			status: PAYMENT_STATUS.verified,
+			verifiedBy: residentId,
+			verifiedAt: new Date(START),
+			createdAt: new Date(START)
+		})
+		.returning();
+	await testDb.db
+		.insert(allocations)
+		.values({ paymentId: payment.id, invoiceId, amount, createdAt: new Date(START) });
 }
 
 /** Records a payment with this file's defaults, overridden by whatever the test cares about. */
@@ -382,56 +409,20 @@ describe('payableUnitsForUser', () => {
 			january.id
 		]);
 		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).not.toContain(cancelled.id);
-		// No lunas, sebagian or menunggak figure anywhere on it: that arithmetic belongs to #27.
+		// What each Tagihan still owes is the one thing the picker adds to the Tagihan's own facts; the
+		// status vocabulary and the allocated sum stay inside `invoice-standing.ts`.
 		expect(Object.keys(offered[0].invoices[0]).sort()).toEqual([
 			'amount',
 			'dueDate',
 			'invoiceId',
-			'period'
+			'period',
+			'remainingAmount'
 		]);
-	});
-
-	it('leaves out a Tagihan issued before the payer moved in, and keeps the one inside their stay', async () => {
-		// `docs/spec-iuran-v1.md`: "Warga hanya melihat tagihan yang terbit dalam rentang masa
-		// huninya". A Tagihan from before this resident moved in is the *previous* occupant's
-		// obligation, and offering it in the picker discloses its period and its amount. The two
-		// invoices below differ only in whether their period falls inside the stay, so this test fails
-		// if the occupancy filter is ever dropped — it would then find both.
-		const userId = await insertUser('Warga Tagihan Penghuni Lama');
-		const residentId = await insertResident(userId);
-		const unitId = await insertUnit('I', '4');
-		await insertOccupancy(unitId, residentId, null, '2025-12-01');
-
-		const [previousOccupants, theirOwn] = await testDb.db
-			.insert(invoices)
-			.values([
-				{
-					unitId,
-					period: '2025-10',
-					amount: rupiah(150_000),
-					dueDate: '2025-10-05',
-					issuedAt: new Date(START)
-				},
-				{
-					unitId,
-					period: '2025-12',
-					amount: rupiah(150_000),
-					dueDate: '2025-12-05',
-					issuedAt: new Date(START)
-				}
-			])
-			.returning();
-
-		const offered = await payableUnitsForUser(testDb.db, new FakeClock(START), userId);
-
-		expect(offered).toHaveLength(1);
-		// `firstDayOfPeriod('2025-10')` is 2025-10-01, which is outside the stay that starts on
-		// 2025-12-01; `firstDayOfPeriod('2025-12')` is 2025-12-01, its first day.
-		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).toEqual([theirOwn.id]);
-		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).not.toContain(
-			previousOccupants.id
-		);
-		expect(offered[0].invoices.map((invoice) => invoice.period)).not.toContain('2025-10');
+		// Nothing allocated yet, so the whole amount is still owed.
+		expect(offered[0].invoices.map((invoice) => invoice.remainingAmount)).toEqual([
+			rupiah(150_000),
+			rupiah(150_000)
+		]);
 	});
 
 	it('offers one entry per house even when the payer holds two running stays in it', async () => {
@@ -452,6 +443,118 @@ describe('payableUnitsForUser', () => {
 
 		expect(offered).toHaveLength(1);
 		expect(offered[0].invoices).toHaveLength(1);
+	});
+
+	it('offers a superuser who lives in a house only the Tagihan of their own Masa Huni', async () => {
+		// The picker is a personal screen. A superuser who moved in on 1 June must not be offered the
+		// three months the previous occupant left unpaid, whatever their role lets them see on the
+		// admin screens. The cases of the rule itself, the `89948c3` regression among them, are in
+		// `tests/unit/resident-view.test.ts`; this test only proves the picker reads that module.
+		const unitId = await insertUnit('I', '5');
+		const previousUserId = await insertUser('Penghuni Sebelumnya');
+		const previousResidentId = await insertResident(previousUserId);
+		await insertOccupancy(unitId, previousResidentId, '2026-05-31', '2026-01-01');
+		const superuserId = await insertUser('Rina Superuser Menghuni');
+		const superuserResidentId = await insertResident(superuserId);
+		await testDb.db
+			.insert(userRoles)
+			.values({ userId: superuserId, role: ROLE.superuser, createdAt: new Date(START) });
+		await insertOccupancy(unitId, superuserResidentId, null, '2026-06-01');
+
+		const rows = await testDb.db
+			.insert(invoices)
+			.values(
+				['2026-01', '2026-02', '2026-03', '2026-06'].map((period) => ({
+					unitId,
+					period,
+					amount: rupiah(150_000),
+					dueDate: `${period}-05`,
+					issuedAt: new Date(`${period}-01T00:00:00.000Z`)
+				}))
+			)
+			.returning();
+		const june = rows.find((row) => row.period === '2026-06');
+
+		const offered = await payableUnitsForUser(
+			testDb.db,
+			new FakeClock('2026-07-10T03:00:00.000Z'),
+			superuserId
+		);
+
+		expect(offered).toHaveLength(1);
+		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).toEqual([june?.id]);
+	});
+
+	it('does not offer a Tagihan that is already paid in full, and carries the remainder of a part-paid one', async () => {
+		const household = await insertHousehold('Warga Pilih Sisa', 'I', '8');
+		const [paid, partial, untouched] = await testDb.db
+			.insert(invoices)
+			.values(
+				['2025-10', '2025-11', '2025-12'].map((period) => ({
+					unitId: household.unitId,
+					period,
+					amount: rupiah(150_000),
+					dueDate: `${period}-05`,
+					issuedAt: new Date(START)
+				}))
+			)
+			.returning();
+		await allocateTo(household.unitId, household.residentId, paid.id, rupiah(150_000));
+		await allocateTo(household.unitId, household.residentId, partial.id, rupiah(50_000));
+
+		const offered = await payableUnitsForUser(testDb.db, new FakeClock(START), household.userId);
+
+		expect(offered).toHaveLength(1);
+		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).toEqual([
+			partial.id,
+			untouched.id
+		]);
+		// The amount stays what was issued; the remainder is what ticking the Tagihan adds.
+		expect(offered[0].invoices.map((invoice) => [invoice.amount, invoice.remainingAmount])).toEqual(
+			[
+				[rupiah(150_000), rupiah(100_000)],
+				[rupiah(150_000), rupiah(150_000)]
+			]
+		);
+	});
+
+	it('offers a house nothing to tick when every Tagihan of it is paid, and still offers the house', async () => {
+		const household = await insertHousehold('Warga Semua Lunas', 'I', '9');
+		const [only] = await testDb.db
+			.insert(invoices)
+			.values({
+				unitId: household.unitId,
+				period: '2025-12',
+				amount: rupiah(150_000),
+				dueDate: '2025-12-05',
+				issuedAt: new Date(START)
+			})
+			.returning();
+		// Exactly its amount, which is what makes it paid.
+		await allocateTo(household.unitId, household.residentId, only.id, rupiah(150_000));
+
+		const offered = await payableUnitsForUser(testDb.db, new FakeClock(START), household.userId);
+
+		expect(offered).toHaveLength(1);
+		expect(offered[0].unitId).toBe(household.unitId);
+		expect(offered[0].invoices).toEqual([]);
+	});
+
+	it('orders two houses by their most recent running stay, so a stay starting later moves neither', async () => {
+		// The form preselects the first house it is given. `first` has been lived in since 2025 and
+		// `second` since December; `first` also has a stay starting in March that has not begun. The
+		// picker has always put the house with the newest *running* stay first, which is `second`.
+		const userId = await insertUser('Warga Dua Rumah Bayar');
+		const residentId = await insertResident(userId);
+		const first = await insertUnit('I', '6');
+		const second = await insertUnit('I', '7');
+		await insertOccupancy(first, residentId, null, '2025-01-01');
+		await insertOccupancy(second, residentId, null, '2025-12-01');
+		await insertOccupancy(first, residentId, null, '2026-03-01');
+
+		const offered = await payableUnitsForUser(testDb.db, new FakeClock(START), userId);
+
+		expect(offered.map((house) => house.unitId)).toEqual([second, first]);
 	});
 
 	it('offers nothing to somebody whose stay is over', async () => {

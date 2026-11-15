@@ -4,8 +4,9 @@
 |---|---|
 | Item spesifikasi | [#310](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/310) |
 | Run | `perdalam-v1` |
-| Peta eksekusi | belum dibuat |
+| Peta eksekusi | [#334](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/334) |
 | Disalin pada | 2026-11-15, dari `main` @ `0cf7be0` |
+| Lintasan penutup | 2026-11-16, sesudah Gelombang 6 (`feat/perdalam-v1` @ `cac5bf0`): dibuat ulang dari item, yang kini memuat bagian "Catatan penyerahan" dengan klaim yang dibalik ditandai; tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang; item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
 
@@ -103,3 +104,33 @@ API Elysia sudah punya bentuk yang dalam: satu penangan galat yang mengubah peno
 - Sumber: tinjauan arsitektur 2026-11-15, kandidat 06, dan keputusan grilling run `perdalam-v1` Q1 (seluruh kandidat dalam satu run).
 - Spec ini menyentuh banyak route yang juga disunting spec lain. Urutan gelombangnya diatur di Stage 4 supaya migrasi tidak bertabrakan dengan perubahan route di spec lain.
 
+
+## Catatan penyerahan (run perdalam-v1, 2026-11-16)
+
+**1. Yang masuk.** Semua di `feat/perdalam-v1`, belum di `main` (PR run dibuka di tail, #334).
+
+- #318 Modul aksi route: merge `d6ec16e` ke feat/perdalam-v1. `src/lib/server/route-action.ts`: `throwRouteError`, `failOrThrow`, `refusal`, `requireUser`, `requireUuidParam`, `productionDependencies`, `readText`, `readOptionalText`, `readRupiah`; `src/lib/errors.ts`: `NotFoundError`, `RuleViolationError`, `ERROR_CATEGORY`. Pilot `/admin/periods` dan `/admin/cash-categories`.
+- #326 Migrasi 8 route Unit dan orang: merge `e53dd02` ke feat/perdalam-v1.
+- #327 Migrasi 8 route konten dan sistem: merge `ced8776` ke feat/perdalam-v1.
+- #332 Migrasi 11 route keuangan: merge `fe3bc28` ke feat/perdalam-v1.
+- #333 Hapus penerjemah galat terakhir dan pasang penjaganya: merge `cac5bf0` ke feat/perdalam-v1. `tests/unit/no-route-error-translator.test.ts` dan aturan eslint `no-restricted-syntax` untuk `src/routes/**/*.ts`.
+
+**2. Klaim spec yang dibalik atau digeser run ini.** Tidak ada yang dihapus dari badan spec di atas.
+
+- "API Elysia ... memakai tabel pemetaan yang sama" (keputusan 4, "kalau memungkinkan"): tidak dilakukan. `api/app.ts` sengaja tetap memakai `onError`-nya sendiri dan tidak membaca `errorCategoryOf`; alasannya dicatat di doc `route-action.ts`: graf impor SvelteKit akan ikut masuk, dan jawaban API untuk pelanggaran aturan bergeser dari 500 ke 400 (#333).
+- "Route di grup `(public)` dan `(auth)` di luar cakupan": `(auth)/invitations/[token]` ikut dimigrasi karena memakai salinan yang sama; route token itu tidak memakai `requireUser` (#326).
+- "Galat yang tidak dikenal tetap diteruskan" dan "Galat domain baru ... tertangani tanpa menyunting route": berlaku untuk galat berkategori. Pelanggaran aturan berkategori yang tidak dinamai route kini dijawab `fail(400)` dengan kalimat formulir tidak valid milik layar itu, bukan 500 (#326, #327, #332). Tes penjaga mewajibkan setiap kelas galat service yang diekspor berkategori, kecuali `SystemCategoryMissingError`, `NoDuesRateError`, dan `CashCorrectionTargetError`, yang sengaja tidak berkategori (#318). `CashCorrectionTargetError` dinamai per `reason` lewat `refusal(...)` di `/admin/cash` (#323).
+- "117 salinan pembacaan field form yang dipangkas" diganti `readText`: hanya di tempat bacaan lama memang dipangkas. Tetap ditulis tangan dan tidak dipangkas: `token`, `password`, `passwordAgain`, `fileName`, `content` (#326); isi balasan Keluhan, serta `type`, `category`, tanggal, dan jam Post, termasuk catch `RangeError` tanggal Post (#327). `readRupiah` menggantikan `readAmount` dan `parseRupiah`, menangkap hanya `TypeError` dan `RangeError` (#332).
+- "sebuah penjaga (aturan lint atau tes) mencegah route mendefinisikan penerjemah galatnya sendiri": ada dua. Tes AST menolak definisi `throwAsRouteError`, `failAsRejectedForm`, `refusalOrThrow` dan `instanceof PermissionDeniedError` di `src/routes` (semua grup); aturan eslint menolak `failOrThrow` yang hasilnya dibuang, sebab wajib di-`return` (#318, #333). Penjaga tidak melarang setiap catch tulis tangan. Keduanya dibuktikan menyala lewat suntingan sementara.
+- "Semua route di grup `(app)` dimigrasi": 2 pilot (#318), 8 (#326), 8 (#327), 11 (#332), 3 terakhir `/profile`, `/admin/import/template`, `/profile/notifications` (#333), ditambah `/admin/cash` (#323) dan layar Keuangan Unit (#329) lewat spec koreksi-kas. Survei #333 atas `src/routes`: tidak ada lagi definisi tiga nama penerjemah.
+- Pesan: "Pesan di setiap form sama dengan sebelum run" bertahan, dengan pengecualian satu cabang: galat tidak dinamai yang dulu 500 kini 400 (di atas). Kalimat literal lama dipertahankan sebagai `() => '...'` (#333).
+
+**3. Cacat dan tindak lanjut yang diajukan.**
+
+- #340 (di luar run, terbuka): `rupiah-input.svelte` membuang koma desimal, `12,5` tercatat Rp 125; ditemukan walk #332, sudah ada sebelum run. Bukan cacat `readRupiah`.
+- Kembalian #318: tes penjaga kategori merah terhadap kelas baru #322 karena branch dibuat sebelum #322 di-merge; ditutup dengan merge `feat/perdalam-v1` ke branch tiket dan verifikasi delta.
+- Tidak ada yang diserahkan ke tail atau pemilik untuk spec ini. Impor `route-action.ts` tidak dipindah ke `dues-correction.ts`; path lama tetap sah (#333).
+
+**4. Verifikasi.**
+
+- #318 (`executor-fable-high`): batas otorisasi bertahan, kedua rute pilot identik perilakunya. Kembalian 1 menutup tiga temuan (blocker penjaga untuk kelas baru #322, `CashCorrectionTargetError` dijadikan tidak berkategori, peringatan dokumen untuk `{ error }` dan `failOrThrow` yang wajib di-`return`); verifikasi ulang delta menutup ketiganya.

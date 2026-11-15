@@ -4,8 +4,9 @@
 |---|---|
 | Item spesifikasi | [#307](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/307) |
 | Run | `perdalam-v1` |
-| Peta eksekusi | belum dibuat |
+| Peta eksekusi | [#334](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/334) |
 | Disalin pada | 2026-11-15, dari `main` @ `0cf7be0` |
+| Lintasan penutup | 2026-11-16, sesudah Gelombang 6 (`feat/perdalam-v1` @ `cac5bf0`): dibuat ulang dari item, yang kini memuat bagian "Catatan penyerahan" dengan klaim yang dibalik ditandai; tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang; item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
 
@@ -108,3 +109,25 @@ Pertanyaan "siapa Penanggung Jawab Unit U hari ini" juga dijawab tiga kali denga
 - Sumber: tinjauan arsitektur 2026-11-15, kandidat 03 dan 07, serta fakta dari scout tentang Impor: setiap baris Impor membuat Unit baru dan Warga baru, dan berkas yang menyebut Unit atau email yang sudah ada ditolak seluruhnya.
 - ADR-0001: tidak ada konflik. Penanda tetap berpindah, hanya bacaannya yang dipusatkan.
 
+
+## Catatan penyerahan (run perdalam-v1, 2026-11-16)
+
+**1. Yang masuk.** Semua di `feat/perdalam-v1`, belum di `main` (PR run dibuka di tail, #334).
+
+- #314 Pintu pasang Warga ke Unit dengan kunci Unit di dalam modul: merge `88cfdff` ke feat/perdalam-v1. `ensureOccupancy(transaction, { unitId, residentId, role, startedOn, createdAt }): Promise<boolean>` di `src/lib/server/services/occupancy/index.ts`; dipakai Undangan, Pendaftaran, dan Impor.
+- #321 Satu bacaan Penanggung Jawab hari ini: merge `7b9a0a7` ke feat/perdalam-v1. `primaryOccupantsOn(db, day, unitIds)` di `occupancy/index.ts`; urutan pilih mulai terbaru, dicatat terbaru, id terbesar.
+
+**2. Klaim spec yang dibalik atau digeser run ini.** Tidak ada yang dihapus dari badan spec di atas.
+
+- "tes memaku permukaan tulis yang diekspornya": tes `the Masa Huni module surface` memaku seluruh daftar ekspor runtime modul, termasuk bacaan. Karena itu #321 harus menambahkan `primaryOccupantsOn` ke daftar itu (#314, #321).
+- "Model tampilan membawa 'Penanggung Jawab hari ini' dari bacaan ini": field model tampilan tetap bernama `isPrimaryOccupant`; yang berubah hanya sumbernya, kini `primaryOccupantsOn` (#321).
+- "Perubahan itu hanya terlihat pada data sisa model lama": bentuk persisnya, pemegang sebelumnya di Audit Log untuk data sisa model lama kini `before: null` kalau tidak ada penanda yang berjalan (#321).
+
+**3. Cacat dan tindak lanjut yang diajukan.**
+
+- Tidak ada cacat yang diajukan untuk spec ini, dan tidak ada yang diserahkan ke tail atau pemilik dari #314 dan #321. Satu temuan #321 (komentar `currentDay` di `occupancy/visibility.ts`) diteruskan ke #337 dan sudah diperbaiki di sana.
+- #338 (Masa Huni Data Contoh mulai pada hari semai) menyentuh Masa Huni tetapi dicatat di spec #306.
+
+**4. Verifikasi.**
+
+- Tidak ada tiket high-consequence di spec ini, jadi tidak ada verifikasi kedua. Bukti kunci #314: tes koneksi kedua dengan `for no key update` untuk pintu sendiri, jalur Undangan, dan jalur Pendaftaran; ketiganya gagal ketika `lockUnit` dilepas sementara. Walk #321: satu lencana Penanggung Jawab di layar Penghuni, ringkasan Unit, dan "Rumah saya".

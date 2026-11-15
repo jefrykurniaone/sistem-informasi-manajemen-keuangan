@@ -1,3 +1,53 @@
+<script lang="ts" module>
+	import type { GroupKey, MenuGroup, MenuItem } from './menu.js';
+
+	/*
+	 * Exported from this module block so `tests/unit/menu.test.ts` can prove which item lights up for
+	 * an address: `menu.ts` imports the permission table and cannot be reached from the browser, so
+	 * the pure matching lives with the one component that needs it.
+	 */
+
+	/**
+	 * Whether a menu `href` is the current address or an ancestor of it, so `/posts/<id>` is covered by
+	 * the `posts` item as well as `/posts`. The root only ever matches itself. A menu `href` is a
+	 * SvelteKit 3 `Path`, written without the leading slash that `pathname` carries, so the slash goes
+	 * back on before comparing.
+	 */
+	export function covers(pathname: string, href: string): boolean {
+		const address = `/${href}`;
+		if (address === '/') {
+			return pathname === '/';
+		}
+		return pathname === address || pathname.startsWith(`${address}/`);
+	}
+
+	/**
+	 * The one item that marks the current address, longest matching prefix first, and the group it
+	 * sits in. Longest wins so that `/admin/payments/cash` lands on "Verifikasi Pembayaran" rather
+	 * than on the `/admin/payments` of a shorter neighbour, and `/payments` is never confused with
+	 * `/admin/payments`.
+	 */
+	export function activeMatchOf(
+		groups: readonly MenuGroup[],
+		pathname: string
+	): { groupKey: GroupKey; itemKey: string } | null {
+		let bestGroupKey: GroupKey | null = null;
+		let best: MenuItem | null = null;
+		for (const group of groups) {
+			for (const item of group.items) {
+				if (covers(pathname, item.href) && (best === null || item.href.length > best.href.length)) {
+					best = item;
+					bestGroupKey = group.key;
+				}
+			}
+		}
+		if (best === null || bestGroupKey === null) {
+			return null;
+		}
+		return { groupKey: bestGroupKey, itemKey: best.key };
+	}
+</script>
+
 <script lang="ts">
 	import BuildingIcon from '@lucide/svelte/icons/building';
 	import CircleUserIcon from '@lucide/svelte/icons/circle-user';
@@ -16,18 +66,19 @@
 	import * as m from '#lib/paraglide/messages.js';
 	import LanguageSwitcher from './language-switcher.svelte';
 	import NavGroup, { staticRoute } from './nav-group.svelte';
-	import type { GroupKey, MenuGroup, MenuItem } from './menu.js';
 
 	/**
-	 * The sidebar every page of the `(app)` group sits beside: the brand, the role-aware menu, and a
-	 * foot holding the language choice and the way out. The sign-in pages and the public board carry
-	 * no sidebar at all (#170); the signed-out branch below is only ever seen on an `(app)` error page
-	 * reached without a session, since every page of the group sends such a visitor to `/login`.
+	 * The sidebar every page of the `(app)` group sits beside, and the announcement board for a
+	 * signed-in viewer who is let in (#319): the brand, the role-aware menu, and a foot holding the
+	 * language choice and the way out. The sign-in pages, the unsubscribe page and the board for
+	 * everyone else carry no sidebar at all (#170); the signed-out branch below is only ever seen on
+	 * an `(app)` error page reached without a session, since every page of the group sends such a
+	 * visitor to `/login`.
 	 *
 	 * The brand is `complexName` from `#lib/complex-name.ts`, the installation's `PUBLIC_COMPLEX_NAME`,
 	 * rather than a message: a complex's name does not change with the interface language.
 	 *
-	 * It renders only what `(app)/+layout.server.ts` already decided a visitor may see: `menu` is the
+	 * It renders only what `#lib/server/app-shell.ts` already decided a visitor may see: `menu` is the
 	 * result of `visibleMenu()`, which answers from the same `PERMISSIONS` table `requirePermission`
 	 * uses, so a link never claims a right the guard would refuse. Showing a link is not
 	 * authorization: each page behind it still checks for itself.
@@ -63,45 +114,6 @@
 	const TOUCH_TARGET_CLASS = 'min-h-11 md:min-h-0';
 
 	const sidebar = useSidebar();
-
-	/**
-	 * Whether a menu `href` is the current address or an ancestor of it. The root only ever matches
-	 * itself. A menu `href` is a SvelteKit 3 `Path`, written without the leading slash that
-	 * `pathname` carries, so the slash goes back on before comparing.
-	 */
-	function covers(pathname: string, href: string): boolean {
-		const address = `/${href}`;
-		if (address === '/') {
-			return pathname === '/';
-		}
-		return pathname === address || pathname.startsWith(`${address}/`);
-	}
-
-	/**
-	 * The one item that marks the current address, longest matching prefix first, and the group it
-	 * sits in. Longest wins so that `/admin/payments/cash` lands on "Verifikasi Pembayaran" rather
-	 * than on the `/admin/payments` of a shorter neighbour, and `/payments` is never confused with
-	 * `/admin/payments`.
-	 */
-	function activeMatchOf(
-		groups: readonly MenuGroup[],
-		pathname: string
-	): { groupKey: GroupKey; itemKey: string } | null {
-		let bestGroupKey: GroupKey | null = null;
-		let best: MenuItem | null = null;
-		for (const group of groups) {
-			for (const item of group.items) {
-				if (covers(pathname, item.href) && (best === null || item.href.length > best.href.length)) {
-					best = item;
-					bestGroupKey = group.key;
-				}
-			}
-		}
-		if (best === null || bestGroupKey === null) {
-			return null;
-		}
-		return { groupKey: bestGroupKey, itemKey: best.key };
-	}
 
 	const activeMatch = $derived(activeMatchOf(menu, page.url.pathname));
 

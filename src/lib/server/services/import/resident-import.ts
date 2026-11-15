@@ -4,10 +4,10 @@ import { ACTION, requirePermission, type DatabaseWriter, type Transaction } from
 import { recordAuditEntry } from '../../audit';
 import type { Database } from '../../db';
 import { user } from '../../db/schema/auth';
-import { occupancies } from '../../db/schema/occupancy';
 import { residents } from '../../db/schema/resident';
 import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
+import { ensureOccupancy } from '../occupancy';
 import { currentDay } from '../occupancy/visibility';
 import { ensureDefaultSubscriptions } from '../subscription';
 import { readResidentRows } from './xlsx';
@@ -75,8 +75,9 @@ import {
  * - **the default Langganan**, through `ensureDefaultSubscriptions`, in this same transaction, so an
  *   imported resident is subscribed exactly like an invited one.
  * - **one `occupancies` row** on that unit, with the file's role and `startedOn` set to the import
- *   day. It is not marked Penanggung Jawab: the file does not say who that is, and `/admin/units`
- *   already lists every unit still missing one.
+ *   day, written through `ensureOccupancy` in `../occupancy` like every other Masa Huni. It is not
+ *   marked Penanggung Jawab: the file does not say who that is, and `/admin/units` already lists
+ *   every unit still missing one.
  *
  * ## One transaction, and one audit row
  *
@@ -443,7 +444,14 @@ async function insertResidents(
 	);
 }
 
-/** Attaches every person to their house, from the day of the import. */
+/**
+ * Attaches every person to their house, from the day of the import, one `ensureOccupancy` call per
+ * row — the Masa Huni module's own write path, which takes the unit's row lock and checks for an
+ * overlapping stay. Here neither can bite: the unit and the resident were both inserted a moment ago
+ * in this transaction, so nobody else can hold the lock and there is no earlier stay to overlap. A
+ * skip would therefore mean that assumption broke, and is refused rather than leaving a row of the
+ * file without its house.
+ */
 async function insertOccupancies(
 	transaction: Transaction,
 	clock: Clock,
@@ -453,8 +461,8 @@ async function insertOccupancies(
 	now: Date
 ): Promise<void> {
 	const startedOn = currentDay(clock);
-	await transaction.insert(occupancies).values(
-		rows.map((row, position) => ({
+	for (const [position, row] of rows.entries()) {
+		const created = await ensureOccupancy(transaction, {
 			unitId: required(
 				unitIdByKey.get(unitKey(row.block, row.number)),
 				`unit for row ${row.rowNumber}`
@@ -463,11 +471,12 @@ async function insertOccupancies(
 			residentId: required(residentIds[position], `resident for row ${row.rowNumber}`),
 			role: row.role,
 			startedOn,
-			endedOn: null,
-			isPrimaryOccupant: false,
 			createdAt: now
-		}))
-	);
+		});
+		if (!created) {
+			throw new TypeError(`The import found a stay already written for row ${row.rowNumber}.`);
+		}
+	}
 }
 
 /**

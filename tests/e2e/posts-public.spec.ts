@@ -95,8 +95,12 @@ async function verificationToken(recipient: string): Promise<string> {
 	throw new Error(`No verification email was queued for ${recipient}.`);
 }
 
-/** Registers a resident, verifies their address, signs them in, and grants them the admin role. */
-async function signUpAdmin(page: Page, email: string): Promise<void> {
+/**
+ * Registers an account and verifies its address, and returns its id. It is signed in by nobody and
+ * holds nothing beyond what the database gives every `user` row, so it is an account still waiting
+ * for a superuser until `grantResident` or `grantAdmin` says otherwise.
+ */
+async function registerVerifiedAccount(page: Page, email: string): Promise<string> {
 	await open(page, '/register');
 	await page.getByLabel('Nama').fill('Pengurus E2E');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
@@ -119,12 +123,32 @@ async function signUpAdmin(page: Page, email: string): Promise<void> {
 	if (!userId) {
 		throw new Error(`No "user" row was found for ${email} after verifying.`);
 	}
+	return userId;
+}
+
+/** Gives the account a `residents` row, which is what admits a Warga. Roles are read per request. */
+async function grantResident(userId: string): Promise<void> {
+	await pool().query('insert into residents (user_id, created_at) values ($1, now())', [userId]);
+}
+
+/** Gives the account the admin role. Roles are read per request, so no new sign-in is needed. */
+async function grantAdmin(userId: string): Promise<void> {
 	await pool().query(
 		"insert into user_roles (user_id, role, created_at) values ($1, 'admin', now())",
 		[userId]
 	);
-	await pool().query('insert into residents (user_id, created_at) values ($1, now())', [userId]);
+}
 
+/**
+ * Signs the account in and waits for the session to land at `landing`: `/` for an account the
+ * `(app)` layout lets in, `/pending-approval` for one it does not.
+ *
+ * Every call is one sign-in against the per-address login limit (30 a minute,
+ * `RATE_LIMIT_POLICY.login.perAddress`), which this whole suite shares, so a case that can reuse a
+ * session should. A case here added for #319 reuses the admin case's sign-in rather than making its
+ * own.
+ */
+async function signIn(page: Page, email: string, landing: RegExp): Promise<void> {
 	await open(page, '/login');
 	await page.getByLabel(EMAIL_FIELD).fill(email);
 	await page.getByLabel('Kata sandi').fill(PASSWORD);
@@ -135,7 +159,15 @@ async function signUpAdmin(page: Page, email: string): Promise<void> {
 	// `/admin/posts/new` answers a request with no session by redirecting to `/login`, where there
 	// is no `Judul` field, and the test then spends its whole timeout waiting for one. Measured on
 	// #112, at six workers.
-	await expect(page).toHaveURL(/\/$/);
+	await expect(page).toHaveURL(landing);
+}
+
+/** Registers a resident, verifies their address, signs them in, and grants them the admin role. */
+async function signUpAdmin(page: Page, email: string): Promise<void> {
+	const userId = await registerVerifiedAccount(page, email);
+	await grantAdmin(userId);
+	await grantResident(userId);
+	await signIn(page, email, /\/$/);
 }
 
 /**
@@ -198,6 +230,21 @@ const EVENT_START_TIME = '19:00';
 /** The end time, an hour after `EVENT_START_TIME`. */
 const EVENT_END_TIME = '20:00';
 
+/**
+ * What "inside the app shell" means on the announcement board, for a signed-in viewer at desktop
+ * width: the sidebar is on screen, its "Pengumuman & Kegiatan" link is the current page, and the
+ * page still has exactly one `main` landmark (#187). The link is named after its group, because a
+ * group of one renders as a plain link (see `tests/e2e/layout.spec.ts`).
+ */
+async function expectShellWithAnnouncementsLit(page: Page): Promise<void> {
+	const nav = page.getByRole('navigation', { name: 'Navigasi utama' });
+	await expect(nav).toBeVisible();
+	await expect(
+		nav.getByRole('link', { name: 'Pengumuman & Kegiatan', exact: true })
+	).toHaveAttribute('aria-current', 'page');
+	await expect(page.getByRole('main')).toHaveCount(1);
+}
+
 test('an admin publishes a kegiatan, and a browser with no session opens it from the board and reads it', async ({
 	page,
 	browser
@@ -205,7 +252,29 @@ test('an admin publishes a kegiatan, and a browser with no session opens it from
 	const email = anAddress('publish');
 	const title = `Kerja bakti E2E ${Date.now()}`;
 
-	await signUpAdmin(page, email);
+	// One account and one sign-in for the whole case, walked through the three states the board
+	// treats differently (#319). The suite shares a login limit per address, so these checks ride on
+	// this case's sign-in instead of signing in once each; roles and the `residents` row are read per
+	// request, so granting them in the database takes effect on the next load of the same session.
+	const userId = await registerVerifiedAccount(page, email);
+	await signIn(page, email, /\/pending-approval$/);
+
+	// Not admitted yet: the light header of the board, no shell.
+	await page.goto('/posts');
+	await expect(page.locator('[data-sidebar]')).toHaveCount(0);
+	await expect(page.getByRole('main')).toHaveCount(1);
+	await expect(page.getByRole('banner').getByRole('link', { name: 'Beranda' })).toBeVisible();
+
+	// Admitted as a Warga: the board opens inside the shell with Pengumuman lit.
+	await grantResident(userId);
+	await page.goto('/posts');
+	await expect(page.getByRole('heading', { level: 1, name: 'Papan pengumuman' })).toBeVisible();
+	await expectShellWithAnnouncementsLit(page);
+	// Not the light header: the shell's own header carries no "Beranda" button.
+	await expect(page.getByRole('banner').getByRole('link', { name: 'Beranda' })).toHaveCount(0);
+
+	// An admin, from here on, as the rest of the case needs.
+	await grantAdmin(userId);
 
 	await open(page, '/admin/posts/new');
 
@@ -295,6 +364,13 @@ test('an admin publishes a kegiatan, and a browser with no session opens it from
 	).toBeVisible();
 
 	await anonymousContext.close();
+
+	// The same link opened by the signed-in admin who published it: since #319 a Post opens inside
+	// the app shell for anyone the `(app)` group lets in, with "Pengumuman" lit in the menu and still
+	// exactly one `main` landmark.
+	await page.goto(`/posts/${postId}`);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText(title);
+	await expectShellWithAnnouncementsLit(page);
 });
 
 test('a draft Post answers 404 to a browser with no session, even with its real id', async ({

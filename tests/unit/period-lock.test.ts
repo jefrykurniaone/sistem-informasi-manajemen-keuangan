@@ -16,6 +16,7 @@ import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
 import { createCashCategory } from '#lib/server/services/cash/category.ts';
 import { recordCashCorrection } from '#lib/server/services/cash/correction.ts';
+import { OPENING_BALANCE_DESCRIPTION } from '#lib/server/services/cash/opening-balance.ts';
 import {
 	isDateInLockedPeriod,
 	listPeriods,
@@ -28,6 +29,12 @@ import {
 	unlockPeriod
 } from '#lib/server/services/cash/period.ts';
 import { recordCashTransaction } from '#lib/server/services/cash/transaction.ts';
+import {
+	CASH_WRITE_KIND,
+	writeCashTransaction,
+	type CashWrite,
+	type CashWriteKind
+} from '#lib/server/services/cash/writer.ts';
 
 /**
  * The Periode and its lock: the rule that gives a published Laporan Bulanan its meaning. Against a
@@ -228,6 +235,155 @@ describe('the Periode a Transaksi Kas is dated into', () => {
 		expect(accepted.occurredOn).toBe('2026-11-14');
 		expect(await transactionsOn('2026-11-14')).toHaveLength(1);
 	});
+});
+
+/** Writes `entry` through the cash book writer inside a transaction of its own. */
+async function write(entry: CashWrite): Promise<CashTransaction> {
+	return testDb.db.transaction((transaction) =>
+		writeCashTransaction(transaction, new FakeClock(START), entry)
+	);
+}
+
+/**
+ * One kind of write, the month it is tried in, and how to build it. `prepare` runs while the month
+ * is still open, so a Koreksi kind can first write the line it will try to reverse: a line dated
+ * inside a month that is locked afterwards, the way a published report freezes a month that already
+ * holds transactions.
+ */
+interface LockedPeriodCase {
+	readonly kind: CashWriteKind;
+	readonly month: number;
+	readonly prepare: (actorId: string, day: string) => Promise<CashWrite>;
+}
+
+/** The year every case below locks a month of. Nothing else in this file touches it. */
+const KIND_YEAR = 2030;
+
+/** A Koreksi of `line`, of `kind`, by `actorId`. */
+function correctionOf(
+	kind:
+		| typeof CASH_WRITE_KIND.correction
+		| typeof CASH_WRITE_KIND.unverifyCorrection
+		| typeof CASH_WRITE_KIND.refundReverseCorrection,
+	actorId: string,
+	line: CashTransaction
+): CashWrite {
+	return { kind, recordedBy: actorId, transactionId: line.id, reason: 'Baris itu keliru.' };
+}
+
+const LOCKED_PERIOD_CASES: readonly LockedPeriodCase[] = [
+	{
+		kind: CASH_WRITE_KIND.manual,
+		month: 1,
+		prepare: async (actorId, day) => {
+			const category = await addCategory('Perbaikan pompa jenis manual');
+			return {
+				kind: CASH_WRITE_KIND.manual,
+				recordedBy: actorId,
+				occurredOn: day,
+				categoryId: category.id,
+				amount: AMOUNT,
+				description: 'Perbaikan pompa air'
+			};
+		}
+	},
+	{
+		kind: CASH_WRITE_KIND.duesIncome,
+		month: 2,
+		prepare: async (actorId, day) => ({
+			kind: CASH_WRITE_KIND.duesIncome,
+			recordedBy: actorId,
+			occurredOn: day,
+			amount: AMOUNT,
+			description: 'Iuran warga Blok K No 1 (pembayaran uji kunci)'
+		})
+	},
+	{
+		kind: CASH_WRITE_KIND.duesRefund,
+		month: 3,
+		prepare: async (actorId, day) => ({
+			kind: CASH_WRITE_KIND.duesRefund,
+			recordedBy: actorId,
+			occurredOn: day,
+			amount: AMOUNT,
+			description: 'Pengembalian saldo titipan Blok K No 1 (pembayaran uji kunci)'
+		})
+	},
+	{
+		kind: CASH_WRITE_KIND.openingBalance,
+		month: 4,
+		prepare: async (actorId, day) => ({
+			kind: CASH_WRITE_KIND.openingBalance,
+			recordedBy: actorId,
+			occurredOn: day,
+			amount: AMOUNT,
+			description: OPENING_BALANCE_DESCRIPTION
+		})
+	},
+	{
+		kind: CASH_WRITE_KIND.correction,
+		month: 5,
+		prepare: async (actorId, day) => {
+			const category = await addCategory('Perbaikan pompa jenis koreksi');
+			const line = await record(actorId, category.id, day);
+			return correctionOf(CASH_WRITE_KIND.correction, actorId, line);
+		}
+	},
+	{
+		kind: CASH_WRITE_KIND.unverifyCorrection,
+		month: 6,
+		prepare: async (actorId, day) => {
+			const line = await write({
+				kind: CASH_WRITE_KIND.duesIncome,
+				recordedBy: actorId,
+				occurredOn: day,
+				amount: AMOUNT,
+				description: 'Iuran warga Blok K No 2 (pembayaran yang akan dibatalkan)'
+			});
+			return correctionOf(CASH_WRITE_KIND.unverifyCorrection, actorId, line);
+		}
+	},
+	{
+		kind: CASH_WRITE_KIND.refundReverseCorrection,
+		month: 7,
+		prepare: async (actorId, day) => {
+			const line = await write({
+				kind: CASH_WRITE_KIND.duesRefund,
+				recordedBy: actorId,
+				occurredOn: day,
+				amount: AMOUNT,
+				description: 'Pengembalian saldo titipan Blok K No 2 (yang akan dibatalkan)'
+			});
+			return correctionOf(CASH_WRITE_KIND.refundReverseCorrection, actorId, line);
+		}
+	}
+];
+
+describe('every kind of write the cash book writer takes', () => {
+	it('has a locked-Periode case below for each kind, so a kind added later needs one', () => {
+		expect(LOCKED_PERIOD_CASES.map((entry) => entry.kind).sort()).toEqual(
+			Object.values(CASH_WRITE_KIND).sort()
+		);
+	});
+
+	it.each(LOCKED_PERIOD_CASES)(
+		'refuses a $kind write dated inside a locked Periode by name, and writes nothing',
+		async ({ kind, month, prepare }) => {
+			// #315: the Periode guard sits once in the writer, against the day the row would carry, so
+			// it covers every kind. A Koreksi kind carries the day of the line it reverses.
+			const actorId = await insertAdmin(`Pengurus Periode Terkunci ${kind}`);
+			const day = `${KIND_YEAR}-${String(month).padStart(2, '0')}-14`;
+			const entry = await prepare(actorId, day);
+			await lockMonth(actorId, KIND_YEAR, month);
+			const before = await transactionsOn(day);
+
+			const refusal: unknown = await write(entry).catch((error: unknown) => error);
+
+			expect(refusal).toBeInstanceOf(PeriodLockedError);
+			expect(refusal).toMatchObject({ occurredOn: day, year: KIND_YEAR, month });
+			expect(await transactionsOn(day)).toEqual(before);
+		}
+	);
 });
 
 describe('a Koreksi of a line inside a locked Periode', () => {

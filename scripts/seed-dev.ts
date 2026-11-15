@@ -100,7 +100,7 @@ import {
  * Two writes are deliberately **not** service calls, and there are only two:
  *
  * 1. **The reset**, which is `TRUNCATE`. No service deletes a Unit, a Tagihan or a Transaksi Kas,
- *    and none should — `src/lib/server/services/cash/transaction.ts` is built around the absence of
+ *    and none should — `src/lib/server/services/cash/writer.ts` is built around the absence of
  *    a delete. Emptying a database is not a domain operation.
  * 2. **`user.emailVerified`**, set to true straight after sign-up. better-auth's
  *    `requireEmailVerification` makes `signInEmail` refuse an unverified account, and the only way

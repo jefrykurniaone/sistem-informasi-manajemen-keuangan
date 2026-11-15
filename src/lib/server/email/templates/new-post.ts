@@ -1,6 +1,7 @@
 import * as m from '#lib/paraglide/messages.js';
 import { isLocale } from '#lib/paraglide/runtime.js';
 import type { EmailPayload, EmailTemplate, EmailTemplates } from '#lib/server/ports/email.ts';
+import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
 
 /**
  * The email that tells a subscribed resident a Post reached the public board: its title, its
@@ -21,13 +22,19 @@ import type { EmailPayload, EmailTemplate, EmailTemplates } from '#lib/server/po
  * per-resident language and the interface locale today is a browser cookie, not a fact about a
  * resident's row.
  *
+ * **The unsubscribe link is read from the payload and is optional here.** `announce` writes
+ * `unsubscribeUrl` into the payload of every opt-in kind, so a row queued from now on always has it
+ * (see `../announce.ts`). A row queued before that change does not, and throwing for it would fail
+ * a perfectly good email permanently, so a missing link is left out of the text rather than refused.
+ * It is not a field of `NewPostEmailValues`: `announce` supplies it after the builder has run.
+ *
  * The same refusal shape as every other template here: a payload that is not shaped the way this
  * one expects throws `TypeError`, so the worker fails that one queue row permanently instead of
  * retrying text that will never render.
  */
 
 /** The `kind` stored on the queue row, and the key this template is registered under. */
-export const NEW_POST_KIND = 'new-post';
+export const NEW_POST_KIND = SUBSCRIPTION_KIND.newPost;
 
 /** What this email needs in order to be written. */
 export interface NewPostEmailValues {
@@ -53,17 +60,22 @@ export function newPostPayload(values: NewPostEmailValues): EmailPayload {
 
 /** Writes the new-post notification email, in the payload's own `locale`. */
 export const newPostTemplate: EmailTemplate = (payload) => {
-	const { title, summary, url, locale } = payload;
+	const { title, summary, url, locale, unsubscribeUrl } = payload;
 	if (
 		typeof title !== 'string' ||
 		typeof summary !== 'string' ||
 		typeof url !== 'string' ||
-		!isLocale(locale)
+		!isLocale(locale) ||
+		(unsubscribeUrl !== undefined && unsubscribeUrl !== null && typeof unsubscribeUrl !== 'string')
 	) {
 		throw new TypeError(
-			`An email of kind "${NEW_POST_KIND}" needs a title, a summary, a url and a locale that is one of the application's locales, all strings.`
+			`An email of kind "${NEW_POST_KIND}" needs a title, a summary, a url and a locale that is one of the application's locales, all strings, and an unsubscribeUrl that is a string when it is present.`
 		);
 	}
+	const unsubscribeLines =
+		typeof unsubscribeUrl === 'string'
+			? [m.emailNewPost_unsubscribeLabel({}, { locale }), unsubscribeUrl, '']
+			: [];
 
 	return {
 		subject: m.emailNewPost_subject({ title }, { locale }),
@@ -77,6 +89,7 @@ export const newPostTemplate: EmailTemplate = (payload) => {
 			m.emailNewPost_linkLabel({}, { locale }),
 			url,
 			'',
+			...unsubscribeLines,
 			m.emailNewPost_footer({}, { locale })
 		].join('\n')
 	};

@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { PermissionDeniedError } from '#lib/errors.ts';
 import { rupiah, type Rupiah } from '#lib/money.ts';
 import { auditEntriesFor } from '#lib/server/audit.ts';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
 import { allocations } from '#lib/server/db/schema/allocation.ts';
 import { user } from '#lib/server/db/schema/auth.ts';
 import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
@@ -11,6 +12,7 @@ import { cashCategories, SYSTEM_CATEGORY_KEY } from '#lib/server/db/schema/cash-
 import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
 import { emailQueue } from '#lib/server/db/schema/email.ts';
 import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { OCCUPANCY_ROLE } from '#lib/server/db/schema/occupancy.ts';
 import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '#lib/server/db/schema/payment.ts';
 import { residents } from '#lib/server/db/schema/resident.ts';
 import { units } from '#lib/server/db/schema/unit.ts';
@@ -34,6 +36,7 @@ import {
 	verifyPayment
 } from '#lib/server/services/dues/verification.ts';
 import { PAYMENT_RECORDED_ACTION } from '#lib/server/services/dues/payment.ts';
+import { ensureOccupancy } from '#lib/server/services/occupancy/index.ts';
 
 /**
  * Verifikasi Pembayaran: the one transaction that flips the status, writes the cash row into
@@ -76,6 +79,56 @@ class FailingClock implements Clock {
 		}
 		return new Date(START);
 	}
+}
+
+/** PostgreSQL's `lock_not_available`, what `for update nowait` answers on a row somebody holds. */
+const LOCK_NOT_AVAILABLE = '55P03';
+
+/** How long the lock-order test waits for PostgreSQL to report the verification blocked. */
+const WAIT_TIMEOUT_MILLISECONDS = 10_000;
+
+/** How often it asks. */
+const POLL_MILLISECONDS = 20;
+
+/**
+ * A connection of its own to this file's schema, outside `testDb.db`'s pool, so it can hold a row
+ * lock in an open transaction while a service call runs on the pool. The same helper
+ * `tests/unit/occupancy-service.test.ts` uses for its lock tests.
+ */
+async function connectToSchema() {
+	const other = createConnection(readDatabaseUrl('TEST_DATABASE_URL'), {
+		options: `-c search_path=${testDb.schemaName}`
+	});
+	const client = await other.pool.connect();
+	const [{ pid }] = (await client.query<{ pid: number }>('select pg_backend_pid() as pid')).rows;
+	return {
+		client,
+		pid,
+		release: async () => {
+			client.release();
+			await other.close();
+		}
+	};
+}
+
+/**
+ * Waits until some backend is waiting on a lock the backend `blockerPid` holds. Polled, because
+ * PostgreSQL announces no event for a statement starting to wait. Only this file's own call can
+ * wait on a connection this file opened itself.
+ */
+async function waitUntilWaitingOn(blockerPid: number): Promise<void> {
+	const deadline = Date.now() + WAIT_TIMEOUT_MILLISECONDS;
+	while (Date.now() < deadline) {
+		const result = await testDb.db.execute<{ waiting: number }>(
+			sql`select count(*)::int as waiting from pg_stat_activity activity
+				where ${blockerPid}::int = any(pg_blocking_pids(activity.pid))`
+		);
+		if ((result.rows[0]?.waiting ?? 0) > 0) {
+			return;
+		}
+		await new Promise((resolve) => setTimeout(resolve, POLL_MILLISECONDS));
+	}
+	throw new Error(`No backend ever waited on backend ${blockerPid}.`);
 }
 
 /** Makes every block this file writes different from every other one. */
@@ -135,6 +188,22 @@ async function insertPayer(name: string): Promise<{ residentId: string; unitId: 
 	const residentId = await insertResident(userId);
 	const unitId = await insertUnit();
 	return { residentId, unitId };
+}
+
+/**
+ * A Masa Huni of `unitId` for `residentId` from `startedOn`, with no end date, through the module's
+ * own door. The email to a payment's recorder names only the Tagihan inside such a stay (#335).
+ */
+async function insertStay(unitId: string, residentId: string, startedOn: string): Promise<void> {
+	await testDb.db.transaction((transaction) =>
+		ensureOccupancy(transaction, {
+			unitId,
+			residentId,
+			role: OCCUPANCY_ROLE.owner,
+			startedOn,
+			createdAt: new Date(START)
+		})
+	);
 }
 
 /** A Tagihan written straight into `invoices`, the way the issuance fixtures do. */
@@ -561,6 +630,54 @@ describe('verifyPayment', () => {
 	});
 });
 
+describe('the lock order of a verification', () => {
+	it('holds the Pembayaran while it waits for an open Tagihan of the Unit another connection holds', async () => {
+		// The order `../dues/verification.ts` fixes: the payment row first, the Unit's open Tagihan
+		// second. Another connection takes the one open Tagihan `for no key update`, which conflicts
+		// with the verification's own `for update` on it but not with the `for key share` its Alokasi
+		// insert takes for the foreign key, so the verification can only be held back by its own lock
+		// on the Tagihan. While it waits there, a third connection finds the payment row already
+		// locked: the payment was taken first. Then the holder lets go and the verification commits
+		// as any other would.
+		const admin = await insertAdmin('Pengurus Verifikasi Urutan Kunci');
+		const payer = await insertPayer('Warga Tagihan Sedang Dikunci');
+		const invoiceId = await insertInvoice(payer.unitId, '2026-01');
+		const paymentId = await insertPendingPayment(payer.unitId, payer.residentId, rupiah(100_000));
+
+		const holder = await connectToSchema();
+		const prober = await connectToSchema();
+		try {
+			await holder.client.query('begin');
+			await holder.client.query('select id from invoices where id = $1 for no key update', [
+				invoiceId
+			]);
+
+			const verification = verifyPayment(testDb.db, new FakeClock(START), {
+				actorId: admin.userId,
+				paymentId
+			}).catch((error: unknown) => error);
+			await waitUntilWaitingOn(holder.pid);
+
+			await expect(
+				prober.client.query('select id from payments where id = $1 for update nowait', [paymentId])
+			).rejects.toMatchObject({ code: LOCK_NOT_AVAILABLE });
+			expect(await allocationsOf(paymentId)).toHaveLength(0);
+
+			await holder.client.query('rollback');
+			const outcome = await verification;
+
+			expect(outcome).not.toBeInstanceOf(Error);
+			expect((await paymentRow(paymentId)).status).toBe(PAYMENT_STATUS.verified);
+			expect(await allocationsOf(paymentId)).toEqual([
+				expect.objectContaining({ invoiceId, amount: 100_000 })
+			]);
+		} finally {
+			await holder.release();
+			await prober.release();
+		}
+	});
+});
+
 describe('rejectPayment', () => {
 	it('turns the payment down with a reason and moves no money at all', async () => {
 		const admin = await insertAdmin('Pengurus Tolak Pembayaran');
@@ -794,6 +911,7 @@ describe('the payment-verified email', () => {
 	it('queues one email to the payment recorder, naming the amount and the invoices it settled', async () => {
 		const admin = await insertAdmin('Pengurus Verifikasi Email');
 		const payer = await insertPayer('Warga Terima Email Verifikasi');
+		await insertStay(payer.unitId, payer.residentId, '2026-01-01');
 		await insertInvoice(payer.unitId, '2026-01');
 		const paymentId = await insertPendingPayment(payer.unitId, payer.residentId, rupiah(150_000));
 
@@ -807,6 +925,7 @@ describe('the payment-verified email', () => {
 			payload: {
 				amount: 150_000,
 				settlements: [{ period: '2026-01', amount: 100_000 }],
+				outsideTenureAmount: 0,
 				locale: 'id'
 			}
 		});

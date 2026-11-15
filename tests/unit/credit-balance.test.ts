@@ -23,9 +23,10 @@ import {
 } from '#lib/server/services/dues/credit-balance.ts';
 
 /**
- * Saldo Titipan: a number computed from `payments` and `allocations`, never stored — so every test
- * here arranges rows and asks, and there is no column anywhere that could have been asserted on
- * instead. Against a real PostgreSQL, because the computation is two SQL aggregates.
+ * Saldo Titipan: a number computed from `payments`, `allocations` and the `refunds` still in force,
+ * never stored — so every test here arranges rows and asks, and there is no column anywhere that
+ * could have been asserted on instead. Against a real PostgreSQL, because the computation is SQL
+ * aggregates. "In force" (#329, spec #308 decision 6) is a refund whose cash row has no Koreksi.
  */
 
 const testDb = testDatabase();
@@ -114,9 +115,9 @@ async function allocate(
 /**
  * A Pengembalian of `amount` attributed to `paymentId`, written straight into the tables with the
  * one cash expense row it points at — this file tests the balance arithmetic, not the refund
- * service, which has `tests/unit/credit-refund.test.ts` of its own.
+ * service, which has `tests/unit/credit-refund.test.ts` of its own. Returns the cash row's id.
  */
-async function insertRefund(paymentId: string, amount: Rupiah): Promise<void> {
+async function insertRefund(paymentId: string, amount: Rupiah): Promise<string> {
 	const refundedBy = randomUUID();
 	const now = new Date(START);
 	await testDb.db.insert(user).values({
@@ -152,6 +153,31 @@ async function insertRefund(paymentId: string, amount: Rupiah): Promise<void> {
 		reason: 'Warga pindah.',
 		refundedBy,
 		createdAt: now
+	});
+	return cashRow.id;
+}
+
+/**
+ * A Koreksi of the cash row `cashTransactionId`, written straight into the table: the row a
+ * Pembatalan Pengembalian leaves, which `tests/unit/refund-reverse.test.ts` writes through the real
+ * service. Here only its existence matters, because that is the whole of the "reversed" rule.
+ */
+async function insertKoreksiOf(cashTransactionId: string): Promise<void> {
+	const [original] = await testDb.db
+		.select()
+		.from(cashTransactions)
+		.where(eq(cashTransactions.id, cashTransactionId));
+	await testDb.db.insert(cashTransactions).values({
+		id: randomUUID(),
+		occurredOn: original.occurredOn,
+		type: 'income',
+		categoryId: original.categoryId,
+		amount: original.amount,
+		description: 'Pengembalian salah catat.',
+		attachmentKey: null,
+		recordedBy: original.recordedBy,
+		correctionOf: original.id,
+		createdAt: new Date(START)
 	});
 }
 
@@ -216,6 +242,22 @@ describe('creditBalanceOfUnit', () => {
 		await insertRefund(paymentId, rupiah(150_000));
 
 		expect(await creditBalanceOfUnit(testDb.db, unitId)).toBe(50_000);
+	});
+
+	it('subtracts only the refunds in force: a reversed Pengembalian is back in the balance', async () => {
+		// #329: Rp300.000 verified, Rp100.000 allocated, two refunds of Rp50.000 and Rp70.000, the
+		// second reversed by a Koreksi of its cash row. Only the first still counts.
+		const unitId = await insertUnit();
+		const residentId = await insertResident('Warga Titipan Dibatalkan');
+		const paymentId = await insertPayment(unitId, residentId, rupiah(300_000), 'verified');
+		await allocate(unitId, paymentId, rupiah(100_000), '2026-01');
+		await insertRefund(paymentId, rupiah(50_000));
+		const reversed = await insertRefund(paymentId, rupiah(70_000));
+		expect(await creditBalanceOfUnit(testDb.db, unitId)).toBe(80_000);
+
+		await insertKoreksiOf(reversed);
+
+		expect(await creditBalanceOfUnit(testDb.db, unitId)).toBe(150_000);
 	});
 
 	it('reads zero once a payment is fully consumed by allocation and refund together', async () => {
@@ -302,6 +344,25 @@ describe('lockUnallocatedVerifiedPayments', () => {
 
 		expect(remainders).toEqual([
 			expect.objectContaining({ paymentId, amount: 200_000, remainder: 30_000 })
+		]);
+	});
+
+	it('hands a reversed Pengembalian back to the remainder spenders draw from', async () => {
+		// #329's half of the invariant for spenders: once its cash row has a Koreksi, the refund
+		// spends nothing, so the money is offered to the next issuance again.
+		const unitId = await insertUnit();
+		const residentId = await insertResident('Warga Sisa Dibatalkan');
+		const paymentId = await insertPayment(unitId, residentId, rupiah(200_000), 'verified');
+		await allocate(unitId, paymentId, rupiah(50_000), '2026-01');
+		const reversed = await insertRefund(paymentId, rupiah(120_000));
+		await insertKoreksiOf(reversed);
+
+		const remainders = await testDb.db.transaction(async (transaction) =>
+			lockUnallocatedVerifiedPayments(transaction, unitId)
+		);
+
+		expect(remainders).toEqual([
+			expect.objectContaining({ paymentId, amount: 200_000, remainder: 150_000 })
 		]);
 	});
 });

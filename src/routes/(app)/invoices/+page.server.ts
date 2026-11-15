@@ -12,6 +12,11 @@ import type { PageServerLoad } from './$types';
  * **There is nothing to guard beyond the session.** `invoicesForUser` takes only the signed-in
  * account's own id, so there is no id in a URL or a form a caller could swap for someone else's —
  * the same reason `(app)/my-unit/+page.server.ts` gives for the same shape of load.
+ *
+ * **A role does not widen it.** Which Tagihan are listed is decided by
+ * `src/lib/server/services/occupancy/resident-view.ts`, which reads no role: a superuser or an admin
+ * who lives in a house sees only the Tagihan of their own Masa Huni here, and a house's whole
+ * history on the admin screens.
  */
 
 export const load: PageServerLoad = async ({ locals }) => {

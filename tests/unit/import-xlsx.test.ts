@@ -424,6 +424,9 @@ describe('importResidents, what one confirmed row creates', () => {
 			endedOn: null,
 			isPrimaryOccupant: false
 		});
+		// The stay goes through the Masa Huni module's `ensureOccupancy` now, and still carries the
+		// import's one instant, the same as the unit written beside it.
+		expect(occupancy.createdAt).toEqual(unit.createdAt);
 	});
 
 	it('creates no credential, so an imported resident cannot sign in yet', async () => {

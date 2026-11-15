@@ -23,7 +23,7 @@
 	 * `src/routes/(app)/admin/units/[id]/finance/+page.svelte`.
 	 *
 	 * One instance on the page, fed by page state; the only field is the reason, because
-	 * `src/lib/server/services/dues/allocation-release.ts` re-reads the row under its own locks and
+	 * `src/lib/server/services/dues/dues-correction.ts` re-reads the row under its own locks and
 	 * everything else about the release is a fact of that row. A native `<dialog>` opened with
 	 * `showModal()`, per `src/lib/components/cash/correction-dialog.svelte`.
 	 */

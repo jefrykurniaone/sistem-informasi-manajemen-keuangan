@@ -1,11 +1,16 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
 import { formatRupiah } from '#lib/money.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
 import type { FileStore } from '#lib/server/ports/file-store.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	requireUser,
+	type FormMessages,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import {
 	MAXIMUM_PROOF_MEBIBYTES,
 	PAYMENT_RULE,
@@ -15,8 +20,10 @@ import {
 	type OwnPayment,
 	type PaymentRule
 } from '#lib/server/services/dues/payment.ts';
-import { occupiedUnitsForUser } from '#lib/server/services/occupancy/index.ts';
-import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
+import {
+	residentViewFor,
+	unitsOccupiedToday
+} from '#lib/server/services/occupancy/resident-view.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -48,52 +55,56 @@ const PAYMENT_ID_FIELD = 'paymentId';
 /** The query parameter the "catat pembayaran" screen redirects back with. */
 const RECORDED_PARAMETER = 'recorded';
 
-export const load: PageServerLoad = async ({ locals, url }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+/** The sentences the page says when it refuses a request outright. */
+const PAGE = { forbidden: m.payments_forbidden } satisfies PageMessages;
 
-	const db = database();
-	const fileStore = localFileStoreFromEnvironment(systemClock);
-	const [recorded, stays] = await Promise.all([
-		ownPayments(db, locals.user.id),
-		occupiedUnitsForUser(db, systemClock, locals.user.id)
+/** What `cancel` says when the service refuses it, each `fail(400)`. */
+const CANCEL_FORM = {
+	...PAGE,
+	fallback: m.payments_invalidForm,
+	refusals: [refusal(PaymentRuleError, ({ error }) => ruleMessage(error.rule))]
+} satisfies FormMessages;
+
+export const load: PageServerLoad = async ({ locals, url }) => {
+	const user = requireUser(locals);
+
+	const { db, clock, fileStore } = productionDependencies();
+	const [recorded, view] = await Promise.all([
+		ownPayments(db, user.id),
+		residentViewFor(db, clock, user.id)
 	]);
 
 	return {
 		payments: await Promise.all(recorded.map((payment) => toRow(payment, fileStore))),
 		// Whether the "catat pembayaran" link is worth offering. A resident who lives nowhere today
-		// has no house to record a payment for, and the service would refuse them anyway.
-		canRecord: stays.some((stay) => stay.isRunning),
+		// has no house to record a payment for, and the service would refuse them anyway. "Lives
+		// there today" is the shared resident view's, the same answer the payment guard reads.
+		canRecord: unitsOccupiedToday(view).length > 0,
 		justRecorded: url.searchParams.get(RECORDED_PARAMETER) === '1'
 	};
 };
 
 export const actions: Actions = {
 	cancel: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const paymentId = String(form.get(PAYMENT_ID_FIELD) ?? '').trim();
+		const paymentId = readText(form, PAYMENT_ID_FIELD);
 		if (paymentId === '') {
 			return fail(400, { message: m.payments_invalidForm() });
 		}
 
+		const dependencies = productionDependencies();
 		try {
 			const cancelled = await cancelOwnPayment(
-				database(),
-				systemClock,
-				localFileStoreFromEnvironment(systemClock),
-				{ actorUserId: locals.user.id, paymentId }
+				dependencies.db,
+				dependencies.clock,
+				dependencies.fileStore,
+				{ actorUserId: user.id, paymentId }
 			);
 			return { message: m.payments_cancelSuccess({ amount: formatRupiah(cancelled.amount) }) };
 		} catch (caught) {
-			if (caught instanceof PaymentRuleError) {
-				return fail(400, { message: ruleMessage(caught.rule) });
-			}
-			throwAsRouteError(caught);
+			return failOrThrow(caught, CANCEL_FORM);
 		}
 	}
 };
@@ -122,15 +133,4 @@ function ruleMessage(rule: PaymentRule): string {
 		[PAYMENT_RULE.alreadyDecided]: m.payments_rule_alreadyDecided
 	};
 	return messages[rule]();
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- * Always throws — the return type is `never` for the same reason the cash screens' copies are.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.payments_forbidden());
-	}
-	throw caught;
 }

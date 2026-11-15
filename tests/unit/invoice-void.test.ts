@@ -14,7 +14,6 @@ import { units } from '#lib/server/db/schema/unit.ts';
 import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import { FakeClock } from '#lib/server/ports/fakes.ts';
 import { openInvoicesOfUnit } from '#lib/server/services/dues/allocation.ts';
-import { releaseAllocation } from '#lib/server/services/dues/allocation-release.ts';
 import { creditBalanceOfUnit } from '#lib/server/services/dues/credit-balance.ts';
 import {
 	INVOICE_VOIDED_ACTION,
@@ -22,16 +21,17 @@ import {
 	VOID_RULE,
 	VoidRefusedAllocatedError,
 	VoidRuleError,
+	releaseAllocation,
 	voidInvoice
-} from '#lib/server/services/dues/invoice-void.ts';
-import { INVOICE_STATUS, invoiceStatus } from '#lib/server/services/dues/queries.ts';
+} from '#lib/server/services/dues/dues-correction.ts';
+import { INVOICE_STATUS, invoiceStatus } from '#lib/server/services/dues/invoice-standing.ts';
 
 /**
  * Pembatalan Tagihan — user stories 20 and 21 of `docs/spec-iuran-v1.md`, and #30's first
- * correction: a Tagihan is marked `void` with a reason and an actor, never deleted, and a Tagihan
- * that has absorbed money refuses by naming the Alokasi that must be released first. Against a
- * real PostgreSQL, because "the row is still there" and "nothing was written" are statements
- * about committed rows.
+ * correction, held since #324 by the dues-correction module (`dues-correction.ts`): a Tagihan is
+ * marked `void` with a reason and an actor, never deleted, and a Tagihan that has absorbed money
+ * refuses by naming the Alokasi that must be released first. Against a real PostgreSQL, because
+ * "the row is still there" and "nothing was written" are statements about committed rows.
  */
 
 const testDb = testDatabase();
@@ -191,16 +191,27 @@ describe('voidInvoice', () => {
 		const unitId = await insertUnit();
 		const invoiceId = await insertInvoice(unitId);
 
-		await voidInvoice(testDb.db, new FakeClock(START), { actorId, invoiceId, reason: VOID_REASON });
+		await voidInvoice(testDb.db, new FakeClock(START), {
+			actorId,
+			invoiceId,
+			reason: `  ${VOID_REASON}  `
+		});
 
 		const entries = await auditEntriesFor(testDb.db, invoiceId);
 		expect(entries).toHaveLength(1);
 		expect(entries[0]).toMatchObject({
 			actorId,
 			action: INVOICE_VOIDED_ACTION,
-			targetId: invoiceId,
-			before: { voidedAt: null },
-			after: { unitId, period: PERIOD, amount: MONTHLY, reason: VOID_REASON }
+			targetId: invoiceId
+		});
+		// Exactly the JSON #30 stored, field for field, the reason trimmed: the corrections history
+		// reads rows written before #324 through the same type.
+		expect(entries[0].before).toEqual({ voidedAt: null });
+		expect(entries[0].after).toEqual({
+			unitId,
+			period: PERIOD,
+			amount: MONTHLY,
+			reason: VOID_REASON
 		});
 	});
 

@@ -1,10 +1,17 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { formatRupiah, parseRupiah, type Rupiah } from '#lib/money.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import { formatRupiah } from '#lib/money.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readRupiah,
+	readText,
+	refusal,
+	requireUser,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import { PeriodLockedError } from '#lib/server/services/cash/period.ts';
 import { UnitNotFoundError } from '#lib/server/services/dues/queries.ts';
 import {
@@ -22,9 +29,10 @@ import type { Actions, PageServerLoad } from './$types';
  * payment is verified the moment it is recorded, through the same service path the queue uses, so
  * this screen's one action does what the queue's "verifikasi" does plus the recording itself.
  *
- * Follows the shape `(app)/admin/cash/new/+page.server.ts` settled: the `load` asserts the action
+ * Follows the shape `src/lib/server/route-action.ts` settled (#318): the `load` asserts the action
  * before offering the form, a permission refusal becomes `error(403, …)`, and every rule the
- * service refuses comes back as a rejected form with the fields still filled in. No invoice picker:
+ * service refuses comes back as a rejected form with the fields still filled in. A rule this screen
+ * does not name is the invalid-form sentence rather than a 500. No invoice picker:
  * a cash deposit's allocation runs by the automatic rule — oldest unpaid first — and the depositor
  * naming specific months is served by the queue's explicit selection when it matters, not by a
  * second picker here.
@@ -37,44 +45,58 @@ const AMOUNT_FIELD = 'amount';
 /** The form field carrying the day the money was handed over. */
 const RECEIVED_ON_FIELD = 'receivedOn';
 
-export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+/** The sentences the page says when it refuses a request outright. */
+const PAGE = { forbidden: m.adminPayments_forbidden } satisfies PageMessages;
 
+/** What `record` says when the service refuses it, each `fail(400)` with the fields refilled. */
+const RECORD_FORM = {
+	...PAGE,
+	fallback: m.adminPayments_cash_invalidForm,
+	refusals: [
+		refusal(VerificationRuleError, ({ error }) => ruleMessage(error.rule)),
+		refusal(UnitNotFoundError, m.adminPayments_cash_unitNotFound),
+		refusal(PeriodLockedError, ({ error }) =>
+			m.adminPayments_periodLocked({ period: error.period, date: error.occurredOn })
+		)
+	]
+} satisfies FormMessages;
+
+export const load: PageServerLoad = async ({ locals }) => {
+	const user = requireUser(locals);
+
+	const { db } = productionDependencies();
 	try {
-		await assertMayVerifyPayments(database(), locals.user.id);
-		const units = await listCashPayableUnits(database(), locals.user.id);
+		await assertMayVerifyPayments(db, user.id);
+		const units = await listCashPayableUnits(db, user.id);
 		return { units };
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	record: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
 		const values = {
-			unitId: String(form.get(UNIT_FIELD) ?? '').trim(),
-			amount: String(form.get(AMOUNT_FIELD) ?? '').trim(),
-			receivedOn: String(form.get(RECEIVED_ON_FIELD) ?? '').trim()
+			unitId: readText(form, UNIT_FIELD),
+			amount: readText(form, AMOUNT_FIELD),
+			receivedOn: readText(form, RECEIVED_ON_FIELD)
 		};
 		if (values.unitId === '' || values.amount === '' || values.receivedOn === '') {
 			return fail(400, { message: m.adminPayments_cash_invalidForm(), values });
 		}
 
-		const amount = readAmount(values.amount);
+		const amount = readRupiah(form, AMOUNT_FIELD);
 		if (amount === undefined) {
 			return fail(400, { message: m.adminPayments_cash_invalidAmount(), values });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			const outcome = await recordCashPayment(database(), systemClock, {
-				actorId: locals.user.id,
+			const outcome = await recordCashPayment(db, clock, {
+				actorId: user.id,
 				unitId: values.unitId,
 				amount,
 				receivedOn: values.receivedOn
@@ -83,29 +105,10 @@ export const actions: Actions = {
 				message: m.adminPayments_cash_success({ amount: formatRupiah(outcome.payment.amount) })
 			};
 		} catch (caught) {
-			return failAsRejectedForm(caught, values);
+			return failOrThrow(caught, RECORD_FORM, { values });
 		}
 	}
 };
-
-/** What the form posted, for refilling a rejected submission. */
-interface FormValues {
-	readonly unitId: string;
-	readonly amount: string;
-	readonly receivedOn: string;
-}
-
-/**
- * The typed money value behind what the form posted, or `undefined` when the text is not a
- * whole-rupiah amount. `parseRupiah` rejects fractions rather than rounding them.
- */
-function readAmount(raw: string): Rupiah | undefined {
-	try {
-		return parseRupiah(raw);
-	} catch {
-		return undefined;
-	}
-}
 
 /** The sentence an admin reads for each named rule refusal this screen can run into. */
 function ruleMessage(rule: VerificationRule): string {
@@ -119,32 +122,4 @@ function ruleMessage(rule: VerificationRule): string {
 		[VERIFICATION_RULE.receivedInTheFuture]: m.adminPayments_rule_receivedInTheFuture
 	};
 	return messages[rule]();
-}
-
-/** Turns each refusal the service names into a rejected form that keeps what was typed. */
-function failAsRejectedForm(caught: unknown, values: FormValues) {
-	if (caught instanceof VerificationRuleError) {
-		return fail(400, { message: ruleMessage(caught.rule), values });
-	}
-	if (caught instanceof UnitNotFoundError) {
-		return fail(400, { message: m.adminPayments_cash_unitNotFound(), values });
-	}
-	if (caught instanceof PeriodLockedError) {
-		return fail(400, {
-			message: m.adminPayments_periodLocked({ period: caught.period, date: caught.occurredOn }),
-			values
-		});
-	}
-	throwAsRouteError(caught);
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- * Always throws — the return type is `never` for the same reason the cash screens' copies are.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminPayments_forbidden());
-	}
-	throw caught;
 }

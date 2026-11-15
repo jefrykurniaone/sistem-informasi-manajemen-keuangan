@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { rupiah, type Rupiah } from '#lib/money.ts';
+import { formatRupiah, rupiah, type Rupiah } from '#lib/money.ts';
 import type { Allocation } from '#lib/server/db/schema/allocation.ts';
 import { user } from '#lib/server/db/schema/auth.ts';
 import { emailQueue } from '#lib/server/db/schema/email.ts';
@@ -17,9 +17,14 @@ import {
 import { residents } from '#lib/server/db/schema/resident.ts';
 import { units } from '#lib/server/db/schema/unit.ts';
 import { testDatabase } from '#lib/server/db/test-helpers.ts';
+import { AnnounceError } from '#lib/server/email/announce.ts';
 import { INVOICE_ISSUED_KIND } from '#lib/server/email/templates/invoice-issued.ts';
 import { PAYMENT_REJECTED_KIND } from '#lib/server/email/templates/payment-rejected.ts';
-import { PAYMENT_VERIFIED_KIND } from '#lib/server/email/templates/payment-verified.ts';
+import {
+	PAYMENT_VERIFIED_KIND,
+	paymentVerifiedTemplate
+} from '#lib/server/email/templates/payment-verified.ts';
+import type { Clock } from '#lib/server/ports/clock.ts';
 import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	notifyInvoiceIssued,
@@ -115,8 +120,8 @@ async function insertOccupancy(
 }
 
 /** Queues `invoice-issued` for `unitId` on `START`'s day, with a payload nothing here asserts on. */
-async function notifyUnit(unitId: string): Promise<boolean> {
-	return notifyInvoiceIssued(testDb.db, new FakeClock(START), {
+async function notifyUnit(unitId: string): Promise<number> {
+	const outcome = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
 		unitId,
 		block: 'G',
 		number: '1',
@@ -124,6 +129,7 @@ async function notifyUnit(unitId: string): Promise<boolean> {
 		amount: rupiah(150_000),
 		dueDate: '2026-04-05'
 	});
+	return outcome.queued.length;
 }
 
 /** A Tagihan written straight into `invoices`, for a settlement's period to resolve against. */
@@ -175,7 +181,7 @@ async function emailsTo(recipient: string, kind: string) {
 }
 
 describe('notifyInvoiceIssued', () => {
-	it('queues to the active primary occupant and reports true', async () => {
+	it('queues to the active primary occupant, one row for the one recipient', async () => {
 		const unit = await insertUnit();
 		const occupant = await insertResident('Warga Penanggung Jawab Notifikasi');
 		await insertOccupancy(unit, occupant.residentId, {
@@ -184,7 +190,7 @@ describe('notifyInvoiceIssued', () => {
 			endedOn: null
 		});
 
-		const notified = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
+		const outcome = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
 			unitId: unit,
 			block: 'A',
 			number: '1',
@@ -193,7 +199,7 @@ describe('notifyInvoiceIssued', () => {
 			dueDate: '2026-04-05'
 		});
 
-		expect(notified).toBe(true);
+		expect(outcome.queued).toHaveLength(1);
 		const rows = await emailsTo(occupant.email, INVOICE_ISSUED_KIND);
 		expect(rows).toHaveLength(1);
 		expect(rows[0].payload).toMatchObject({
@@ -206,10 +212,10 @@ describe('notifyInvoiceIssued', () => {
 		});
 	});
 
-	it('reports false, and queues nothing, for a unit with no occupancy at all', async () => {
+	it('queues nothing, and does not throw, for a unit with no occupancy at all', async () => {
 		const unit = await insertUnit();
 
-		const notified = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
+		const outcome = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
 			unitId: unit,
 			block: 'B',
 			number: '1',
@@ -218,7 +224,7 @@ describe('notifyInvoiceIssued', () => {
 			dueDate: '2026-04-05'
 		});
 
-		expect(notified).toBe(false);
+		expect(outcome.queued).toEqual([]);
 	});
 
 	it('does not treat an occupant who is not the primary one as a recipient', async () => {
@@ -230,7 +236,7 @@ describe('notifyInvoiceIssued', () => {
 			endedOn: null
 		});
 
-		const notified = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
+		const outcome = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
 			unitId: unit,
 			block: 'C',
 			number: '1',
@@ -239,7 +245,7 @@ describe('notifyInvoiceIssued', () => {
 			dueDate: '2026-04-05'
 		});
 
-		expect(notified).toBe(false);
+		expect(outcome.queued).toEqual([]);
 		expect(await emailsTo(occupant.email, INVOICE_ISSUED_KIND)).toEqual([]);
 	});
 
@@ -252,7 +258,7 @@ describe('notifyInvoiceIssued', () => {
 			endedOn: '2026-03-01'
 		});
 
-		const notified = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
+		const outcome = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
 			unitId: unit,
 			block: 'D',
 			number: '1',
@@ -261,7 +267,7 @@ describe('notifyInvoiceIssued', () => {
 			dueDate: '2026-04-05'
 		});
 
-		expect(notified).toBe(false);
+		expect(outcome.queued).toEqual([]);
 	});
 
 	it('treats a primary occupant whose end date has not arrived yet as still active', async () => {
@@ -276,7 +282,7 @@ describe('notifyInvoiceIssued', () => {
 		});
 		expect(TODAY < '2099-01-01').toBe(true);
 
-		const notified = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
+		const outcome = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
 			unitId: unit,
 			block: 'E',
 			number: '1',
@@ -285,7 +291,7 @@ describe('notifyInvoiceIssued', () => {
 			dueDate: '2026-04-05'
 		});
 
-		expect(notified).toBe(true);
+		expect(outcome.queued).toHaveLength(1);
 		expect(await emailsTo(occupant.email, INVOICE_ISSUED_KIND)).toHaveLength(1);
 	});
 
@@ -299,7 +305,7 @@ describe('notifyInvoiceIssued', () => {
 		});
 		expect(TODAY < '2026-04-11').toBe(true);
 
-		const notified = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
+		const outcome = await notifyInvoiceIssued(testDb.db, new FakeClock(START), {
 			unitId: unit,
 			block: 'F',
 			number: '1',
@@ -308,56 +314,8 @@ describe('notifyInvoiceIssued', () => {
 			dueDate: '2026-04-05'
 		});
 
-		expect(notified).toBe(false);
+		expect(outcome.queued).toEqual([]);
 		expect(await emailsTo(occupant.email, INVOICE_ISSUED_KIND)).toEqual([]);
-	});
-
-	it('picks the flagged stay that started last when two are running, whichever was written first', async () => {
-		// The Occupancy service keeps one flag per unit among the stays that have not passed, but rows
-		// written under the old date-clash model can hold two running at once. The recipient must not
-		// then depend on which row PostgreSQL reaches first: the older stay is inserted first here, so
-		// a lookup with no order would pick it.
-		const unit = await insertUnit();
-		const older = await insertResident('Warga Penanda Lama Urutan');
-		const newer = await insertResident('Warga Penanda Baru Urutan');
-		await insertOccupancy(unit, older.residentId, {
-			isPrimaryOccupant: true,
-			startedOn: '2025-01-01',
-			endedOn: '2099-01-01'
-		});
-		await insertOccupancy(unit, newer.residentId, {
-			isPrimaryOccupant: true,
-			startedOn: '2026-02-01',
-			endedOn: null
-		});
-
-		expect(await notifyUnit(unit)).toBe(true);
-
-		expect(await emailsTo(newer.email, INVOICE_ISSUED_KIND)).toHaveLength(1);
-		expect(await emailsTo(older.email, INVOICE_ISSUED_KIND)).toEqual([]);
-	});
-
-	it('breaks a tie on the start day by the stay recorded last', async () => {
-		const unit = await insertUnit();
-		const earlier = await insertResident('Warga Dicatat Duluan Notifikasi');
-		const later = await insertResident('Warga Dicatat Belakangan Notifikasi');
-		await insertOccupancy(unit, earlier.residentId, {
-			isPrimaryOccupant: true,
-			startedOn: '2026-01-01',
-			endedOn: null,
-			createdAt: '2026-01-01T01:00:00.000Z'
-		});
-		await insertOccupancy(unit, later.residentId, {
-			isPrimaryOccupant: true,
-			startedOn: '2026-01-01',
-			endedOn: '2099-01-01',
-			createdAt: '2026-01-01T02:00:00.000Z'
-		});
-
-		expect(await notifyUnit(unit)).toBe(true);
-
-		expect(await emailsTo(later.email, INVOICE_ISSUED_KIND)).toHaveLength(1);
-		expect(await emailsTo(earlier.email, INVOICE_ISSUED_KIND)).toEqual([]);
 	});
 
 	it('never picks a flagged stay that has not started, even one that would sort first', async () => {
@@ -378,7 +336,7 @@ describe('notifyInvoiceIssued', () => {
 		});
 		expect(TODAY < '2026-04-11').toBe(true);
 
-		expect(await notifyUnit(unit)).toBe(true);
+		expect(await notifyUnit(unit)).toBe(1);
 
 		expect(await emailsTo(living.email, INVOICE_ISSUED_KIND)).toHaveLength(1);
 		expect(await emailsTo(arriving.email, INVOICE_ISSUED_KIND)).toEqual([]);
@@ -399,7 +357,7 @@ describe('notifyInvoiceIssued', () => {
 			endedOn: null
 		});
 
-		expect(await notifyUnit(unit)).toBe(true);
+		expect(await notifyUnit(unit)).toBe(1);
 
 		expect(await emailsTo(leaving.email, INVOICE_ISSUED_KIND)).toHaveLength(1);
 		expect(await emailsTo(housemate.email, INVOICE_ISSUED_KIND)).toEqual([]);
@@ -410,6 +368,11 @@ describe('notifyPaymentVerified', () => {
 	it('queues to the recorder, with one settlement line per allocation, oldest given first', async () => {
 		const unit = await insertUnit();
 		const recorder = await insertResident('Warga Pencatat Verifikasi');
+		await insertOccupancy(unit, recorder.residentId, {
+			isPrimaryOccupant: true,
+			startedOn: '2026-01-01',
+			endedOn: null
+		});
 		const payment = await insertPayment(unit, recorder.residentId, { amount: rupiah(150_000) });
 		const january = await insertInvoiceRow(unit, '2026-01', rupiah(100_000));
 		const february = await insertInvoiceRow(unit, '2026-02', rupiah(50_000));
@@ -427,6 +390,7 @@ describe('notifyPaymentVerified', () => {
 				{ period: '2026-01', amount: 100_000 },
 				{ period: '2026-02', amount: 50_000 }
 			],
+			outsideTenureAmount: 0,
 			locale: 'id'
 		});
 	});
@@ -440,7 +404,114 @@ describe('notifyPaymentVerified', () => {
 
 		const rows = await emailsTo(recorder.email, PAYMENT_VERIFIED_KIND);
 		expect(rows).toHaveLength(1);
-		expect(rows[0].payload).toMatchObject({ amount: 200_000, settlements: [] });
+		expect(rows[0].payload).toMatchObject({
+			amount: 200_000,
+			settlements: [],
+			outsideTenureAmount: 0
+		});
+		expect(paymentVerifiedTemplate(rows[0].payload).text).toContain('belum melunasi tagihan');
+	});
+
+	describe('a Tagihan from before the recorder lived in the Unit (#335)', () => {
+		/** Rina moves into the Unit in June; the previous occupant left January unpaid. */
+		async function rinaPays(allocateJune: boolean) {
+			const unit = await insertUnit();
+			const previous = await insertResident('Penghuni Sebelumnya Rina');
+			await insertOccupancy(unit, previous.residentId, {
+				isPrimaryOccupant: true,
+				startedOn: '2025-01-01',
+				endedOn: '2026-05-31'
+			});
+			const rina = await insertResident('Rina Pencatat Juni');
+			await insertOccupancy(unit, rina.residentId, {
+				isPrimaryOccupant: true,
+				startedOn: '2026-06-01',
+				endedOn: null
+			});
+			const january = await insertInvoiceRow(unit, '2026-01', rupiah(100_000));
+			const june = await insertInvoiceRow(unit, '2026-06', rupiah(50_000));
+			const payment = await insertPayment(unit, rina.residentId, {
+				amount: rupiah(allocateJune ? 150_000 : 100_000)
+			});
+			const allocations = [allocationOf(payment.id, january, rupiah(100_000))];
+			if (allocateJune) {
+				allocations.push(allocationOf(payment.id, june, rupiah(50_000)));
+			}
+			await notifyPaymentVerified(testDb.db, new FakeClock(START), payment, allocations);
+			const rows = await emailsTo(rina.email, PAYMENT_VERIFIED_KIND);
+			expect(rows).toHaveLength(1);
+			return rows[0].payload;
+		}
+
+		const outsideLine = (amount: number) =>
+			`- Tagihan Unit di luar Masa Huni Anda: ${formatRupiah(rupiah(amount))}`;
+
+		it('keeps the previous occupant January out of the payload and sums it as one figure', async () => {
+			const payload = await rinaPays(true);
+
+			expect(payload).toMatchObject({
+				amount: 150_000,
+				settlements: [{ period: '2026-06', amount: 50_000 }],
+				outsideTenureAmount: 100_000,
+				locale: 'id'
+			});
+			expect(JSON.stringify(payload)).not.toContain('2026-01');
+
+			const { text } = paymentVerifiedTemplate(payload);
+			expect(text).toContain('Periode 2026-06');
+			expect(text).not.toContain('2026-01');
+			expect(text).toContain(outsideLine(100_000));
+			expect(text.indexOf(outsideLine(100_000))).toBeGreaterThan(text.indexOf('Periode 2026-06'));
+		});
+
+		it('writes the heading and the outside line, never the no-settlement line, when every settled Tagihan is outside', async () => {
+			const payload = await rinaPays(false);
+
+			expect(payload).toMatchObject({
+				amount: 100_000,
+				settlements: [],
+				outsideTenureAmount: 100_000
+			});
+
+			const { text } = paymentVerifiedTemplate(payload);
+			expect(text).toContain('Pembayaran ini melunasi tagihan berikut:');
+			expect(text).toContain(outsideLine(100_000));
+			expect(text).not.toContain('belum melunasi tagihan');
+			expect(text).not.toContain('Periode');
+		});
+	});
+
+	it('counts a Tagihan of a Unit the recorder never lived in as outside their Masa Huni', async () => {
+		const ownUnit = await insertUnit();
+		const otherUnit = await insertUnit();
+		const recorder = await insertResident('Warga Pencatat Unit Lain');
+		await insertOccupancy(ownUnit, recorder.residentId, {
+			isPrimaryOccupant: true,
+			startedOn: '2026-01-01',
+			endedOn: null
+		});
+		const payment = await insertPayment(ownUnit, recorder.residentId);
+		const foreign = await insertInvoiceRow(otherUnit, '2026-03', rupiah(70_000));
+
+		await notifyPaymentVerified(testDb.db, new FakeClock(START), payment, [
+			allocationOf(payment.id, foreign, rupiah(70_000))
+		]);
+
+		const rows = await emailsTo(recorder.email, PAYMENT_VERIFIED_KIND);
+		expect(rows[0].payload).toMatchObject({ settlements: [], outsideTenureAmount: 70_000 });
+	});
+
+	it('still renders a row queued before this change, which has no outsideTenureAmount, as zero', () => {
+		const queuedBeforeDeploy = {
+			amount: 150_000,
+			settlements: [{ period: '2026-01', amount: 150_000 }],
+			locale: 'id'
+		};
+
+		const { text } = paymentVerifiedTemplate(queuedBeforeDeploy);
+
+		expect(text).toContain('Periode 2026-01');
+		expect(text).not.toContain('di luar Masa Huni');
 	});
 });
 
@@ -479,6 +550,65 @@ describe('notifyPaymentRejected', () => {
 			notifyPaymentRejected(testDb.db, new FakeClock(START), payment)
 		).resolves.toBeUndefined();
 		expect(await emailsTo(recorder.email, PAYMENT_REJECTED_KIND)).toEqual([]);
+	});
+});
+
+/** A clock that throws on every read, for the failure a call site has to contain. */
+class BrokenClock implements Clock {
+	now(): Date {
+		throw new Error('Injected clock failure, on purpose, from the failure-path test.');
+	}
+}
+
+describe('a failure is thrown, for the call site to contain', () => {
+	// `./issuance.ts` and `./verification.ts` wrap each call in `announceAfterCommit`, so nothing in
+	// this module catches: `tests/unit/invoice-issuance.test.ts` and
+	// `tests/unit/payment-verification.test.ts` prove the committed change survives it.
+	it('rejects notifyPaymentVerified when the queue row cannot be written, and queues nothing', async () => {
+		const unit = await insertUnit();
+		const recorder = await insertResident('Warga Pencatat Gagal Verifikasi');
+		const payment = await insertPayment(unit, recorder.residentId);
+
+		await expect(
+			notifyPaymentVerified(testDb.db, new BrokenClock(), payment, [])
+		).rejects.toBeInstanceOf(AnnounceError);
+		expect(await emailsTo(recorder.email, PAYMENT_VERIFIED_KIND)).toEqual([]);
+	});
+
+	it('rejects notifyPaymentRejected when the queue row cannot be written, and queues nothing', async () => {
+		const unit = await insertUnit();
+		const recorder = await insertResident('Warga Pencatat Gagal Ditolak');
+		const payment = await insertPayment(unit, recorder.residentId, {
+			status: PAYMENT_STATUS.rejected,
+			rejectionReason: 'Bukti transfer buram.'
+		});
+
+		await expect(
+			notifyPaymentRejected(testDb.db, new BrokenClock(), payment)
+		).rejects.toBeInstanceOf(AnnounceError);
+		expect(await emailsTo(recorder.email, PAYMENT_REJECTED_KIND)).toEqual([]);
+	});
+
+	it('rejects notifyInvoiceIssued when the Penanggung Jawab cannot be found, and queues nothing', async () => {
+		const unit = await insertUnit();
+		const occupant = await insertResident('Warga Penanggung Jawab Gagal');
+		await insertOccupancy(unit, occupant.residentId, {
+			isPrimaryOccupant: true,
+			startedOn: '2026-01-01',
+			endedOn: null
+		});
+
+		await expect(
+			notifyInvoiceIssued(testDb.db, new BrokenClock(), {
+				unitId: unit,
+				block: 'H',
+				number: '1',
+				period: '2026-04',
+				amount: rupiah(150_000),
+				dueDate: '2026-04-05'
+			})
+		).rejects.toThrow('Injected clock failure');
+		expect(await emailsTo(occupant.email, INVOICE_ISSUED_KIND)).toEqual([]);
 	});
 });
 

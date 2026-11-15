@@ -18,10 +18,11 @@ import { residents } from '#lib/server/db/schema/resident.ts';
 import { units } from '#lib/server/db/schema/unit.ts';
 import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
-import { cashBook } from '#lib/server/services/cash/balance.ts';
+import { cashBalanceBefore, cashBook, monthDayRange } from '#lib/server/services/cash/balance.ts';
 import { createCashCategory } from '#lib/server/services/cash/category.ts';
 import { recordCashCorrection } from '#lib/server/services/cash/correction.ts';
 import { recordCashTransaction } from '#lib/server/services/cash/transaction.ts';
+import { CASH_WRITE_KIND, writeCashTransaction } from '#lib/server/services/cash/writer.ts';
 import {
 	composeReportFigures,
 	currentReportPeriod,
@@ -160,24 +161,24 @@ async function record(
 }
 
 /**
- * One kas masuk in the "Iuran warga" system category, written straight into the table.
+ * One kas masuk in the "Iuran warga" system category, through the cash book writer's `duesIncome`
+ * kind: the same row Payment verification writes, without the Pembayaran around it.
  *
- * `recordCashTransaction` refuses this category by design — the spec's user story 7, "sistem menolak
- * saya mencatat kas masuk pada kategori Iuran warga secara manual" — and its only real writer is
- * #29's payment verification, which runs on another branch. Inserting the row directly is the same
- * thing every other service-layer test in this repository does for data another ticket owns.
+ * `recordCashTransaction` refuses this category by design, the spec's user story 7, "sistem menolak
+ * saya mencatat kas masuk pada kategori Iuran warga secara manual". Since #315 the writer is the one
+ * way into the table, so this goes through it rather than inserting the row by hand.
  */
 async function recordDuesCashIn(occurredOn: string, amount: number): Promise<void> {
 	clock.advance(STEP_MILLISECONDS);
-	await testDb.db.insert(cashTransactions).values({
-		occurredOn,
-		type: CASH_CATEGORY_TYPE.income,
-		categoryId: await duesCategoryId(),
-		amount: rupiah(amount),
-		description: 'Verifikasi pembayaran iuran',
-		recordedBy: adminId,
-		createdAt: clock.now()
-	});
+	await testDb.db.transaction((transaction) =>
+		writeCashTransaction(transaction, clock, {
+			kind: CASH_WRITE_KIND.duesIncome,
+			recordedBy: adminId,
+			occurredOn,
+			amount: rupiah(amount),
+			description: 'Verifikasi pembayaran iuran'
+		})
+	);
 }
 
 /**
@@ -464,14 +465,11 @@ describe('the two different iuran figures', () => {
 });
 
 /**
- * This module reads `cash_transactions` itself rather than calling `cashBook`, and the reason is
- * recorded in `composition.ts`: `cashBook` is guarded by `ACTION.recordCashTransactions`, and
- * `tests/unit/cash-transaction.test.ts:148` pins that module's export list to exactly two names, so
- * neither loosening its guard nor adding an unguarded read beside it is available to this ticket.
- *
- * Duplicated arithmetic that nothing checks is how a report and a cash book start disagreeing, so
- * every piece of the duplication is compared to `cashBook`'s own answer here. These are the tests
- * that fail the day the two conventions drift apart.
+ * Since #315 the report takes its opening balance and its month's days from the cash book's read
+ * module (`cashBalanceBefore` and `monthDayRange`), so the sign convention and the month boundary
+ * are no longer copies. The report still runs its own per-category and drill-down queries, because
+ * `cashBook` is an Admin's screen and a report is read by every Warga; those are compared to
+ * `cashBook`'s own answer here, and these are the tests that fail the day the two readers disagree.
  */
 describe('the report and the buku kas, on the same rows', () => {
 	it('opens a month on exactly the balance the cash book carries into it', async () => {
@@ -592,6 +590,44 @@ describe('the report and the buku kas, on the same rows', () => {
 
 		expect(december.entries.map((entry) => entry.occurredOn)).toEqual(['2026-12-31']);
 		expect(december.incomeTotal).toBe(500_000);
+	});
+});
+
+describe('the two reads the report takes from the read module of the cash book', () => {
+	it('spans a month from its first day to its last, February and December included', () => {
+		expect(monthDayRange('2026-02')).toEqual({ from: '2026-02-01', to: '2026-02-28' });
+		expect(monthDayRange('2028-02')).toEqual({ from: '2028-02-01', to: '2028-02-29' });
+		expect(monthDayRange('2026-12')).toEqual({ from: '2026-12-01', to: '2026-12-31' });
+		expect(() => monthDayRange('2026-13')).toThrow(TypeError);
+		expect(() => monthDayRange('Januari 2026')).toThrow(TypeError);
+	});
+
+	it('carries the signed total of every earlier line into a day, a Koreksi netting its line away', async () => {
+		const donations = await addCategory('Sumbangan saldo bertanda', CASH_CATEGORY_TYPE.income);
+		const repairs = await addCategory('Perbaikan saldo bertanda', CASH_CATEGORY_TYPE.expense);
+		await record(donations, '2026-01-03', 900_000);
+		await record(repairs, '2026-01-09', 250_000);
+		await record(repairs, '2026-01-20', 40_000);
+		const [mistaken] = await testDb.db
+			.select()
+			.from(cashTransactions)
+			.where(eq(cashTransactions.amount, rupiah(40_000)));
+		clock.advance(STEP_MILLISECONDS);
+		await recordCashCorrection(testDb.db, clock, {
+			actorId: adminId,
+			transactionId: mistaken.id,
+			reason: 'Nota itu bukan milik komplek.'
+		});
+		// Dated on the very day asked about below, so it is not carried into that day.
+		await record(donations, '2026-02-01', 5_000_000);
+
+		expect(await cashBalanceBefore(testDb.db, '2026-01-03')).toBe(0);
+		expect(await cashBalanceBefore(testDb.db, '2026-02-01')).toBe(650_000);
+		expect(await cashBalanceBefore(testDb.db, '2026-02-01', repairs)).toBe(-250_000);
+		// Inside a transaction too, which is how a publication reads it under its Periode lock.
+		expect(
+			await testDb.db.transaction((transaction) => cashBalanceBefore(transaction, '2026-02-02'))
+		).toBe(5_650_000);
 	});
 });
 

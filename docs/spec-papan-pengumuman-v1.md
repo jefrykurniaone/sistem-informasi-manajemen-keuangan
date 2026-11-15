@@ -4,8 +4,9 @@
 |---|---|
 | Item spesifikasi | [#311](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/311) |
 | Run | `perdalam-v1` |
-| Peta eksekusi | belum dibuat |
+| Peta eksekusi | [#334](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/334) |
 | Disalin pada | 2026-11-15, dari `main` @ `0cf7be0` |
+| Lintasan penutup | 2026-11-16, sesudah Gelombang 6 (`feat/perdalam-v1` @ `cac5bf0`): dibuat ulang dari item, yang kini memuat bagian "Catatan penyerahan" dengan klaim yang dibalik ditandai; tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang; item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
 
@@ -84,3 +85,26 @@ Per 2026-11-15, menu "Pengumuman" di sidebar mengarah ke papan pengumuman, yang 
 - Sumber: permintaan pemilik di grilling run `perdalam-v1` (jawaban Q7) dan keputusan Q14.
 - Keputusan #170 (shell hanya di grup `(app)`) dipersempit: papan pengumuman sekarang memakai shell bagi pengguna yang sudah masuk, dan tetap terbuka untuk umum.
 
+
+## Catatan penyerahan (run perdalam-v1, 2026-11-16)
+
+**1. Yang masuk.** Semua di `feat/perdalam-v1`, belum di `main` (PR run dibuka di tail, #334).
+
+- #319 Papan pengumuman dan detail Post di dalam shell: merge `8693ad9` (kembalian `186e27a`) ke feat/perdalam-v1. `src/lib/server/app-shell.ts` (`loadShellState`, `awaitsApproval`); komponen `AppShell`; `(public)/posts/+layout.server.ts`.
+- #336 Suite e2e masuk tepat di batas laju login: merge `18c19ff` ke feat/perdalam-v1. `tests/e2e/fixtures.ts` (`superuserPage`) dan `workers: 3` di `playwright.config.ts`.
+
+**2. Klaim spec yang dibalik atau digeser run ini.** Tidak ada yang dihapus dari badan spec di atas.
+
+- "Layout grup `(public)` ... memilih antara shell dan header ringan": pilihannya hidup di `(public)/posts/+layout.server.ts`, bukan di layout seluruh grup. Aturan siapa mendapat shell ada di satu tempat, `app-shell.ts`, dipakai layout `(app)` dan layout Post; halaman berhenti berlangganan tetap header ringan (#319).
+- "spec publik yang ada tetap hijau": `tests/e2e/layout.spec.ts` dipindah dari `reads:` ke `writes:` karena satu tesnya memastikan perilaku yang dibalik spec ini. Dua kasus e2e baru digabung ke satu sesi di kasus admin yang sudah ada (#319).
+- "Gate repo dan e2e hijau": kasus baru #319 sempat membuat suite 32 login per alamat per menit (batas 30), dan dua tes gagal karena batas laju. Setelah digabung, login kembali 30, tetapi suite tidak punya ruang sisa (#319). #336 menurunkannya: `superuserPage` sekali per worker, `workers: 3`, login 30 menjadi 17 ditambah satu per worker, jadi 20 per run (#336).
+- Akibat #336: suite e2e kini bergantung pada Data Contoh (`superuser@komplek.local`), seperti `smoke` dan `dialogs` sebelumnya; dua run e2e berturut-turut dalam satu menit masih bisa melewati batas (#336).
+
+**3. Cacat dan tindak lanjut yang diajukan.**
+
+- #336 (di dalam run, ditutup): ditemukan di kembalian #319; suite e2e tanpa ruang sisa di bawah batas login. #328 sempat diblokir olehnya.
+- Catatan operasional (#336, HANDOFF): jangan menjalankan dua `bun run test:e2e` dalam satu menit; kalau ragu, baca `rate_limit_buckets` (`login:address:::1`, kolom `hits`) secara baca-saja.
+
+**4. Verifikasi.**
+
+- Tidak ada tiket high-consequence di spec ini, jadi tidak ada verifikasi kedua. Walk #319 (Playwright MCP, laptop): `warga01` di 1440 px melihat sidebar, "Pengumuman & Kegiatan" `aria-current`, tepat satu `main`; di 390 px laci terbuka dan tertutup, tanpa luapan; sesudah keluar `/posts` tanpa sidebar dan dengan header "Masuk". Konsol 0 galat.

@@ -1,29 +1,22 @@
 import { and, count, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { PermissionDeniedError } from '#lib/errors.ts';
 import { rupiah, type Rupiah } from '#lib/money.ts';
-import { civilDayOf, civilMonthOf } from '#lib/time.ts';
+import { civilMonthOf } from '#lib/time.ts';
 import type { Database } from '../../db';
-import { allocations } from '../../db/schema/allocation';
 import { CASH_CATEGORY_TYPE } from '../../db/schema/cash-category';
 import { COMPLAINT_STATUS, complaints, type ComplaintStatus } from '../../db/schema/complaint';
 import { invoices } from '../../db/schema/invoice';
-import { occupancies } from '../../db/schema/occupancy';
 import { PAYMENT_STATUS, payments } from '../../db/schema/payment';
 import { POST_STATUS, posts, type PostType } from '../../db/schema/post';
 import { residents } from '../../db/schema/resident';
 import type { JobRunStatus } from '../../db/schema/scheduler';
-import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
 import { applicationJobs, listJobsWithLastRun } from '../../scheduler';
 import { cashBook, type CashBook } from '../cash/balance';
 import { creditBalanceOfUnit } from '../dues/credit-balance';
-import {
-	INVOICE_STATUS,
-	invoiceStatus,
-	invoicesForUser,
-	type ResidentInvoiceRow
-} from '../dues/queries';
-import { stillRunningOn } from '../occupancy/visibility';
+import { INVOICE_STATUS, invoiceStandings } from '../dues/invoice-standing';
+import { invoicesForUser, type ResidentInvoiceRow } from '../dues/queries';
+import { residentViewFor, unitsOccupiedToday } from '../occupancy/resident-view';
 
 /**
  * The Beranda's two answers: "what should a pengurus do today?" and "what should this Warga do
@@ -37,12 +30,11 @@ import { stillRunningOn } from '../occupancy/visibility';
  * | Figure | Borrowed from |
  * |---|---|
  * | "bulan ini" | `civilMonthOf` in `src/lib/time.ts` — WIB, never UTC |
- * | "sudah lewat jatuh tempo" | `civilDayOf`, compared by `invoiceStatus` in `../dues/queries.ts` |
- * | lunas / menunggak | `invoiceStatus` in `../dues/queries.ts` |
+ * | lunas / menunggak, and what is still owed | `invoiceStandings` in `../dues/invoice-standing.ts` |
  * | saldo kas and its sign convention | `cashBook` in `../cash/balance.ts` |
  * | Saldo Titipan | `creditBalanceOfUnit` in `../dues/credit-balance.ts` |
  * | a Warga's own Tagihan | `invoicesForUser` in `../dues/queries.ts` |
- * | "masih tinggal di sini" | `stillRunningOn` in `../occupancy/visibility.ts` |
+ * | "masih tinggal di sini" | `unitsOccupiedToday` in `../occupancy/resident-view.ts` |
  * | the jobs and their last run | `listJobsWithLastRun` in `../../scheduler/index.ts` |
  *
  * Nothing here writes. The two functions are reads and only reads.
@@ -115,11 +107,11 @@ export interface DashboardInvoiceSummary {
 	readonly issuedCount: number;
 	/** The sum of what those Tagihan charge. */
 	readonly issuedAmount: Rupiah;
-	/** Of those, the ones `invoiceStatus` calls `paid`. */
+	/** Of those, the ones `invoiceStandings` calls `paid`. */
 	readonly paidCount: number;
 	/** The sum of what the paid ones charge. */
 	readonly paidAmount: Rupiah;
-	/** Of those, the ones `invoiceStatus` calls `overdue`. */
+	/** Of those, the ones `invoiceStandings` calls `overdue`. */
 	readonly overdueCount: number;
 	/**
 	 * What is still owed on the menunggak ones — their charge less what is allocated to them, the
@@ -187,13 +179,11 @@ export async function adminDashboard(
 	clock: Clock,
 	actorId: string
 ): Promise<AdminDashboard> {
-	const now = clock.now();
-	const month = civilMonthOf(now);
-	const today = civilDayOf(now);
+	const month = civilMonthOf(clock.now());
 
 	return {
 		month,
-		invoices: await monthInvoiceSummary(db, month, today),
+		invoices: await monthInvoiceSummary(db, clock, month),
 		pendingPayments: await pendingPaymentsSummary(db),
 		cash: await cashSummary(db, actorId, month),
 		complaints: await openComplaintCounts(db),
@@ -247,7 +237,7 @@ export interface ResidentDashboard {
  * Checks no permission and takes no caller other than the Warga it is about: `residentId` is a
  * `residents.id`, the key `complaints.reporterId` and `occupancies.residentId` are already written
  * in. A `residentId` naming no row is an empty Beranda with `hasUnit: false`, the same expected
- * state `occupiedUnitsForUser` gives an account with no `residents` row — not an error.
+ * state `residentViewFor` gives an account with no `residents` row — not an error.
  */
 export async function residentDashboard(
 	db: Database,
@@ -260,9 +250,7 @@ export async function residentDashboard(
 		.where(eq(residents.id, residentId))
 		.limit(1);
 
-	const unitSummaries = resident
-		? await residentUnitSummaries(db, clock, residentId, resident.userId)
-		: [];
+	const unitSummaries = resident ? await residentUnitSummaries(db, clock, resident.userId) : [];
 
 	return {
 		units: unitSummaries,
@@ -273,8 +261,9 @@ export async function residentDashboard(
 }
 
 /**
- * This month's Tagihan, with every status decided by `invoiceStatus` against `today` rather than by
- * a comparison written here.
+ * This month's Tagihan, with every status and every remaining amount taken from `invoiceStandings`
+ * rather than worked out here. The status is judged on the WIB day `invoiceStandings` reads from the
+ * same `clock` this month was read from.
  *
  * A cancelled Tagihan is left out in the `where` clause rather than counted and then discarded: a
  * voided Tagihan is nothing owed at all, so it is not a Tagihan the month issued either — the same
@@ -282,18 +271,20 @@ export async function residentDashboard(
  */
 async function monthInvoiceSummary(
 	db: Database,
-	month: string,
-	today: string
+	clock: Clock,
+	month: string
 ): Promise<DashboardInvoiceSummary> {
 	const rows = await db
-		.select({ invoiceId: invoices.id, amount: invoices.amount, dueDate: invoices.dueDate })
+		.select({
+			invoiceId: invoices.id,
+			unitId: invoices.unitId,
+			period: invoices.period,
+			amount: invoices.amount,
+			dueDate: invoices.dueDate,
+			voidedAt: invoices.voidedAt
+		})
 		.from(invoices)
 		.where(and(eq(invoices.period, month), isNull(invoices.voidedAt)));
-
-	const allocated = await allocatedAmountsByInvoice(
-		db,
-		rows.map((row) => row.invoiceId)
-	);
 
 	let issuedAmount = 0;
 	let paidCount = 0;
@@ -301,20 +292,15 @@ async function monthInvoiceSummary(
 	let overdueCount = 0;
 	let overdueAmount = 0;
 
-	for (const row of rows) {
-		const allocatedAmount = allocated.get(row.invoiceId) ?? rupiah(0);
-		issuedAmount += row.amount;
-		const status = invoiceStatus(
-			{ amount: row.amount, allocatedAmount, dueDate: row.dueDate, voidedAt: null },
-			today
-		);
-		if (status === INVOICE_STATUS.paid) {
+	for (const invoice of await invoiceStandings(db, clock, rows)) {
+		issuedAmount += invoice.amount;
+		if (invoice.status === INVOICE_STATUS.paid) {
 			paidCount += 1;
-			paidAmount += row.amount;
+			paidAmount += invoice.amount;
 		}
-		if (status === INVOICE_STATUS.overdue) {
+		if (invoice.status === INVOICE_STATUS.overdue) {
 			overdueCount += 1;
-			overdueAmount += row.amount - allocatedAmount;
+			overdueAmount += invoice.remainingAmount;
 		}
 	}
 
@@ -326,36 +312,6 @@ async function monthInvoiceSummary(
 		overdueCount,
 		overdueAmount: rupiah(overdueAmount)
 	};
-}
-
-/**
- * How much has been allocated to each of `invoiceIds`, keyed by invoice id and absent for one with
- * no allocation at all.
- *
- * The same query `allocatedAmountsByInvoice` in `../dues/queries.ts` runs, and deliberately not an
- * import of it: that one is private to its module, and this ticket's surface does not include
- * widening it. The shared part is the `::text` and `coalesce` idiom that module records — PostgreSQL
- * widens `sum(bigint)` to `numeric`, and `sum` over an empty group is `null`. No rule is duplicated
- * here, only a sum; the rule that reads it is `invoiceStatus`, which is imported.
- */
-async function allocatedAmountsByInvoice(
-	db: Database,
-	invoiceIds: readonly string[]
-): Promise<ReadonlyMap<string, Rupiah>> {
-	if (invoiceIds.length === 0) {
-		return new Map();
-	}
-
-	const rows = await db
-		.select({
-			invoiceId: allocations.invoiceId,
-			total: sql<string>`coalesce(sum(${allocations.amount}), 0)::text`
-		})
-		.from(allocations)
-		.where(inArray(allocations.invoiceId, [...invoiceIds]))
-		.groupBy(allocations.invoiceId);
-
-	return new Map(rows.map((row) => [row.invoiceId, rupiah(Number(row.total))]));
 }
 
 /** Every Pembayaran still waiting for a decision, counted and totalled — story 14. */
@@ -498,24 +454,23 @@ async function jobStatuses(
 /**
  * Every house this Warga is living in today, with what it owes and what it has on deposit.
  *
- * "Living in today" is `stillRunningOn`, the one definition of it, so a Masa Huni given an end date
+ * Both halves come from `../occupancy/resident-view.ts`, the module every personal screen asks and
+ * which reads no role. "Living in today" is `unitsOccupiedToday`, so a Masa Huni given an end date
  * that has not arrived yet still counts and one whose start date is still ahead does not. The
- * Tagihan come from `invoicesForUser` — one call for every house, already filtered to what this
- * Warga may see and already carrying each status — and are then split by house here rather than
- * queried per house.
+ * Tagihan come from `invoicesForUser`, which filters them through the same module's
+ * `isInvoiceVisible`, so a superuser or an admin who lives in a house is not told they owe the
+ * months a previous occupant left behind. They are then split by house here rather than queried per
+ * house.
+ *
+ * Saldo Titipan stays the Unit's whole balance, #306 decision 4: it belongs to the Unit, not to a
+ * Masa Huni.
  */
 async function residentUnitSummaries(
 	db: Database,
 	clock: Clock,
-	residentId: string,
 	userId: string
 ): Promise<readonly ResidentUnitSummary[]> {
-	const today = civilDayOf(clock.now());
-	const occupied = await db
-		.selectDistinct({ unitId: units.id, block: units.block, number: units.number })
-		.from(occupancies)
-		.innerJoin(units, eq(units.id, occupancies.unitId))
-		.where(and(eq(occupancies.residentId, residentId), stillRunningOn(occupancies, today)));
+	const occupied = unitsOccupiedToday(await residentViewFor(db, clock, userId));
 	if (occupied.length === 0) {
 		return [];
 	}

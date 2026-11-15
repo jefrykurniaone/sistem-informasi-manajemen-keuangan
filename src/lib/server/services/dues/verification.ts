@@ -12,7 +12,8 @@ import {
 	PAYMENT_STATUS,
 	payments,
 	type Payment,
-	type PaymentMethod
+	type PaymentMethod,
+	type PaymentStatus
 } from '../../db/schema/payment';
 import { residents } from '../../db/schema/resident';
 import { units } from '../../db/schema/unit';
@@ -28,6 +29,9 @@ import {
 	type OpenInvoice,
 	type PlannedAllocation
 } from './allocation';
+import { announceAfterCommit } from '../../email/announce';
+import { PAYMENT_REJECTED_KIND } from '../../email/templates/payment-rejected';
+import { PAYMENT_VERIFIED_KIND } from '../../email/templates/payment-verified';
 import { notifyPaymentRejected, notifyPaymentVerified } from './notification';
 import { PAYMENT_RECORDED_ACTION } from './payment';
 import { UnitNotFoundError } from './queries';
@@ -58,11 +62,13 @@ import { UnitNotFoundError } from './queries';
  * - The status columns move in **one** `update`: `payments_verification_check` refuses `status`,
  *   `verifiedBy` and `verifiedAt` written apart, exactly so that no statement boundary exists at
  *   which the row claims a verification that has not finished being decided.
- * - The cash row is written by `recordDuesIncome` in `src/lib/server/services/cash/transaction.ts`,
- *   which takes this transaction, resolves the system category by its `systemKey`, and is the one
- *   insert into that category in the codebase — the manual recording path refuses it by name. That
- *   is what makes "saldo kas dan status tagihan tidak bisa saling bertentangan" structural: the two
- *   are written by one transaction or not at all.
+ * - The cash row is written through `recordDuesIncome` in
+ *   `src/lib/server/services/cash/transaction.ts`, which takes this transaction and hands it to
+ *   `writeCashTransaction` in `src/lib/server/services/cash/writer.ts` with the `duesIncome` kind.
+ *   That writer holds the one `insert` into `cash_transactions` in the codebase, and Payment
+ *   verification is the one caller of the `duesIncome` kind. That is what makes "saldo kas dan
+ *   status tagihan tidak bisa saling bertentangan" structural: the two are written by one
+ *   transaction or not at all.
  *
  * ## The locks, and why each is taken
  *
@@ -73,7 +79,10 @@ import { UnitNotFoundError } from './queries';
  *    gone and answered as not found), instead of a cash transaction pointing at a deleted row.
  * 2. **The Unit's open Tagihan, `for update`, before the plan is made** — `lockOpenInvoicesOfUnit`
  *    in `./allocation.ts`, which is what keeps two concurrent verifications of one Unit from both
- *    filling the same remaining amount.
+ *    filling the same remaining amount. The remaining amounts it plans against are summed after
+ *    those locks by `allocatedAmountsOf`, the second door of `./invoice-standing.ts`, so the
+ *    verification and every screen read one rule; the door takes no lock of its own, and this order
+ *    is what `tests/unit/payment-verification.test.ts` holds with a second connection.
  * 3. **The Periode, `for share`, last** — inside `recordDuesIncome`, against `receivedOn`, which is
  *    the day the cash row is dated on. The order — the rows the money is about first, the Periode
  *    second — is the one `src/lib/server/services/cash/period.ts` fixes for every money write.
@@ -111,14 +120,21 @@ import { UnitNotFoundError } from './queries';
  * that wires it, through `./notification.ts`. `verifyPayment`, `recordCashPayment` and
  * `rejectPayment` each call it **after** their `db.transaction` has resolved, never from inside the
  * transaction callback above — an email announcing a verification that rolled back is worse than a
- * late one. `notifyPaymentVerified`/`notifyPaymentRejected` never throw: see that module's doc
- * comment for why a notification failure must never look like this transaction failed too.
+ * late one. Each call is wrapped in `announceAfterCommit`, which logs a failure and never rethrows
+ * it: see `./notification.ts`'s doc comment for why a notification failure must never look like this
+ * transaction failed too.
  *
  * ## What is deliberately absent
  *
  * - **No second audit row for the cash transaction.** One decision, one row, filed against the
- *   Pembayaran, with the cash row's id and the allocations in `after`. `recordDuesIncome` writes
- *   none for the same reason, and says so.
+ *   Pembayaran, with the cash row's id and the allocations in `after` (`PaymentVerifiedAfter`).
+ *   `recordDuesIncome` writes none for the same reason, and says so. That row is also the only link
+ *   from the Pembayaran to its income line, which the Pembatalan verifikasi (#331) follows.
+ * - **No way back out of `verified` from here.** A verified Pembayaran leaves that status only
+ *   through the Pembatalan verifikasi, `unverifyPayment` in `./dues-correction.ts`, a superuser's
+ *   correction that rejects it, releases its Alokasi and reverses its income line with a Koreksi.
+ *   A rejected Pembayaran is never verified again (spec #308): `lockPendingPayment` refuses it as
+ *   `alreadyDecided`.
  */
 
 /** The audit log's `action` for a Pembayaran an admin verified. */
@@ -126,6 +142,30 @@ export const PAYMENT_VERIFIED_ACTION = 'payment_verified';
 
 /** The audit log's `action` for a Pembayaran an admin turned down. */
 export const PAYMENT_REJECTED_ACTION = 'payment_rejected';
+
+/**
+ * The `after` of the one `payment_verified` audit row a verification writes, as `verifyHeldPayment`
+ * builds it (`satisfies`, so a field renamed here is a compile error there).
+ *
+ * `cashTransactionId` is load-bearing beyond the audit trail: `cash_transactions` deliberately has no
+ * column pointing at a payment, so this row is the only link from a Pembayaran to the income line its
+ * verification wrote. The Pembatalan verifikasi (`unverifyPayment` in `./dues-correction.ts`, #331)
+ * finds the line it reverses through it, and checks the field against this type.
+ */
+export interface PaymentVerifiedAfter {
+	/** The status the row was flipped to: always `verified`, read back off the updated row. */
+	readonly status: PaymentStatus;
+	readonly amount: Rupiah;
+	/** The day the money changed hands, as `YYYY-MM-DD`: the day the income line is dated on. */
+	readonly receivedOn: string;
+	readonly method: PaymentMethod;
+	/** The income line in "Iuran warga" this verification wrote. */
+	readonly cashTransactionId: string;
+	/** The Alokasi this verification planned and wrote. */
+	readonly allocations: readonly PlannedAllocation[];
+	/** What the payment added to the Unit's Saldo Titipan at that instant. */
+	readonly unallocatedRemainder: number;
+}
 
 /** The shape `receivedOn` has to arrive in: a calendar day, as PostgreSQL's `date` writes one. */
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -378,7 +418,10 @@ export async function verifyPayment(
 		});
 	});
 
-	await notifyPaymentVerified(db, clock, outcome.payment, outcome.allocations);
+	await announceAfterCommit(
+		`the "${PAYMENT_VERIFIED_KIND}" email for Pembayaran ${outcome.payment.id}`,
+		() => notifyPaymentVerified(db, clock, outcome.payment, outcome.allocations)
+	);
 	return outcome;
 }
 
@@ -441,7 +484,9 @@ export async function rejectPayment(
 		return rejected;
 	});
 
-	await notifyPaymentRejected(db, clock, row);
+	await announceAfterCommit(`the "${PAYMENT_REJECTED_KIND}" email for Pembayaran ${row.id}`, () =>
+		notifyPaymentRejected(db, clock, row)
+	);
 	return row;
 }
 
@@ -536,7 +581,10 @@ export async function recordCashPayment(
 		});
 	});
 
-	await notifyPaymentVerified(db, clock, outcome.payment, outcome.allocations);
+	await announceAfterCommit(
+		`the "${PAYMENT_VERIFIED_KIND}" email for Pembayaran ${outcome.payment.id}`,
+		() => notifyPaymentVerified(db, clock, outcome.payment, outcome.allocations)
+	);
 	return outcome;
 }
 
@@ -604,7 +652,7 @@ async function verifyHeldPayment(
 			// What this payment adds to the Unit's saldo titipan — recorded as the number it was at
 			// this instant, while the balance itself stays computed and never stored.
 			unallocatedRemainder: payment.amount - plannedTotal(plan)
-		}
+		} satisfies PaymentVerifiedAfter
 	});
 
 	return { payment: verified, cashTransaction, allocations: written };

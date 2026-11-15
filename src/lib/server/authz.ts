@@ -121,8 +121,8 @@ export const ACTION = {
 	importResidents: 'importResidents',
 	/**
 	 * Reading the buku kas with its running balance, recording a Transaksi Kas by hand, and
-	 * recording a Koreksi of one. See `src/lib/server/services/cash/transaction.ts`,
-	 * `correction.ts` and `balance.ts`. One action for the read and the two writes, the same
+	 * recording a Koreksi of one. See `src/lib/server/services/cash/writer.ts`,
+	 * `transaction.ts`, `correction.ts` and `balance.ts`. One action for the read and the two writes, the same
 	 * reasoning as `manageJobs`: the cash book is only useful to whoever may add a line to it, and
 	 * the correction button lives on the row it corrects.
 	 *
@@ -312,8 +312,8 @@ export const ACTION = {
 	/**
 	 * The three dues corrections, and the screen they live on: cancelling a Tagihan, releasing an
 	 * Alokasi so its money becomes Saldo Titipan again, and returning a Unit's Saldo Titipan to its
-	 * Warga as a cash expense. See `src/lib/server/services/dues/invoice-void.ts`,
-	 * `allocation-release.ts`, `credit-refund.ts` and `corrections-history.ts`.
+	 * Warga as a cash expense. See `src/lib/server/services/dues/dues-correction.ts`
+	 * and `corrections-history.ts`.
 	 *
 	 * One action for all three writes and the reads beside them, not three. The reasoning
 	 * `manageJobs` records covers the reads — the unit finance screen is only useful to whoever may

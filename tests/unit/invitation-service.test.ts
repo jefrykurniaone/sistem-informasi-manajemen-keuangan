@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { PermissionDeniedError } from '#lib/errors.ts';
 import { auditEntriesFor } from '#lib/server/audit.ts';
 import { createAuth, MINIMUM_PASSWORD_LENGTH, type Auth } from '#lib/server/auth.ts';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
 import { account, user } from '#lib/server/db/schema/auth.ts';
 import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
 import { emailQueue } from '#lib/server/db/schema/email.ts';
@@ -179,6 +180,51 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 		return error;
 	}
 	throw new Error('The service accepted something it was supposed to refuse.');
+}
+
+/** How long a call is given to start waiting on a lock before the test gives up on it. */
+const WAIT_TIMEOUT_MILLISECONDS = 10_000;
+/** How often `waitUntilWaitingOn` asks PostgreSQL again. */
+const POLL_MILLISECONDS = 10;
+
+/**
+ * A second, independent connection into this file's own schema, standing in for a concurrent
+ * request with its own transaction — the same helper `tests/unit/occupancy-service.test.ts` keeps.
+ */
+async function connectToSchema() {
+	const other = createConnection(readDatabaseUrl('TEST_DATABASE_URL'), {
+		options: `-c search_path=${testDb.schemaName}`
+	});
+	const client = await other.pool.connect();
+	const [{ pid }] = (await client.query<{ pid: number }>('select pg_backend_pid() as pid')).rows;
+	return {
+		client,
+		pid,
+		release: async () => {
+			client.release();
+			await other.close();
+		}
+	};
+}
+
+/**
+ * Waits until some backend is waiting on a lock the backend `blockerPid` holds. Polled, because
+ * PostgreSQL announces no event for a statement starting to wait. Only this file's own call can wait
+ * on a connection this file opened itself, so the waiter is that call.
+ */
+async function waitUntilWaitingOn(blockerPid: number): Promise<void> {
+	const deadline = Date.now() + WAIT_TIMEOUT_MILLISECONDS;
+	while (Date.now() < deadline) {
+		const result = await testDb.db.execute<{ waiting: number }>(
+			sql`select count(*)::int as waiting from pg_stat_activity activity
+				where ${blockerPid}::int = any(pg_blocking_pids(activity.pid))`
+		);
+		if ((result.rows[0]?.waiting ?? 0) >= 1) {
+			return;
+		}
+		await new Promise((resolve) => setTimeout(resolve, POLL_MILLISECONDS));
+	}
+	throw new Error(`No backend ever waited on backend ${blockerPid}.`);
 }
 
 describe('sendInvitations', () => {
@@ -599,6 +645,50 @@ describe('what accepting creates', () => {
 				.where(eq(occupancies.residentId, residentRow.id))
 				.orderBy(occupancies.startedOn)
 		).toEqual([{ startedOn: '2025-06-01' }, { startedOn: '2026-01-01' }]);
+	});
+
+	it('waits for a unit lock another connection holds, and skips the stay that connection committed', async () => {
+		// The Undangan path's Masa Huni step goes through `ensureOccupancy`, which takes the unit's row
+		// lock itself. The other connection holds that row `for no key update` — a mode the step's own
+		// `for update` waits for, while the `for key share` of its foreign-key check would not — and
+		// records a stay for the same resident while the acceptance waits behind it. Only the lock can
+		// hold the acceptance back, and only reading after the lock is granted lets it see that stay.
+		const actorId = await insertSuperuser();
+		const unitId = await insertUnitRow();
+		const email = anAddress('locked');
+		const userId = await insertUser('Warga Undangan Terkunci', email);
+		const [residentRow] = await testDb.db
+			.insert(residents)
+			.values({ userId, createdAt: new Date(START) })
+			.returning();
+		const clock = new FakeClock(START);
+		const { token } = await sendOne(actorId, email, unitId, clock);
+
+		const other = await connectToSchema();
+		try {
+			await other.client.query('begin');
+			await other.client.query('select id from units where id = $1 for no key update', [unitId]);
+
+			const accepting = acceptInvitation(testDb.db, clock, acceptance(token));
+			await waitUntilWaitingOn(other.pid);
+
+			await other.client.query(
+				`insert into occupancies (unit_id, resident_id, role, started_on, ended_on, is_primary_occupant, created_at)
+				 values ($1, $2, 'tenant', '2025-06-01', null, false, $3)`,
+				[unitId, residentRow.id, START]
+			);
+			await other.client.query('commit');
+			const accepted = await accepting;
+
+			expect(accepted).toMatchObject({ residentId: residentRow.id, createdOccupancy: false });
+			expect(
+				await testDb.db.select().from(occupancies).where(eq(occupancies.residentId, residentRow.id))
+			).toEqual([
+				expect.objectContaining({ role: OCCUPANCY_ROLE.tenant, startedOn: '2025-06-01' })
+			]);
+		} finally {
+			await other.release();
+		}
 	});
 
 	it('refuses an address that gained a working credential after the invitation was sent', async () => {

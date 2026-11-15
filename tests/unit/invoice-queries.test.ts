@@ -14,7 +14,6 @@ import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	INVOICE_STATUS,
 	invoiceHistoryForUnit,
-	invoiceStatus,
 	invoicesForUser,
 	listOverdueUnits,
 	UnitNotFoundError
@@ -22,9 +21,13 @@ import {
 import { PermissionDeniedError } from '#lib/errors.ts';
 
 /**
- * `invoiceStatus`'s comparison table, a warga's own list filtered by Masa Huni, admin's daftar
- * penunggak, and admin's per-unit history — `docs/spec-iuran-v1.md`'s "saya masih harus bayar
- * berapa" and "siapa saja yang menunggak".
+ * A warga's own list filtered by Masa Huni, admin's daftar penunggak, and admin's per-unit history —
+ * `docs/spec-iuran-v1.md`'s "saya masih harus bayar berapa" and "siapa saja yang menunggak".
+ *
+ * Where each Tagihan stands (its allocated and remaining amounts, and its status on a WIB day,
+ * including the due-date boundary) is `invoiceStandings`'s, tested at that seam in
+ * `tests/unit/invoice-standing.test.ts`. The tests here check what each read selects, totals and
+ * sorts.
  *
  * `tests/unit/overdue-privacy.test.ts` is the other half: the direct proof that a `resident` cannot
  * reach `listOverdueUnits` or `invoiceHistoryForUnit` at the service layer.
@@ -185,81 +188,6 @@ async function allocate(paymentId: string, invoiceId: string, amount: Rupiah): P
 		.values({ paymentId, invoiceId, amount, createdAt: new Date('2026-03-02T00:00:00.000Z') });
 }
 
-describe('invoiceStatus', () => {
-	const AMOUNT = rupiah(150_000);
-	const DUE_DATE = '2026-03-05';
-	const BEFORE_DUE = '2026-03-04';
-	const AFTER_DUE = '2026-03-06';
-
-	it('is paid once the allocated amount reaches the invoice amount', () => {
-		expect(
-			invoiceStatus(
-				{ amount: AMOUNT, allocatedAmount: AMOUNT, dueDate: DUE_DATE, voidedAt: null },
-				AFTER_DUE
-			)
-		).toBe(INVOICE_STATUS.paid);
-	});
-
-	it('is unpaid before the due date with nothing allocated', () => {
-		expect(
-			invoiceStatus(
-				{ amount: AMOUNT, allocatedAmount: rupiah(0), dueDate: DUE_DATE, voidedAt: null },
-				BEFORE_DUE
-			)
-		).toBe(INVOICE_STATUS.unpaid);
-	});
-
-	it('is partial before the due date with something, but not everything, allocated', () => {
-		expect(
-			invoiceStatus(
-				{ amount: AMOUNT, allocatedAmount: rupiah(50_000), dueDate: DUE_DATE, voidedAt: null },
-				BEFORE_DUE
-			)
-		).toBe(INVOICE_STATUS.partial);
-	});
-
-	it('is not yet overdue on the due date itself — "lewat" means the date has passed', () => {
-		expect(
-			invoiceStatus(
-				{ amount: AMOUNT, allocatedAmount: rupiah(0), dueDate: DUE_DATE, voidedAt: null },
-				DUE_DATE
-			)
-		).toBe(INVOICE_STATUS.unpaid);
-	});
-
-	it('is overdue, not partial, once an unpaid balance is also past due', () => {
-		expect(
-			invoiceStatus(
-				{ amount: AMOUNT, allocatedAmount: rupiah(50_000), dueDate: DUE_DATE, voidedAt: null },
-				AFTER_DUE
-			)
-		).toBe(INVOICE_STATUS.overdue);
-	});
-
-	it('is overdue with nothing allocated at all, once past due', () => {
-		expect(
-			invoiceStatus(
-				{ amount: AMOUNT, allocatedAmount: rupiah(0), dueDate: DUE_DATE, voidedAt: null },
-				AFTER_DUE
-			)
-		).toBe(INVOICE_STATUS.overdue);
-	});
-
-	it('is void whatever the amounts say, once cancelled', () => {
-		expect(
-			invoiceStatus(
-				{
-					amount: AMOUNT,
-					allocatedAmount: rupiah(0),
-					dueDate: DUE_DATE,
-					voidedAt: new Date(START)
-				},
-				AFTER_DUE
-			)
-		).toBe(INVOICE_STATUS.void);
-	});
-});
-
 describe('invoicesForUser', () => {
 	it('is empty for a signed-in account with no residents row at all', async () => {
 		const userId = await insertUser('Warga Baru');
@@ -344,54 +272,109 @@ describe('invoicesForUser', () => {
 		expect(view.totalOverdue).toBe(rupiah(150_000 + (150_000 - 50_000)));
 	});
 
-	describe('a tenant turnover', () => {
-		/** The old occupant's stay, and the Tagihan issued each side of it moving out. */
-		async function turnover() {
-			const unit = await insertUnitRow();
-			const leaving = await insertResident('Warga Lama');
-			const arriving = await insertResident('Warga Baru');
-			await insertOccupancyRow(unit.id, leaving.residentId, '2026-01-01', '2026-03-31');
-			await insertOccupancyRow(unit.id, arriving.residentId, '2026-04-01', null);
-
-			const beforeMove = await insertInvoiceRow(unit.id, {
-				period: '2026-02',
-				dueDate: '2026-02-05',
-				issuedAt: new Date('2026-02-01T00:00:00.000Z')
-			});
-			const afterMove = await insertInvoiceRow(unit.id, {
-				period: '2026-05',
-				dueDate: '2026-05-05',
-				issuedAt: new Date('2026-05-01T00:00:00.000Z')
-			});
-
-			return { unit, leaving, arriving, beforeMove, afterMove };
-		}
-
-		it('hides the previous occupant’s months from the resident who moved in later', async () => {
-			const { arriving, afterMove } = await turnover();
-
-			const view = await invoicesForUser(
-				testDb.db,
-				new FakeClock('2026-06-01T00:00:00.000Z'),
-				arriving.userId
-			);
-
-			expect(view.invoices.map((row) => row.invoiceId)).toEqual([afterMove]);
+	// Which Periode of a house a Warga sees across a turnover, a move-out or a return is the rule of
+	// `src/lib/server/services/occupancy/resident-view.ts`, tested in `tests/unit/resident-view.test.ts`.
+	// The two tests below only prove that "Tagihan saya" reads that module, over every house the Warga
+	// ever lived in and nothing wider.
+	it('still lists and totals the months of a Warga who has moved out, and not the next occupant’s', async () => {
+		// User story 7 of #306: moving out does not take away a Warga's own history. "Tagihan saya"
+		// reads every house in the view, not only the houses lived in today.
+		const unit = await insertUnitRow();
+		const leaving = await insertResident('Warga Sudah Pindah');
+		const arriving = await insertResident('Warga Penghuni Berikutnya');
+		await insertOccupancyRow(unit.id, leaving.residentId, '2026-01-01', '2026-03-31');
+		await insertOccupancyRow(unit.id, arriving.residentId, '2026-04-01', null);
+		const february = await insertInvoiceRow(unit.id, {
+			period: '2026-02',
+			dueDate: '2026-02-05',
+			issuedAt: new Date('2026-02-01T00:00:00.000Z')
+		});
+		const march = await insertInvoiceRow(unit.id, {
+			period: '2026-03',
+			dueDate: '2026-03-05',
+			issuedAt: new Date('2026-03-01T00:00:00.000Z')
+		});
+		const nextOccupants = await insertInvoiceRow(unit.id, {
+			period: '2026-05',
+			dueDate: '2026-05-05',
+			issuedAt: new Date('2026-05-01T00:00:00.000Z')
 		});
 
-		it('leaves the old occupant their own months and nothing issued after they left', async () => {
-			const { leaving, beforeMove } = await turnover();
+		const view = await invoicesForUser(
+			testDb.db,
+			new FakeClock('2026-06-01T03:00:00.000Z'),
+			leaving.userId
+		);
 
-			const view = await invoicesForUser(
-				testDb.db,
-				new FakeClock('2026-06-01T00:00:00.000Z'),
-				leaving.userId
-			);
+		expect(view.invoices.map((row) => row.invoiceId)).toEqual([march, february]);
+		expect(view.invoices.map((row) => row.invoiceId)).not.toContain(nextOccupants);
+		expect(view.totalOverdue).toBe(rupiah(150_000 + 150_000));
+	});
 
-			expect(view.invoices.map((row) => row.invoiceId)).toEqual([beforeMove]);
-		});
+	describe('a pengurus who also lives in a house', () => {
+		// #306's own example: Rina is a superuser and has lived in her house since 1 June 2026. The
+		// previous occupant left January to March unpaid. "Tagihan saya" is a personal screen, so it
+		// treats Rina as the Warga she is there, and her role must not widen what it shows.
+		it.each([
+			['a superuser', ROLE.superuser],
+			['an admin', ROLE.admin]
+		])(
+			'shows %s only the Tagihan of their own Masa Huni, and totals only those',
+			async (_who, role) => {
+				const { unit, previousMonths, ownMonth, pengurus } = await pengurusMovedInAfterDebt(role);
+
+				const view = await invoicesForUser(
+					testDb.db,
+					new FakeClock('2026-07-10T03:00:00.000Z'),
+					pengurus.userId
+				);
+
+				expect(view.invoices.map((row) => row.invoiceId)).toEqual([ownMonth]);
+				for (const invoiceId of previousMonths) {
+					expect(view.invoices.map((row) => row.invoiceId)).not.toContain(invoiceId);
+				}
+				// June is past its due date on 10 July, so it is the one menunggak figure; the three
+				// months the previous occupant left behind are not added to it.
+				expect(view.totalOverdue).toBe(rupiah(150_000));
+				expect(view.invoices.every((row) => row.unitId === unit.id)).toBe(true);
+			}
+		);
 	});
 });
+
+/**
+ * A house whose previous occupant lived there from January to May 2026 and left January, February
+ * and March unpaid, and a pengurus holding `role` (with a `residents` row of their own) who moved in
+ * on 1 June 2026, with June's Tagihan issued inside their stay.
+ */
+async function pengurusMovedInAfterDebt(role: typeof ROLE.superuser | typeof ROLE.admin) {
+	const unit = await insertUnitRow();
+	const previous = await insertResident('Penghuni Sebelumnya');
+	const pengurus = await insertResident('Rina Pengurus Menghuni');
+	await testDb.db
+		.insert(userRoles)
+		.values({ userId: pengurus.userId, role, createdAt: new Date(START) });
+	await insertOccupancyRow(unit.id, previous.residentId, '2026-01-01', '2026-05-31');
+	await insertOccupancyRow(unit.id, pengurus.residentId, '2026-06-01', null);
+
+	const previousMonths: string[] = [];
+	for (const month of ['01', '02', '03']) {
+		previousMonths.push(
+			await insertInvoiceRow(unit.id, {
+				period: `2026-${month}`,
+				dueDate: `2026-${month}-05`,
+				issuedAt: new Date(`2026-${month}-01T00:00:00.000Z`)
+			})
+		);
+	}
+	const ownMonth = await insertInvoiceRow(unit.id, {
+		period: '2026-06',
+		dueDate: '2026-06-05',
+		issuedAt: new Date('2026-06-01T00:00:00.000Z')
+	});
+
+	return { unit, previousMonths, ownMonth, pengurus };
+}
 
 describe('listOverdueUnits', () => {
 	it('refuses a caller who does not hold ACTION.readOverdue', async () => {
@@ -424,6 +407,13 @@ describe('listOverdueUnits', () => {
 		const payment = await insertPaymentRow(paidUp.id, residentId, rupiah(100_000));
 		await allocate(payment, paidInvoice, rupiah(100_000));
 		await insertInvoiceRow(notYetDue.id, { period: '2026-06', dueDate: '2026-06-05' });
+		const partlyPaid = await insertUnitRow();
+		const partlyPaidInvoice = await insertInvoiceRow(partlyPaid.id, {
+			dueDate: '2026-02-05',
+			amount: rupiah(150_000)
+		});
+		const partPayment = await insertPaymentRow(partlyPaid.id, residentId, rupiah(120_000));
+		await allocate(partPayment, partlyPaidInvoice, rupiah(120_000));
 
 		const overdue = await listOverdueUnits(
 			testDb.db,
@@ -431,31 +421,11 @@ describe('listOverdueUnits', () => {
 			admin.userId
 		);
 
-		expect(overdue.map((row) => row.unitId)).toEqual([bigDebt.id, smallDebt.id]);
+		expect(overdue.map((row) => row.unitId)).toEqual([bigDebt.id, smallDebt.id, partlyPaid.id]);
 		expect(overdue[0]).toMatchObject({ overdueInvoiceCount: 2, totalOverdue: rupiah(300_000) });
 		expect(overdue[1]).toMatchObject({ overdueInvoiceCount: 1, totalOverdue: rupiah(100_000) });
-	});
-
-	it('reads "sudah lewat jatuh tempo" in the complex\'s own zone, not in UTC', async () => {
-		// 2026-03-05T20:00:00Z is already 03:00 on 6 March in Jakarta (UTC+7) — genuinely past a
-		// 5 March due date locally, even though the UTC calendar day is still the 5th.
-		const admin = await insertAdmin('Admin Zona Waktu');
-		const unit = await insertUnitRow();
-		await insertInvoiceRow(unit.id, { dueDate: '2026-03-05' });
-
-		const stillOnTime = await listOverdueUnits(
-			testDb.db,
-			new FakeClock('2026-03-05T10:00:00.000Z'),
-			admin.userId
-		);
-		const overdueLocally = await listOverdueUnits(
-			testDb.db,
-			new FakeClock('2026-03-05T20:00:00.000Z'),
-			admin.userId
-		);
-
-		expect(stillOnTime).toEqual([]);
-		expect(overdueLocally.map((row) => row.unitId)).toEqual([unit.id]);
+		// What is still owed, not the full charge.
+		expect(overdue[2]).toMatchObject({ overdueInvoiceCount: 1, totalOverdue: rupiah(30_000) });
 	});
 });
 

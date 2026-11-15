@@ -17,14 +17,14 @@ import { residents } from '../../db/schema/resident';
 import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
 import type { FileStore } from '../../ports/file-store';
-import { occupiedUnitsForUser } from '../occupancy';
 import {
-	currentDay,
-	isVisibleOn,
-	unitVisibilityFor,
-	type UnitVisibility
-} from '../occupancy/visibility';
-import { firstDayOfPeriod } from './invoice';
+	occupiesToday,
+	residentViewFor,
+	unitsOccupiedToday,
+	type ResidentView
+} from '../occupancy/resident-view';
+import { currentDay } from '../occupancy/visibility';
+import { INVOICE_STATUS, invoiceStandings } from './invoice-standing';
 
 /**
  * A Warga telling the pengurus that they have transferred money: the amount, the day it left their
@@ -44,8 +44,9 @@ import { firstDayOfPeriod } from './invoice';
  *   grounds that a pengurus had closed the month's books — a refusal aimed at the wrong person.
  * - **No row is written into `allocations`.** Which Tagihan the money answers is decided by the
  *   verification transaction, not by the person paying.
- * - **The "Iuran warga" cash category is never touched.** `src/lib/server/services/cash/transaction.ts`
- *   refuses a manual entry into it precisely so that verification stays the only door.
+ * - **The "Iuran warga" cash category is never touched.** `requireRecordableCategory` in
+ *   `src/lib/server/services/cash/writer.ts` refuses a manual entry into it (every system category
+ *   is refused, by its `systemKey`) precisely so that verification stays the only door.
  *
  * ## The payload handed to #29 — the contract, stated exactly
  *
@@ -324,9 +325,10 @@ export interface PayableUnit {
 	readonly block: string;
 	readonly number: string;
 	/**
-	 * Its Tagihan that have not been cancelled **and that were issued inside the viewer's own Masa
-	 * Huni**, oldest period first. See `payableInvoicesOf` for why the second half is a privacy rule
-	 * rather than a convenience.
+	 * Its Tagihan that have not been cancelled, **that were issued inside the viewer's own Masa Huni**
+	 * and that are not paid in full, oldest period first. See `payableInvoicesOf` for why the second
+	 * condition is a privacy rule rather than a convenience. A house whose every Tagihan is paid is
+	 * still offered, with an empty list: it is a house the resident may pay in advance for.
 	 */
 	readonly invoices: readonly PayableInvoice[];
 }
@@ -334,15 +336,23 @@ export interface PayableUnit {
 /**
  * One Tagihan the payment form offers.
  *
- * There is no "lunas", "sebagian" or "menunggak" on it, and there must not be: working out what a
- * Tagihan still owes is #27's job, and a second counter living here would be a second answer to a
- * question `docs/spec-iuran-v1.md` says has exactly one ("status tagihan dihitung, bukan disimpan").
+ * There is no status on it, and there must not be: `docs/spec-iuran-v1.md` says a Tagihan's status is
+ * computed and not stored, and it is computed in one place, `./invoice-standing.ts`. What the picker
+ * carries is the one answer from that module it needs, the amount still owed, and the Tagihan it
+ * offers are exactly the ones that module does not call paid.
  */
 export interface PayableInvoice {
 	readonly invoiceId: string;
 	/** The calendar month it is for, as `YYYY-MM`. */
 	readonly period: string;
+	/** What was issued, frozen. Equal to `remainingAmount` until something is allocated to it. */
 	readonly amount: Rupiah;
+	/**
+	 * What is still owed on it, from `invoiceStandings`: `amount` less everything allocated to it.
+	 * Strictly positive, because a Tagihan with nothing owed is not offered. Ticking the Tagihan on
+	 * the form adds this, not `amount`.
+	 */
+	readonly remainingAmount: Rupiah;
 	/** The day it falls due, as `YYYY-MM-DD`. */
 	readonly dueDate: string;
 }
@@ -380,45 +390,39 @@ export interface CancelPaymentRequest {
  * Every house `actorUserId` is living in today, each with the Tagihan a payment could be meant for
  * — the whole load of the "catat pembayaran" screen.
  *
- * **Which Tagihan those are is a privacy decision, not a convenience one.** Only the ones issued
- * inside this viewer's own Masa Huni are offered: a Tagihan from before they moved in is the
- * previous occupant's obligation, and listing it would disclose its period and its amount. The rule
- * and the reason are in `payableInvoicesOf` below.
+ * **Which Tagihan those are is a privacy decision, not a convenience one.** Only the ones inside
+ * this viewer's own Masa Huni are offered: a Tagihan from before they moved in is the previous
+ * occupant's obligation, and listing it would disclose its period and its amount. The rule is
+ * `isInvoiceVisible` in `../occupancy/resident-view.ts`, which reads no role, so a superuser who
+ * lives in a house is offered what any other Warga of that house would be. See `payableInvoicesOf`.
  *
- * "Living in today" is `isStillRunningOn`'s definition and is not re-derived here: this reads
- * `occupiedUnitsForUser` and keeps the stays it reports as running. An account with no `residents`
- * row, or one whose stays have all ended, gets an empty list rather than an error — the screen says
- * so, which is a different thing from refusing them.
+ * "Living in today" is `unitsOccupiedToday` from the same module, which is `isStillRunningOn`'s
+ * definition. An account with no `residents` row, or one whose stays have all ended, gets an empty
+ * list rather than an error — the screen says so, which is a different thing from refusing them.
  *
- * **One entry per house, not per stay.** `occupiedUnitsForUser` answers with occupancies, and
- * `src/lib/server/db/schema/occupancy.ts` deliberately has no unique pair on unit and resident:
- * the same person can hold two running stays in one house, an owner row beside a tenant row or a
- * plain duplicate a superuser recorded. Two rows for one house would put a duplicate key into the
- * form's `{#each}` and list every Tagihan of that house twice, so the stays are folded by `unitId`
- * here rather than left for each screen to notice.
+ * **One entry per house, not per stay.** `src/lib/server/db/schema/occupancy.ts` deliberately has
+ * no unique pair on unit and resident, so the same person can hold two running stays in one house.
+ * `residentViewFor` already folds a person's stays into one entry per Unit, which is what keeps a
+ * duplicate key out of the form's `{#each}`.
  */
 export async function payableUnitsForUser(
 	db: DatabaseWriter,
 	clock: Clock,
 	actorUserId: string
 ): Promise<readonly PayableUnit[]> {
-	const houses = new Map<string, { readonly block: string; readonly number: string }>();
-	for (const stay of await occupiedUnitsForUser(db, clock, actorUserId)) {
-		if (stay.isRunning) {
-			houses.set(stay.unitId, { block: stay.block, number: stay.number });
-		}
-	}
-	if (houses.size === 0) {
+	const view = await residentViewFor(db, clock, actorUserId);
+	const houses = unitsOccupiedToday(view);
+	if (houses.length === 0) {
 		return [];
 	}
 
-	const invoicesByUnit = await payableInvoicesOf(db, actorUserId, [...houses.keys()]);
+	const invoicesByUnit = await payableInvoicesOf(db, clock, view, houses);
 
-	return [...houses].map(([unitId, house]) => ({
-		unitId,
+	return houses.map((house) => ({
+		unitId: house.unitId,
 		block: house.block,
 		number: house.number,
-		invoices: invoicesByUnit.get(unitId) ?? []
+		invoices: invoicesByUnit.get(house.unitId) ?? []
 	}));
 }
 
@@ -622,6 +626,10 @@ export async function cancelOwnPayment(
 /**
  * The `residents.id` behind `actorUserId`, having proved they are living in `unitId` today.
  *
+ * "Living in today" is `occupiesToday` in `../occupancy/resident-view.ts`. That view carries the
+ * person's own houses and nothing about who else lives there: this guard needs a yes or a no, not
+ * the "Rumah saya" screen with its household names.
+ *
  * @throws {PermissionDeniedError} when the account has no `residents` row, or no running stay in
  *   that house. Both are the same answer on purpose: "that is not your house" is all either one
  *   entitles the caller to know.
@@ -633,9 +641,8 @@ async function requireOccupyingResident(
 	unitId: string
 ): Promise<string> {
 	const residentId = await residentIdOf(transaction, actorUserId);
-	const stays = await occupiedUnitsForUser(transaction, clock, actorUserId);
-	const occupies = stays.some((stay) => stay.isRunning && stay.unitId === unitId);
-	if (!residentId || !occupies) {
+	const view = await residentViewFor(transaction, clock, actorUserId);
+	if (!residentId || !occupiesToday(view, unitId)) {
 		throw new PermissionDeniedError(actorUserId, RECORD_FOR_OCCUPIED_UNIT);
 	}
 	return residentId;
@@ -655,43 +662,37 @@ async function residentIdOf(
 }
 
 /**
- * Every Tagihan of these units that `viewerUserId` may see and could still pay, oldest period first.
+ * Every Tagihan of `houses` that the person `view` describes may see and could still pay (not
+ * cancelled, not paid in full), oldest period first, each with what it still owes.
  *
- * ## The occupancy range is a privacy rule, and this is the second screen that has to obey it
+ * ## The occupancy range is a privacy rule, and this screen obeys it from the shared module
  *
  * `docs/spec-iuran-v1.md` says "Warga hanya melihat tagihan yang terbit dalam rentang masa huninya",
  * and a Tagihan carries the period and the amount a *previous* occupant owed. Filtering only on
  * `unitId` would hand the payment form that row and disclose all three facts about somebody else's
- * debt, so this screen applies the same rule the Tagihan list applies, from the same contract rather
- * than from a second derivation of it:
+ * debt (the leak `89948c3` closed). Each row is kept only when `isInvoiceVisible` in
+ * `../occupancy/resident-view.ts` says so, the same call "Tagihan saya" makes, so the two screens
+ * cannot come to different conclusions about one row. That module reads no role, so holding
+ * `ACTION.manageOccupancies` does not widen this list.
  *
- * - `unitVisibilityFor` in `src/lib/server/services/occupancy/visibility.ts` answers what days this
- *   viewer may see of one house, and `isVisibleOn` decides one day against that answer. Its two
- *   cases are the whole vocabulary: `{ kind: 'all' }` for a caller holding `ACTION.manageOccupancies`
- *   and otherwise the days their own stays cover — where an **empty `ranges` means "sees nothing"**
- *   and never "no restriction". `isVisibleOn` answers `false` for every day of an empty `ranges`, so
- *   the safe reading is the one that falls out of the contract; a unit with no visibility answer at
- *   all is skipped for the same reason.
- * - `firstDayOfPeriod` in `./invoice.ts` is the day a Tagihan is issued on, and it is a pure function
- *   of the period. The Tagihan list compares the same day against the same ranges, so the two screens
- *   cannot come to different conclusions about one row.
+ * ## Paid is not offered, and the rule is not restated here
  *
- * The visibility question is asked once per house rather than once per Tagihan, and there is one
- * house in the ordinary case.
+ * The rows go through `invoiceStandings` with `visibleTo: view`, which applies that visibility rule
+ * itself and answers the allocated amount, the remainder and the status of what is left. A Tagihan
+ * whose status is `INVOICE_STATUS.paid` is dropped; every other one is offered with its
+ * `remainingAmount`. Before this a paid Tagihan looked like an unpaid one in the picker, and ticking
+ * it filled in the whole amount for a debt the resident no longer had.
  */
 async function payableInvoicesOf(
 	db: DatabaseWriter,
-	viewerUserId: string,
-	unitIds: readonly string[]
+	clock: Clock,
+	view: ResidentView,
+	houses: readonly { readonly unitId: string }[]
 ): Promise<ReadonlyMap<string, readonly PayableInvoice[]>> {
 	const byUnit = new Map<string, PayableInvoice[]>();
+	const unitIds = houses.map((house) => house.unitId);
 	if (unitIds.length === 0) {
 		return byUnit;
-	}
-
-	const visibilities = new Map<string, UnitVisibility>();
-	for (const unitId of unitIds) {
-		visibilities.set(unitId, await unitVisibilityFor(db, { viewerUserId, unitId }));
 	}
 
 	const rows = await db
@@ -700,25 +701,33 @@ async function payableInvoicesOf(
 			invoiceId: invoices.id,
 			period: invoices.period,
 			amount: invoices.amount,
-			dueDate: invoices.dueDate
+			dueDate: invoices.dueDate,
+			voidedAt: invoices.voidedAt
 		})
 		.from(invoices)
-		// A cancelled Tagihan is not an obligation any more, so it is not something to pay. This is
-		// not a paid-or-unpaid calculation — that one is #27's, and there is none here.
+		// A cancelled Tagihan is not an obligation any more, so it is not something to pay. Leaving it
+		// out here, rather than reading `void` back from `invoiceStandings`, keeps it out of the sum.
 		.where(and(inArray(invoices.unitId, unitIds), isNull(invoices.voidedAt)))
 		.orderBy(asc(invoices.period));
 
-	for (const { unitId, ...invoice } of rows) {
-		const visibility = visibilities.get(unitId);
-		if (!visibility || !isVisibleOn(visibility, firstDayOfPeriod(invoice.period))) {
+	const standings = await invoiceStandings(db, clock, rows, { visibleTo: view });
+	for (const standing of standings) {
+		if (standing.status === INVOICE_STATUS.paid) {
 			continue;
 		}
-		const existing = byUnit.get(unitId);
+		const invoice: PayableInvoice = {
+			invoiceId: standing.invoiceId,
+			period: standing.period,
+			amount: standing.amount,
+			remainingAmount: standing.remainingAmount,
+			dueDate: standing.dueDate
+		};
+		const existing = byUnit.get(standing.unitId);
 		if (existing) {
 			existing.push(invoice);
 			continue;
 		}
-		byUnit.set(unitId, [invoice]);
+		byUnit.set(standing.unitId, [invoice]);
 	}
 	return byUnit;
 }
@@ -746,11 +755,11 @@ function assertPositiveAmount(amount: Rupiah): void {
  * back as a driver error nobody named. The same check `recordCashTransaction` makes, copied rather
  * than shared because that module's exported surface is pinned by a test.
  *
- * **Tomorrow is allowed, today is not the bound.** `currentDay` reads the clock as a *UTC* day and
- * says why; the complex is at UTC+7, so between midnight and 07:00 local the UTC day is still
- * yesterday. Refusing anything after the UTC day would tell a resident transferring money at one in
- * the morning that the day they were standing in had not happened. One day of slack costs nothing —
- * the far side of this rule is a typo like `2126-03-04`, not a payment dated a few hours early.
+ * **Tomorrow is allowed, today is not the bound.** `currentDay` reads the clock as a WIB day
+ * (`Asia/Jakarta`, through `civilDayOf` in `src/lib/time.ts`); it used to read a UTC day, which was
+ * still yesterday between midnight and 07:00 local. The one day of slack stays regardless: it costs
+ * nothing, because the far side of this rule is a typo like `2126-03-04`, not a payment dated a few
+ * hours early, and it keeps a transfer made just after local midnight from being refused.
  */
 function assertReceiptDay(day: string, clock: Clock): void {
 	const parsed = new Date(`${day}T00:00:00.000Z`);

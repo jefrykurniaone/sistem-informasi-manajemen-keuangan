@@ -16,20 +16,20 @@ import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import { FakeClock } from '#lib/server/ports/fakes.ts';
 import { openInvoicesOfUnit } from '#lib/server/services/dues/allocation.ts';
 import {
+	creditBalanceOfUnit,
+	lockUnallocatedVerifiedPayments
+} from '#lib/server/services/dues/credit-balance.ts';
+import {
 	ALLOCATION_RELEASED_ACTION,
 	AllocationNotFoundError,
 	RELEASE_RULE,
 	ReleaseRuleError,
 	releaseAllocation
-} from '#lib/server/services/dues/allocation-release.ts';
-import {
-	creditBalanceOfUnit,
-	lockUnallocatedVerifiedPayments
-} from '#lib/server/services/dues/credit-balance.ts';
+} from '#lib/server/services/dues/dues-correction.ts';
 
 /**
- * Pelepasan Alokasi — user story 22 of `docs/spec-iuran-v1.md`, and #30's second correction: the
- * row is deleted, its value is the Unit's saldo titipan again by definition, the Tagihan is open
+ * Pelepasan Alokasi — user story 22 of `docs/spec-iuran-v1.md`, and #30's second correction, held
+ * since #324 by the dues-correction module (`dues-correction.ts`): the row is deleted, its value is the Unit's saldo titipan again by definition, the Tagihan is open
  * again, and **no cash row moves**. Against a real PostgreSQL, because "the cash book did not
  * change" is a statement about committed rows.
  */
@@ -198,7 +198,7 @@ describe('releaseAllocation', () => {
 		await releaseAllocation(testDb.db, new FakeClock(START), {
 			actorId,
 			allocationId,
-			reason: RELEASE_REASON
+			reason: `  ${RELEASE_REASON}  `
 		});
 
 		const entries = await auditEntriesFor(testDb.db, allocationId);
@@ -206,10 +206,11 @@ describe('releaseAllocation', () => {
 		expect(entries[0]).toMatchObject({
 			actorId,
 			action: ALLOCATION_RELEASED_ACTION,
-			targetId: allocationId,
-			before: { paymentId, invoiceId, amount: 150_000, createdAt: START },
-			after: { unitId, reason: RELEASE_REASON }
+			targetId: allocationId
 		});
+		// Exactly the JSON #30 stored, field for field, the reason trimmed.
+		expect(entries[0].before).toEqual({ paymentId, invoiceId, amount: 150_000, createdAt: START });
+		expect(entries[0].after).toEqual({ unitId, reason: RELEASE_REASON });
 	});
 
 	it('refuses an empty reason', async () => {

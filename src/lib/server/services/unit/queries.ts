@@ -1,9 +1,10 @@
-import { and, asc, count, desc, eq, ilike, inArray, or } from 'drizzle-orm';
+import { and, asc, count, eq, ilike, inArray, or } from 'drizzle-orm';
 import type { Database } from '../../db';
 import { user } from '../../db/schema/auth';
 import { occupancies } from '../../db/schema/occupancy';
 import { residents } from '../../db/schema/resident';
 import { units, type Unit } from '../../db/schema/unit';
+import { primaryOccupantsOn } from '../occupancy';
 import { stillRunningOn } from '../occupancy/visibility';
 
 /**
@@ -126,14 +127,11 @@ export const PRIMARY_OCCUPANT_MISSING: PrimaryOccupantNeed = Object.freeze({ kin
  * unique pair on unit and resident, so one person can hold two running stays in one house, an owner
  * row beside a tenant row or a plain duplicate. Counting rows put that person on the screen twice.
  *
- * **The Penanggung Jawab is the flagged stay running today**, as ADR 0001
- * (`docs/adr/0001-penanggung-jawab-berpindah.md`) defines it. A flag on a stay that has not begun or
- * has passed is nobody's today. The Occupancy service keeps at most one flagged row among the stays
- * that have not passed, but rows written under the old date-clash model can hold two, so it is
- * picked in SQL with the same order `notifyInvoiceIssued` in `../dues/notification.ts` picks the
- * invoice email's recipient: the latest start day, then the latest recorded, then the id. The name
- * the admin screens show and the address the email goes to are therefore the same person, and only
- * that person carries `ActiveOccupant.isPrimaryOccupant`.
+ * **The Penanggung Jawab is `primaryOccupantsOn`'s answer** in `../occupancy/index.ts`, the one read
+ * for the flagged stay running today, as ADR 0001 (`docs/adr/0001-penanggung-jawab-berpindah.md`)
+ * defines it, with the one pick order for the rows the old date-clash model can leave two of. The
+ * name the admin screens show and the address the invoice email goes to are therefore the same
+ * person, and only that person carries `ActiveOccupant.isPrimaryOccupant`.
  */
 export async function summarizeActiveOccupancies(
 	db: Database,
@@ -144,7 +142,7 @@ export async function summarizeActiveOccupancies(
 		return new Map();
 	}
 
-	const [rows, primaryOccupants] = await Promise.all([
+	const [rows, primaryByUnit] = await Promise.all([
 		db
 			.select({
 				unitId: occupancies.unitId,
@@ -156,32 +154,9 @@ export async function summarizeActiveOccupancies(
 			.innerJoin(user, eq(user.id, residents.userId))
 			.where(and(inArray(occupancies.unitId, unitIds), stillRunningOn(occupancies, today)))
 			.orderBy(asc(user.name), asc(residents.id)),
-		db
-			.selectDistinctOn([occupancies.unitId], {
-				unitId: occupancies.unitId,
-				residentId: residents.id,
-				name: user.name,
-				endedOn: occupancies.endedOn
-			})
-			.from(occupancies)
-			.innerJoin(residents, eq(residents.id, occupancies.residentId))
-			.innerJoin(user, eq(user.id, residents.userId))
-			.where(
-				and(
-					inArray(occupancies.unitId, unitIds),
-					eq(occupancies.isPrimaryOccupant, true),
-					stillRunningOn(occupancies, today)
-				)
-			)
-			.orderBy(
-				occupancies.unitId,
-				desc(occupancies.startedOn),
-				desc(occupancies.createdAt),
-				desc(occupancies.id)
-			)
+		primaryOccupantsOn(db, today, unitIds)
 	]);
 
-	const primaryByUnit = new Map(primaryOccupants.map((row) => [row.unitId, row]));
 	const occupantsByUnit = new Map<string, Map<string, ActiveOccupant>>();
 	for (const row of rows) {
 		let occupants = occupantsByUnit.get(row.unitId);

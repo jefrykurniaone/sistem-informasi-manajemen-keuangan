@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { asc, eq, inArray } from 'drizzle-orm';
+import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { PermissionDeniedError } from '#lib/errors.ts';
 import { rupiah, type Rupiah } from '#lib/money.ts';
 import { auditEntriesFor } from '#lib/server/audit.ts';
+import { createConnection, readDatabaseUrl } from '#lib/server/db/index.ts';
 import { allocations } from '#lib/server/db/schema/allocation.ts';
 import { user } from '#lib/server/db/schema/auth.ts';
 import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
@@ -30,13 +31,14 @@ import {
 	REFUND_RULE,
 	RefundRuleError,
 	refundCredit
-} from '#lib/server/services/dues/credit-refund.ts';
+} from '#lib/server/services/dues/dues-correction.ts';
 import { issueInvoicesForPeriod } from '#lib/server/services/dues/issuance.ts';
 import { UnitNotFoundError } from '#lib/server/services/dues/queries.ts';
 
 /**
- * Pengembalian — user story 23 of `docs/spec-iuran-v1.md`, and #30's third correction: part or
- * all of a Unit's saldo titipan returned as money out of the kas, attributed per Pembayaran so
+ * Pengembalian — user story 23 of `docs/spec-iuran-v1.md`, and #30's third correction, held since
+ * #324 by the dues-correction module (`dues-correction.ts`): part or all of a Unit's saldo titipan
+ * returned as money out of the kas, attributed per Pembayaran so
  * that nothing can spend the returned rupiah a second time. Against a real PostgreSQL with a fake
  * clock, because every rule here is about committed rows and dated money.
  *
@@ -48,7 +50,10 @@ import { UnitNotFoundError } from '#lib/server/services/dues/queries.ts';
  *   `issueInvoicesForPeriod`.
  * - **Two spenders of one balance serialise on the payment row locks.** A refund racing a
  *   spender that already holds the locks waits, re-reads committed state, and is refused by name
- *   rather than doubled — asserted with a second connection holding an uncommitted claim.
+ *   rather than doubled — asserted with a second connection holding the payment row
+ *   `for no key update`, the refund shown waiting on it through `pg_blocking_pids` before the
+ *   holder spends the balance and commits (#329 strengthened it: the test before released the
+ *   spender right after the refund started, so it never showed the refund waiting).
  */
 
 const testDb = testDatabase();
@@ -60,6 +65,48 @@ const START = '2026-03-10T09:00:00.000Z';
 const REFUND_DAY = '2026-03-08';
 
 const REFUND_REASON = 'Masa huninya berakhir dan saldo titipannya dikembalikan.';
+
+/** How long the lock test waits for the refund to start waiting before it gives up. */
+const WAIT_TIMEOUT_MILLISECONDS = 10_000;
+
+/** How often it looks. */
+const POLL_MILLISECONDS = 20;
+
+/** A second connection into this file's schema, for holding a lock the code under test must meet. */
+async function connectToSchema() {
+	const other = createConnection(readDatabaseUrl('TEST_DATABASE_URL'), {
+		options: `-c search_path=${testDb.schemaName}`
+	});
+	const client = await other.pool.connect();
+	const [{ pid }] = (await client.query<{ pid: number }>('select pg_backend_pid() as pid')).rows;
+	return {
+		client,
+		pid,
+		release: async () => {
+			client.release();
+			await other.close();
+		}
+	};
+}
+
+/**
+ * Waits until some backend is waiting on a lock the backend `blockerPid` holds. Polled, because
+ * PostgreSQL announces no event for a statement starting to wait.
+ */
+async function waitUntilWaitingOn(blockerPid: number): Promise<void> {
+	const deadline = Date.now() + WAIT_TIMEOUT_MILLISECONDS;
+	while (Date.now() < deadline) {
+		const result = await testDb.db.execute<{ waiting: number }>(
+			sql`select count(*)::int as waiting from pg_stat_activity activity
+				where ${blockerPid}::int = any(pg_blocking_pids(activity.pid))`
+		);
+		if ((result.rows[0]?.waiting ?? 0) > 0) {
+			return;
+		}
+		await new Promise((resolve) => setTimeout(resolve, POLL_MILLISECONDS));
+	}
+	throw new Error(`No backend ever waited on backend ${blockerPid}.`);
+}
 
 /** Makes every house and every email in this file different from every other one. */
 let sequence = 0;
@@ -284,20 +331,22 @@ describe('refundCredit', () => {
 		expect(entries[0]).toMatchObject({
 			actorId,
 			action: CREDIT_REFUNDED_ACTION,
-			targetId: unit.id,
-			after: {
-				unitId: unit.id,
-				amount: 150_000,
-				occurredOn: REFUND_DAY,
-				reason: REFUND_REASON,
-				refunds: [
-					{
-						paymentId,
-						cashTransactionId: outcome.portions[0].cashTransaction.id,
-						amount: 150_000
-					}
-				]
-			}
+			targetId: unit.id
+		});
+		// Exactly the JSON #30 stored, field for field: no `before`, and every portion in `after`.
+		expect(entries[0].before).toBeNull();
+		expect(entries[0].after).toEqual({
+			unitId: unit.id,
+			amount: 150_000,
+			occurredOn: REFUND_DAY,
+			reason: REFUND_REASON,
+			refunds: [
+				{
+					paymentId,
+					cashTransactionId: outcome.portions[0].cashTransaction.id,
+					amount: 150_000
+				}
+			]
 		});
 
 		// One decision, one row: the cash rows carry no audit entries of their own.
@@ -520,53 +569,50 @@ describe('refundCredit', () => {
 		expect(await creditBalanceOfUnit(testDb.db, unit.id)).toBe(100_000);
 	});
 
-	it('serialises against a concurrent spender holding the payment locks, and is refused, never doubled', async () => {
-		// The interleaving the module's doc comment promises: a spender — the shape of issuance's
-		// credit application — takes the same `for update` locks first and spends the whole balance
-		// without committing. The refund, started only after those locks are held, must wait, read
-		// the winner's committed rows in fresh statements, and refuse by name.
+	it('waits for a concurrent spender holding the payment lock, then is refused, never doubled', async () => {
+		// The interleaving the module's doc comment promises. A second connection takes the payment
+		// row `for no key update`, which conflicts with the refund's `for update` on it. The refund is
+		// shown to be waiting there through `pg_blocking_pids` and to have written nothing. Only then
+		// does the holder spend the whole balance (an Alokasi of the full amount, the shape of
+		// issuance's credit application) and commit. The refund must read that committed row in
+		// fresh statements after its lock and refuse by name.
 		const actorId = await insertSuperuser('Pengurus Pengembalian Balapan');
 		const unit = await insertUnit();
 		const paymentId = await insertVerifiedPayment(unit.id, rupiah(100_000));
 		const invoiceId = await insertInvoice(unit.id, rupiah(100_000), '2026-03');
 
-		let spenderHoldsLocks!: () => void;
-		const locksHeld = new Promise<void>((resolve) => {
-			spenderHoldsLocks = resolve;
-		});
-		let spenderMayCommit!: () => void;
-		const mayCommit = new Promise<void>((resolve) => {
-			spenderMayCommit = resolve;
-		});
+		const holder = await connectToSchema();
+		try {
+			await holder.client.query('begin');
+			await holder.client.query('select id from payments where id = $1 for no key update', [
+				paymentId
+			]);
 
-		const spender = testDb.db.transaction(async (transaction) => {
-			const remainders = await lockUnallocatedVerifiedPayments(transaction, unit.id);
-			expect(remainders).toEqual([expect.objectContaining({ paymentId, remainder: 100_000 })]);
-			spenderHoldsLocks();
-			await mayCommit;
-			await transaction.insert(allocations).values({
-				paymentId,
-				invoiceId,
+			const refund = refundCredit(testDb.db, new FakeClock(START), {
+				actorId,
+				unitId: unit.id,
 				amount: rupiah(100_000),
-				createdAt: new Date(START)
-			});
-		});
+				occurredOn: REFUND_DAY,
+				reason: REFUND_REASON
+			}).catch((error: unknown) => error);
+			await waitUntilWaitingOn(holder.pid);
 
-		await locksHeld;
-		// The refund starts while the locks are held, so its own locking read queues behind them.
-		const refund = refundCredit(testDb.db, new FakeClock(START), {
-			actorId,
-			unitId: unit.id,
-			amount: rupiah(100_000),
-			occurredOn: REFUND_DAY,
-			reason: REFUND_REASON
-		}).catch((error: unknown) => error);
-		spenderMayCommit();
-		await spender;
+			// Waiting, so nothing is written yet.
+			expect(await refundRowsOf(unit.id)).toHaveLength(0);
 
-		const refusal = await refund;
-		expect(refusal).toBeInstanceOf(RefundRuleError);
-		expect(refusal).toMatchObject({ rule: REFUND_RULE.amountAboveBalance });
+			await holder.client.query(
+				`insert into allocations (id, payment_id, invoice_id, amount, created_at)
+				values ($1, $2, $3, 100000, $4)`,
+				[randomUUID(), paymentId, invoiceId, START]
+			);
+			await holder.client.query('commit');
+
+			const refusal = await refund;
+			expect(refusal).toBeInstanceOf(RefundRuleError);
+			expect(refusal).toMatchObject({ rule: REFUND_RULE.amountAboveBalance });
+		} finally {
+			await holder.release();
+		}
 
 		// The money was spent exactly once: the allocation stands, no refund row exists, and the
 		// payment is not overspent.

@@ -7,8 +7,13 @@ import {
 	MAXIMUM_PASSWORD_LENGTH,
 	MINIMUM_PASSWORD_LENGTH
 } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	type FormMessages
+} from '#lib/server/route-action.ts';
 import {
 	acceptInvitation,
 	inspectInvitation,
@@ -37,15 +42,37 @@ import type { Actions, PageServerLoad } from './$types';
  * link: the person just typed the very password being checked, so this is the same act as signing
  * in on the login page — decision 6 in `#lib/server/auth.ts` (a link must not mint a session) is not
  * bent here.
+ *
+ * A refused acceptance goes through `#lib/server/route-action.ts` (#318), but without its session
+ * guard: there is no session here to require.
  */
 
 /** Where a freshly accepted invitation lands: the house the invitation was about. */
 const MY_UNIT = '/my-unit';
 
+/**
+ * The three token refusals and the taken-address one, each as its own Indonesian sentence.
+ *
+ * `forbidden` and `fallback` have to name a sentence, and this page has none of its own for either:
+ * nothing here calls `requirePermission`, and every refusal `acceptInvitation` makes is named below.
+ * Both say the link was not recognised, the safe answer to a token this page cannot redeem.
+ */
+const FORM = {
+	forbidden: m.invitationAccept_unknown,
+	fallback: m.invitationAccept_unknown,
+	refusals: [
+		refusal(InvitationTokenUnknownError, m.invitationAccept_unknown),
+		refusal(InvitationUsedError, m.invitationAccept_used),
+		refusal(InvitationExpiredError, m.invitationAccept_expired),
+		refusal(InvitationEmailAlreadyRegisteredError, m.invitationAccept_registered)
+	]
+} satisfies FormMessages;
+
 export const load: PageServerLoad = async ({ params }) => {
+	const { db, clock } = productionDependencies();
 	return {
 		token: params.token,
-		inspection: await inspectInvitation(database(), systemClock, params.token),
+		inspection: await inspectInvitation(db, clock, params.token),
 		minimumPasswordLength: MINIMUM_PASSWORD_LENGTH
 	};
 };
@@ -54,7 +81,7 @@ export const actions: Actions = {
 	default: async ({ request }) => {
 		const form = await request.formData();
 		const token = String(form.get('token') ?? '');
-		const name = String(form.get('name') ?? '').trim();
+		const name = readText(form, 'name');
 		const password = String(form.get('password') ?? '');
 		const passwordAgain = String(form.get('passwordAgain') ?? '');
 
@@ -83,8 +110,9 @@ export const actions: Actions = {
 		}
 
 		let email: string;
+		const { db, clock } = productionDependencies();
 		try {
-			const accepted = await acceptInvitation(database(), systemClock, {
+			const accepted = await acceptInvitation(db, clock, {
 				token,
 				name,
 				password,
@@ -92,7 +120,7 @@ export const actions: Actions = {
 			});
 			email = accepted.email;
 		} catch (caught) {
-			return failAsRejectedForm(caught);
+			return failOrThrow(caught, FORM);
 		}
 
 		try {
@@ -109,20 +137,3 @@ export const actions: Actions = {
 		redirect(303, MY_UNIT);
 	}
 };
-
-/** The three token refusals and the taken-address one, each as its own Indonesian sentence. */
-function failAsRejectedForm(caught: unknown) {
-	if (caught instanceof InvitationTokenUnknownError) {
-		return fail(400, { message: m.invitationAccept_unknown() });
-	}
-	if (caught instanceof InvitationUsedError) {
-		return fail(400, { message: m.invitationAccept_used() });
-	}
-	if (caught instanceof InvitationExpiredError) {
-		return fail(400, { message: m.invitationAccept_expired() });
-	}
-	if (caught instanceof InvitationEmailAlreadyRegisteredError) {
-		return fail(400, { message: m.invitationAccept_registered() });
-	}
-	throw caught;
-}

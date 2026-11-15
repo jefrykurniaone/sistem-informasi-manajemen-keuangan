@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readOrigin } from '#lib/server/auth.ts';
 import { user } from '#lib/server/db/schema/auth.ts';
 import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
@@ -11,6 +11,7 @@ import {
 	type Complaint
 } from '#lib/server/db/schema/complaint.ts';
 import { emailQueue } from '#lib/server/db/schema/email.ts';
+import { AnnounceError } from '#lib/server/email/announce.ts';
 import { residents } from '#lib/server/db/schema/resident.ts';
 import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import {
@@ -40,6 +41,7 @@ import {
 	setSubscriptionPreference
 } from '#lib/server/services/subscription/index.ts';
 import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
+import { verifyUnsubscribeToken } from '#lib/server/services/subscription/unsubscribe-token.ts';
 
 /**
  * `./notification.ts` — the two emails #46 adds — and the templates they render through.
@@ -182,10 +184,12 @@ async function report(overrides: Partial<CreateComplaintRequest> & { readonly ac
 }
 
 /**
- * A clock that works `failAt - 1` times and then throws — the same move
- * `tests/unit/payment-verification.test.ts`'s `FailingClock` makes, used here to prove that a
- * failure inside `enqueueEmail` never reaches the caller of `notifyNewComplaint` or
- * `notifyComplaintStatusChanged`.
+ * A clock that works `failAt - 1` times and then throws on every read after it. It does not throw
+ * just once, because `announce` tries every recipient and a single failed read would spare all but
+ * the first. The same move `tests/unit/payment-verification.test.ts`'s `FailingClock` makes, used
+ * here to prove that a failure inside `enqueueEmail` surfaces from `notifyNewComplaint` and
+ * `notifyComplaintStatusChanged` as an `AnnounceError`, which `createComplaint` and
+ * `changeComplaintStatus` then contain.
  */
 class FailingClock implements Clock {
 	#calls = 0;
@@ -197,7 +201,7 @@ class FailingClock implements Clock {
 
 	now(): Date {
 		this.#calls += 1;
-		if (this.#calls === this.#failAt) {
+		if (this.#calls >= this.#failAt) {
 			throw new Error('Injected clock failure, on purpose, from the failure-path test.');
 		}
 		return new Date(START);
@@ -240,7 +244,7 @@ describe('notifyNewComplaint', () => {
 		expect(await emailsTo(await emailOf(adminId), NEW_COMPLAINT_KIND)).toEqual([]);
 	});
 
-	it('resolves instead of rejecting when enqueuing fails, and queues nothing', async () => {
+	it('rejects when enqueuing fails, for createComplaint to contain, and queues nothing', async () => {
 		const clock = new FakeClock(START);
 		const adminId = await insertAdmin(unique('Pengurus Gagal'));
 		await subscribe(adminId, clock, SUBSCRIPTION_KIND.newComplaint, true);
@@ -249,7 +253,7 @@ describe('notifyNewComplaint', () => {
 
 		await expect(
 			notifyNewComplaint(testDb.db, new FailingClock(1), complaint)
-		).resolves.toBeUndefined();
+		).rejects.toBeInstanceOf(AnnounceError);
 		expect(await emailsTo(await emailOf(adminId), NEW_COMPLAINT_KIND)).toEqual([]);
 	});
 });
@@ -296,13 +300,13 @@ describe('notifyComplaintStatusChanged', () => {
 		});
 	});
 
-	it('resolves instead of rejecting when enqueuing fails, and queues nothing', async () => {
+	it('rejects when enqueuing fails, for changeComplaintStatus to contain, and queues nothing', async () => {
 		const reporterUserId = await insertAccount(unique('Warga Gagal Kirim'));
 		const complaint = complaintFixture({ reporterId: await residentIdOf(reporterUserId) });
 
 		await expect(
 			notifyComplaintStatusChanged(testDb.db, new FailingClock(1), complaint, null)
-		).resolves.toBeUndefined();
+		).rejects.toBeInstanceOf(AnnounceError);
 		expect(await emailsTo(await emailOf(reporterUserId), COMPLAINT_STATUS_CHANGED_KIND)).toEqual(
 			[]
 		);
@@ -346,6 +350,76 @@ describe('changeComplaintStatus queues own-complaint-status-changed to the repor
 			status: COMPLAINT_STATUS.reviewing,
 			note: 'Sedang ditinjau.'
 		});
+	});
+});
+
+describe('a failure to queue never fails a Keluhan that is saved', () => {
+	it('lets createComplaint report the saved Keluhan when its notifier throws, and logs it', async () => {
+		const reporterUserId = await insertAccount(unique('Warga Pelapor Notifikasi Gagal'));
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+		try {
+			const created = await createComplaint(
+				testDb.db,
+				new FakeClock(START),
+				new FakeFileStore(new FakeClock(START)),
+				{
+					actorId: reporterUserId,
+					title: unique('Pos ronda gagal'),
+					category: 'keamanan',
+					description: 'Uraian yang tidak boleh pernah masuk email.',
+					visibility: COMPLAINT_VISIBILITY.private,
+					attachments: []
+				},
+				{
+					notify: async () => {
+						throw new Error('the queue is on fire');
+					}
+				}
+			);
+
+			const [row] = await testDb.db.select().from(complaints).where(eq(complaints.id, created.id));
+			expect(row.id).toBe(created.id);
+			expect(logged).toHaveBeenCalledWith(
+				expect.stringContaining(NEW_COMPLAINT_KIND),
+				expect.any(Error)
+			);
+		} finally {
+			logged.mockRestore();
+		}
+	});
+
+	it('lets changeComplaintStatus report the move when its notifier throws, and logs it', async () => {
+		const reporterUserId = await insertAccount(unique('Warga Diproses Gagal'));
+		const adminUserId = await insertAdmin(unique('Pengurus Proses Gagal'));
+		const complaint = await insertComplaintRow(reporterUserId);
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+		try {
+			const moved = await changeComplaintStatus(
+				testDb.db,
+				new FakeClock(START),
+				{
+					actorId: adminUserId,
+					complaintId: complaint.id,
+					to: COMPLAINT_STATUS.reviewing,
+					note: 'Sedang ditinjau.'
+				},
+				{
+					notify: async () => {
+						throw new Error('the queue is on fire');
+					}
+				}
+			);
+
+			expect(moved.status).toBe(COMPLAINT_STATUS.reviewing);
+			expect(logged).toHaveBeenCalledWith(
+				expect.stringContaining(COMPLAINT_STATUS_CHANGED_KIND),
+				expect.any(Error)
+			);
+		} finally {
+			logged.mockRestore();
+		}
 	});
 });
 
@@ -425,6 +499,61 @@ describe('newComplaintTemplate', () => {
 		);
 
 		expect(rendered.subject).toBe('New complaint: Blocked drain');
+	});
+
+	it('renders the unsubscribe link the queued row carries, a token that switches off new-complaint for that admin', async () => {
+		const clock = new FakeClock(START);
+		const adminId = await insertAdmin(unique('Pengurus Tautan Berhenti'));
+		await subscribe(adminId, clock, SUBSCRIPTION_KIND.newComplaint, true);
+		const reporterId = await insertAccount(unique('Pelapor Tautan Berhenti'));
+		const complaint = complaintFixture({ reporterId: await residentIdOf(reporterId) });
+
+		await notifyNewComplaint(testDb.db, clock, complaint);
+
+		const [row] = await emailsTo(await emailOf(adminId), NEW_COMPLAINT_KIND);
+		const rendered = newComplaintTemplate(row.payload);
+		const prefix = `${readOrigin()}/unsubscribe/`;
+		const link = rendered.text.split('\n').find((line) => line.startsWith(prefix));
+		if (!link) {
+			throw new Error('Expected the rendered text to carry an unsubscribe link, and found none.');
+		}
+		expect(verifyUnsubscribeToken(link.slice(prefix.length))).toEqual({
+			valid: true,
+			residentId: await residentIdOf(adminId),
+			kind: SUBSCRIPTION_KIND.newComplaint
+		});
+		expect(rendered.text).toContain('Berhenti berlangganan');
+	});
+
+	it('renders the unsubscribe link in the payload locale', () => {
+		const rendered = newComplaintTemplate({
+			...newComplaintPayload({ title: 't', category: 'c', url: 'u', locale: 'en' }),
+			unsubscribeUrl: 'https://komplek.local/unsubscribe/abc.def'
+		});
+
+		expect(rendered.text).toContain('Unsubscribe here:');
+		expect(rendered.text).toContain('https://komplek.local/unsubscribe/abc.def');
+	});
+
+	it('still renders a row queued before the link existed, without one', () => {
+		const rendered = newComplaintTemplate(
+			newComplaintPayload({
+				title: 't',
+				category: 'c',
+				url: 'https://komplek.local/admin/complaints/1',
+				locale: 'id'
+			})
+		);
+
+		expect(rendered.text).toContain('https://komplek.local/admin/complaints/1');
+		expect(rendered.text).not.toContain('/unsubscribe/');
+		expect(rendered.text).not.toContain('Berhenti berlangganan');
+	});
+
+	it('throws TypeError when unsubscribeUrl is present but not a string', () => {
+		const payload = { title: 't', category: 'c', url: 'u', locale: 'id', unsubscribeUrl: 1 };
+
+		expect(() => newComplaintTemplate(payload)).toThrow(TypeError);
 	});
 
 	it.each([

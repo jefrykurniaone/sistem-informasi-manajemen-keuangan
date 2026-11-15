@@ -1,10 +1,18 @@
-import { error, fail, redirect, type ActionFailure } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { formatRupiah, parseRupiah, type Rupiah } from '#lib/money.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import { formatRupiah, type Rupiah } from '#lib/money.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readRupiah,
+	readText,
+	refusal,
+	requireUser,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages,
+	type Refusal
+} from '#lib/server/route-action.ts';
 import {
 	createDuesRate,
 	deleteDuesRate,
@@ -18,42 +26,86 @@ import type { Actions, PageServerLoad } from './$types';
 
 /**
  * The superuser screen for the Tarif: the whole history, and the forms that set, change and remove
- * one. Follows the shape `src/routes/(app)/admin/units/+page.server.ts` settled — nobody who is not
- * signed in reaches the service layer, `PermissionDeniedError` becomes `error(403, …)` here and
- * never in the service, and every rule the service refuses comes back as `fail(400, …)` with a
- * message the superuser can read.
+ * one. Follows the shape `src/lib/server/route-action.ts` settled (#318) — nobody who is not signed
+ * in reaches the service layer, `PermissionDeniedError` becomes `error(403, …)` here and never in
+ * the service, and every rule the service refuses comes back as `fail(400, …)` with a message the
+ * superuser can read. A rule this screen does not name is the invalid-form sentence rather than a
+ * 500.
+ *
+ * Every refusal here is something the superuser was entitled to try and the rules said no to, which
+ * is a `fail(400, …)` rather than a 403 — the same split `LastSuperuserError` records in
+ * `src/lib/errors.ts`. A `TypeError` from the service's own input checks is named too, and reads as
+ * the invalid-form sentence.
  *
  * This route decides nothing about rates. Which one is in force, which one may still be changed, and
  * what "already used to bill" means are all answered in `#lib/server/services/dues/rate.ts` and travel
  * here as data.
  */
 
-export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+/** The sentences the page says when it refuses a request outright. */
+const PAGE = { forbidden: m.adminDuesRates_forbidden } satisfies PageMessages;
 
+/** The refusals every action shares, after whichever `DuesRateInUseError` wording it picked. */
+const SHARED_REFUSALS = [
+	refusal(DuesRateConflictError, ({ error }) =>
+		m.adminDuesRates_conflict({ date: error.effectiveFrom })
+	),
+	refusal(DuesRateNotFoundError, m.adminDuesRates_notFound),
+	refusal(TypeError, m.adminDuesRates_invalidForm)
+];
+
+/** What `update` and `delete` say: a rate in use there is the rate being changed. */
+const RATE_FORM = {
+	...PAGE,
+	fallback: m.adminDuesRates_invalidForm,
+	refusals: [
+		refusal(DuesRateInUseError, ({ error }) =>
+			m.adminDuesRates_inUse({ period: error.usedSincePeriod })
+		),
+		...SHARED_REFUSALS
+	]
+} satisfies FormMessages;
+
+/**
+ * What `create` says. Refused here, a rate in use is never the rate being written — it is the
+ * existing one whose already-billed Periode this new rate would take over, so it needs its own
+ * wording, which names the day the new rate was asked to start.
+ */
+function createForm(effectiveFrom: string): FormMessages {
+	const wouldClaimBilled: Refusal = refusal(DuesRateInUseError, ({ error }) =>
+		m.adminDuesRates_wouldClaimBilled({ date: effectiveFrom, period: error.usedSincePeriod })
+	);
+	return {
+		...PAGE,
+		fallback: m.adminDuesRates_invalidForm,
+		refusals: [wouldClaimBilled, ...SHARED_REFUSALS]
+	};
+}
+
+export const load: PageServerLoad = async ({ locals }) => {
+	const user = requireUser(locals);
+
+	const { db, clock } = productionDependencies();
 	try {
-		return await listDuesRates(database(), systemClock, locals.user.id);
+		return await listDuesRates(db, clock, user.id);
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	create: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const input = readRateInput(await request.formData());
 		if (!input) {
 			return fail(400, { message: m.adminDuesRates_invalidForm() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			const created = await createDuesRate(database(), systemClock, {
-				actorId: locals.user.id,
+			const created = await createDuesRate(db, clock, {
+				actorId: user.id,
 				amount: input.amount,
 				effectiveFrom: input.effectiveFrom
 			});
@@ -64,35 +116,24 @@ export const actions: Actions = {
 				})
 			};
 		} catch (caught) {
-			// Refused here, a rate in use is never the rate being written — it is the existing one whose
-			// already-billed Periode this new rate would take over, so it needs its own wording.
-			if (caught instanceof DuesRateInUseError) {
-				return fail(400, {
-					message: m.adminDuesRates_wouldClaimBilled({
-						date: input.effectiveFrom,
-						period: caught.usedSincePeriod
-					})
-				});
-			}
-			return failFromServiceError(caught);
+			return failOrThrow(caught, createForm(input.effectiveFrom));
 		}
 	},
 
 	update: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const duesRateId = String(form.get('duesRateId') ?? '').trim();
+		const duesRateId = readText(form, 'duesRateId');
 		const input = readRateInput(form);
 		if (!input || duesRateId === '') {
 			return fail(400, { message: m.adminDuesRates_invalidForm() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			const updated = await updateDuesRate(database(), systemClock, {
-				actorId: locals.user.id,
+			const updated = await updateDuesRate(db, clock, {
+				actorId: user.id,
 				duesRateId,
 				amount: input.amount,
 				effectiveFrom: input.effectiveFrom
@@ -104,29 +145,28 @@ export const actions: Actions = {
 				})
 			};
 		} catch (caught) {
-			return failFromServiceError(caught);
+			return failOrThrow(caught, RATE_FORM);
 		}
 	},
 
 	delete: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const duesRateId = String(form.get('duesRateId') ?? '').trim();
+		const duesRateId = readText(form, 'duesRateId');
 		if (duesRateId === '') {
 			return fail(400, { message: m.adminDuesRates_invalidForm() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			const removed = await deleteDuesRate(database(), systemClock, {
-				actorId: locals.user.id,
+			const removed = await deleteDuesRate(db, clock, {
+				actorId: user.id,
 				duesRateId
 			});
 			return { message: m.adminDuesRates_deleteSuccess({ date: removed.effectiveFrom }) };
 		} catch (caught) {
-			return failFromServiceError(caught);
+			return failOrThrow(caught, RATE_FORM);
 		}
 	}
 };
@@ -141,65 +181,16 @@ interface RateInput {
  * The amount and the start date off a submitted form, or `undefined` when either is missing or not a
  * shape the domain accepts.
  *
- * `parseRupiah` is the only way a form value becomes money — it refuses fractions rather than
- * rounding them, which is why its `TypeError` is caught here and reported as an invalid form instead
- * of reaching the service. A negative amount parses fine and is refused here for the same reason: it
- * is a typo in a form, not an exceptional condition.
+ * `readRupiah` is the only way a form value becomes money — it refuses fractions rather than
+ * rounding them, and an empty or malformed amount comes back `undefined`, reported as an invalid
+ * form instead of reaching the service. A negative amount parses fine and is refused here for the
+ * same reason: it is a typo in a form, not an exceptional condition.
  */
 function readRateInput(form: FormData): RateInput | undefined {
-	const effectiveFrom = String(form.get('effectiveFrom') ?? '').trim();
-	const rawAmount = String(form.get('amount') ?? '').trim();
-	if (effectiveFrom === '' || rawAmount === '') {
-		return undefined;
-	}
-
-	let amount: Rupiah;
-	try {
-		amount = parseRupiah(rawAmount);
-	} catch {
-		return undefined;
-	}
-
-	if (amount < 0) {
+	const effectiveFrom = readText(form, 'effectiveFrom');
+	const amount = readRupiah(form, 'amount');
+	if (effectiveFrom === '' || amount === undefined || amount < 0) {
 		return undefined;
 	}
 	return { amount, effectiveFrom };
-}
-
-/**
- * Turns a refusal from the rate service into a rejected submission, or rethrows whatever else it
- * was.
- *
- * Every case here is something the superuser was entitled to try and the rules said no to, which is
- * a `fail(400, …)` rather than a 403 — the same split `LastSuperuserError` records in
- * `src/lib/errors.ts`.
- */
-function failFromServiceError(caught: unknown): ActionFailure<{ message: string }> {
-	if (caught instanceof DuesRateConflictError) {
-		return fail(400, { message: m.adminDuesRates_conflict({ date: caught.effectiveFrom }) });
-	}
-	if (caught instanceof DuesRateInUseError) {
-		return fail(400, { message: m.adminDuesRates_inUse({ period: caught.usedSincePeriod }) });
-	}
-	if (caught instanceof DuesRateNotFoundError) {
-		return fail(400, { message: m.adminDuesRates_notFound() });
-	}
-	if (caught instanceof TypeError) {
-		return fail(400, { message: m.adminDuesRates_invalidForm() });
-	}
-	throwAsRouteError(caught);
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- *
- * Always throws — the return type is `never` so that this can sit in a `catch` block without
- * widening the type SvelteKit infers for what an action or a load function returns, exactly as the
- * unit screen's copy of this helper explains.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminDuesRates_forbidden());
-	}
-	throw caught;
 }

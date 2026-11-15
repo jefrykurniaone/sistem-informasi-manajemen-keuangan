@@ -9,7 +9,7 @@
 	 *
 	 * Unlike the void and release dialogs, it names no row: the Unit comes from the route, and the
 	 * amount, day and reason are the superuser's to type —
-	 * `src/lib/server/services/dues/credit-refund.ts` decides which Pembayaran the money comes out
+	 * `refundCredit` in `src/lib/server/services/dues/dues-correction.ts` decides which Pembayaran the money comes out
 	 * of, oldest first, under its own locks. The balance shown is the page's number at render time;
 	 * a refund above whatever the balance really is at commit time is refused by name, so this
 	 * dialog needs no client-side ceiling to be correct. A native `<dialog>` opened with

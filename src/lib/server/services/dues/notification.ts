@@ -1,13 +1,11 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
-import type { Rupiah } from '#lib/money.ts';
-import type { DatabaseWriter } from '../../authz';
-import { user } from '../../db/schema/auth';
+import { eq, inArray } from 'drizzle-orm';
+import { rupiah, type Rupiah } from '#lib/money.ts';
+import type { Database } from '../../db';
 import type { Allocation } from '../../db/schema/allocation';
 import { invoices } from '../../db/schema/invoice';
-import { occupancies } from '../../db/schema/occupancy';
 import type { Payment } from '../../db/schema/payment';
 import { residents } from '../../db/schema/resident';
-import { enqueueEmail } from '../../email/queue';
+import { announce, type AnnounceOutcome } from '../../email/announce';
 import { INVOICE_ISSUED_KIND, invoiceIssuedPayload } from '../../email/templates/invoice-issued';
 import {
 	PAYMENT_REJECTED_KIND,
@@ -19,40 +17,44 @@ import {
 	type PaymentVerifiedSettlement
 } from '../../email/templates/payment-verified';
 import type { Clock } from '../../ports/clock';
-import { currentDay, stillRunningOn } from '../occupancy/visibility';
+import { primaryOccupantsOn } from '../occupancy';
+import { isInvoiceVisible, residentViewFor, type ResidentView } from '../occupancy/resident-view';
+import { currentDay } from '../occupancy/visibility';
 
 /**
- * Where the three transactional emails ticket #31 adds get queued from: `invoice-issued` and
- * `payment-verified` — both mandatory `SUBSCRIPTION_KIND`s — and `payment-rejected`, transactional
- * like `registration-approved`. `./issuance.ts` and `./verification.ts` are this module's only
- * callers, each after its own writing transaction has already committed — see the doc comment on
- * `../../email/queue.ts` for why enqueueing never happens inside the transaction that causes it.
+ * What the three transactional emails ticket #31 added say and who they are addressed to:
+ * `invoice-issued` and `payment-verified` — both mandatory `SUBSCRIPTION_KIND`s — and
+ * `payment-rejected`, which no Langganan governs, so it is sent like a mandatory kind.
+ * `./issuance.ts` and `./verification.ts` are this module's only callers, each after its own writing
+ * transaction has already committed — see the doc comment on `../../email/queue.ts` for why
+ * enqueueing never happens inside the transaction that causes it.
+ *
+ * This module only names the recipient and builds the payload. `../../email/announce.ts` does the
+ * rest: the Langganan (none applies to these three), the one queue row per resident, the address
+ * lookup and the language.
  *
  * ## Recipients, and why each is found the way it is
  *
- * - **`invoice-issued`** goes to the Unit's Penanggung Jawab: the flagged Masa Huni that is running
- *   today, `occupancies.isPrimaryOccupant` together with `stillRunningOn` from
- *   `../occupancy/visibility.ts` — never a redefinition of "living here now". The flag moves between
- *   stays (`docs/adr/0001-penanggung-jawab-berpindah.md`), so a flagged stay that has not begun is
- *   not the recipient yet, and one whose last day has passed no longer is. A Unit with none is still
- *   invoiced; this module only answers whether it found somewhere to send the email, and the caller
- *   in `./issuance.ts` is the one that records the skip in `InvoiceIssuanceSummary`.
+ * - **`invoice-issued`** goes to the Unit's Penanggung Jawab today, as `primaryOccupantsOn` in
+ *   `../occupancy/index.ts` answers it — the one read, with the one pick order, every screen and
+ *   service that names the Penanggung Jawab asks. The flag moves between stays
+ *   (`docs/adr/0001-penanggung-jawab-berpindah.md`), so a flagged stay that has not begun is not the
+ *   recipient yet, and one whose last day has passed no longer is. A Unit with none is still
+ *   invoiced; `notifyInvoiceIssued` then queues nothing, and the caller in `./issuance.ts` is the
+ *   one that records the skip in `InvoiceIssuanceSummary`.
  * - **`payment-verified`** and **`payment-rejected`** both go to the Pembayaran's recorder
  *   (`payments.recordedBy`, a `residents.id` — see `src/lib/server/db/schema/payment.ts`), never to
  *   whoever verified or rejected it.
  *
- * ## A failure here must never undo, or appear to undo, a committed decision
+ * ## A failure here must never undo, or appear to undo, a committed decision, and this is not where
+ * that is kept
  *
  * By the time any function below runs, the Tagihan is issued or the Pembayaran is decided — that
- * transaction already committed. If finding a recipient or enqueueing the email then throws (a
- * transient database error, or — as `tests/unit/payment-verification.test.ts`'s own
- * failure-injecting clock proves is possible — any read of the clock), letting that exception
- * propagate out of `verifyPayment`/`rejectPayment`/`issueInvoicesForPeriod` would report the whole
- * operation as failed to a caller who would then act as though the Tagihan was never issued or the
- * Pembayaran never decided — which is exactly backwards, since the side effect that actually failed
- * is the least important part of what just happened. Every function below therefore catches its own
- * failures, logs them to the console (there is no logger in this application yet — the same honest
- * placement `describeIssuance`'s caller in `./jobs.ts` uses), and resolves rather than rejects.
+ * transaction already committed. Every function below therefore throws whatever `announce` throws,
+ * and each of its callers in `./issuance.ts` and `./verification.ts` wraps the call in
+ * `announceAfterCommit`, which logs the failure and reports the committed decision as the success it
+ * is (#309, decision 1). Keeping the rule at the call site is what makes it hold for whatever a
+ * caller substitutes for these functions as well.
  */
 
 /** One Unit whose Tagihan a run just wrote, and everything its email needs. */
@@ -66,164 +68,115 @@ export interface InvoiceIssuedNotification {
 }
 
 /**
- * Queues the `invoice-issued` email to `notification.unitId`'s active primary occupant, when it has
+ * Queues the `invoice-issued` email to `notification.unitId`'s Penanggung Jawab today, when it has
  * one.
  *
- * @returns whether an email was queued. `false` means either the Unit has no active primary
- *   occupant, or queuing failed and was logged — the caller in `./issuance.ts` treats both the same
- *   way, as a Unit to record in `InvoiceIssuanceSummary.skippedNotifications`.
+ * @param db the plain database, once the Tagihan's transaction has committed.
+ * @returns what `announce` queued: `queued` is empty for a Unit with no Penanggung Jawab today, which
+ *   the caller in `./issuance.ts` records in `InvoiceIssuanceSummary.skippedNotifications`.
+ * @throws whatever `announce` throws; the caller wraps this in `announceAfterCommit`.
  */
 export async function notifyInvoiceIssued(
-	db: DatabaseWriter,
+	db: Database,
 	clock: Clock,
 	notification: InvoiceIssuedNotification
-): Promise<boolean> {
-	let notified = false;
-	await swallowing(INVOICE_ISSUED_KIND, async () => {
-		const recipient = await activePrimaryOccupantEmail(db, clock, notification.unitId);
-		if (!recipient) {
-			return;
-		}
-		await enqueueEmail(db, clock, {
-			recipient,
-			kind: INVOICE_ISSUED_KIND,
-			payload: invoiceIssuedPayload({
+): Promise<AnnounceOutcome> {
+	return announce(db, clock, {
+		kind: INVOICE_ISSUED_KIND,
+		recipients: async (database) => {
+			const primary = await primaryOccupantsOn(database, currentDay(clock), [notification.unitId]);
+			const occupant = primary.get(notification.unitId);
+			return occupant ? [occupant.residentId] : [];
+		},
+		payload: ({ locale }) =>
+			invoiceIssuedPayload({
 				block: notification.block,
 				number: notification.number,
 				period: notification.period,
 				amount: notification.amount,
-				dueDate: notification.dueDate
+				dueDate: notification.dueDate,
+				locale
 			})
-		});
-		notified = true;
 	});
-	return notified;
 }
 
 /**
- * Queues the `payment-verified` email to `payment.recordedBy`, naming the total amount and every
- * Tagihan `allocations` settled — `VerificationOutcome.allocations`, exactly as `./verification.ts`
- * already has it in hand once its transaction returns.
+ * Queues the `payment-verified` email to `payment.recordedBy`, naming the total amount and the
+ * Tagihan `allocations` settled that fall inside the recorder's own Masa Huni —
+ * `VerificationOutcome.allocations`, exactly as `./verification.ts` already has it in hand once its
+ * transaction returns.
+ *
+ * The Alokasi runs from the oldest Tagihan of the whole Unit (`./allocation.ts`), so a payment can
+ * settle a Tagihan from before the recorder lived there. They must not read it in their email (#335,
+ * the rule `isInvoiceVisible` states for every personal screen): the part that went to such Tagihan
+ * is summed into `outsideTenureAmount`, one figure with no Periode, and the payment's total stays as
+ * it is.
+ *
+ * @throws whatever `announce` throws; the callers wrap this in `announceAfterCommit`.
  */
 export async function notifyPaymentVerified(
-	db: DatabaseWriter,
+	db: Database,
 	clock: Clock,
 	payment: Payment,
 	allocations: readonly Allocation[]
 ): Promise<void> {
-	await swallowing(PAYMENT_VERIFIED_KIND, async () => {
-		const recipient = await recorderEmail(db, payment.recordedBy);
-		if (!recipient) {
-			return;
-		}
-		await enqueueEmail(db, clock, {
-			recipient,
-			kind: PAYMENT_VERIFIED_KIND,
-			payload: paymentVerifiedPayload({
-				amount: payment.amount,
-				settlements: await settlementsOf(db, allocations)
-			})
-		});
+	const { settlements, outsideTenureAmount } = await settlementsOf(
+		db,
+		clock,
+		payment.recordedBy,
+		allocations
+	);
+	await announce(db, clock, {
+		kind: PAYMENT_VERIFIED_KIND,
+		recipients: [payment.recordedBy],
+		payload: ({ locale }) =>
+			paymentVerifiedPayload({ amount: payment.amount, settlements, outsideTenureAmount, locale })
 	});
 }
 
-/** Queues the `payment-rejected` email to `payment.recordedBy`, naming `payment.rejectionReason`. */
+/**
+ * Queues the `payment-rejected` email to `payment.recordedBy`, naming `payment.rejectionReason`.
+ *
+ * @throws whatever `announce` throws; the caller wraps this in `announceAfterCommit`.
+ */
 export async function notifyPaymentRejected(
-	db: DatabaseWriter,
+	db: Database,
 	clock: Clock,
 	payment: Payment
 ): Promise<void> {
-	await swallowing(PAYMENT_REJECTED_KIND, async () => {
-		if (payment.rejectionReason === null) {
-			// `payments_rejection_reason_check` guarantees this never happens on a row that is really
-			// rejected; refusing quietly here is cheaper than a second named error nothing can act on.
-			return;
-		}
-		const recipient = await recorderEmail(db, payment.recordedBy);
-		if (!recipient) {
-			return;
-		}
-		await enqueueEmail(db, clock, {
-			recipient,
-			kind: PAYMENT_REJECTED_KIND,
-			payload: paymentRejectedPayload({ amount: payment.amount, reason: payment.rejectionReason })
-		});
+	if (payment.rejectionReason === null) {
+		// `payments_rejection_reason_check` guarantees this never happens on a row that is really
+		// rejected; refusing quietly here is cheaper than a second named error nothing can act on.
+		return;
+	}
+	const reason = payment.rejectionReason;
+	await announce(db, clock, {
+		kind: PAYMENT_REJECTED_KIND,
+		recipients: [payment.recordedBy],
+		payload: ({ locale }) => paymentRejectedPayload({ amount: payment.amount, reason, locale })
 	});
 }
 
 /**
- * Runs `action`, catching and logging whatever it throws instead of letting it reach the caller —
- * see this module's doc comment for why a notification failure must never look like the business
- * operation that caused it failed too.
- */
-async function swallowing(kind: string, action: () => Promise<void>): Promise<void> {
-	try {
-		await action();
-	} catch (error) {
-		console.error(
-			`Queuing a "${kind}" notification failed after the change it announces had already committed:`,
-			error
-		);
-	}
-}
-
-/**
- * The email of `unitId`'s Penanggung Jawab today, or `undefined` when it has none —
- * `occupancies.isPrimaryOccupant` together with `stillRunningOn`, the one definition of "living here
- * now" `src/lib/server/services/occupancy/visibility.ts` publishes.
+ * `allocations` split by what the recorder may read: each one inside their Masa Huni with its
+ * Tagihan period attached, and the rest summed — one query for the Tagihan, one for the recorder's
+ * `ResidentView`, not one per allocation.
  *
- * **The order is part of the answer.** The Occupancy service keeps at most one flagged row among the
- * stays that have not passed, so at most one can match — but rows written under the old date-clash
- * model can hold two, and `limit 1` with no order would then pick whichever row PostgreSQL happened
- * to reach first. The latest start day wins, then the latest recorded, then the id, so the same rows
- * always give the same recipient. `summarizeActiveOccupancies` in `../unit/queries.ts` picks the
- * Penanggung Jawab the admin screens name with this same order, so the name on the screen and the
- * address on the email cannot differ.
+ * `residentViewFor` takes an account id and `recordedBy` is a `residents.id`, so the account is
+ * looked up first. A recorder with no row, or no Masa Huni, has an empty view, and every Tagihan is
+ * then outside it.
  */
-async function activePrimaryOccupantEmail(
-	db: DatabaseWriter,
-	clock: Clock,
-	unitId: string
-): Promise<string | undefined> {
-	const today = currentDay(clock);
-	const [row] = await db
-		.select({ email: user.email })
-		.from(occupancies)
-		.innerJoin(residents, eq(residents.id, occupancies.residentId))
-		.innerJoin(user, eq(user.id, residents.userId))
-		.where(
-			and(
-				eq(occupancies.unitId, unitId),
-				eq(occupancies.isPrimaryOccupant, true),
-				stillRunningOn(occupancies, today)
-			)
-		)
-		.orderBy(desc(occupancies.startedOn), desc(occupancies.createdAt), desc(occupancies.id))
-		.limit(1);
-	return row?.email;
-}
-
-/** The email behind a `residents.id`, or `undefined` when the row is somehow gone. */
-async function recorderEmail(db: DatabaseWriter, residentId: string): Promise<string | undefined> {
-	const [row] = await db
-		.select({ email: user.email })
-		.from(residents)
-		.innerJoin(user, eq(user.id, residents.userId))
-		.where(eq(residents.id, residentId))
-		.limit(1);
-	return row?.email;
-}
-
-/** `allocations`, with each one's Tagihan period attached — one query, not one per allocation. */
 async function settlementsOf(
-	db: DatabaseWriter,
+	db: Database,
+	clock: Clock,
+	recordedBy: string,
 	allocations: readonly Allocation[]
-): Promise<readonly PaymentVerifiedSettlement[]> {
+): Promise<{ settlements: readonly PaymentVerifiedSettlement[]; outsideTenureAmount: number }> {
 	if (allocations.length === 0) {
-		return [];
+		return { settlements: [], outsideTenureAmount: 0 };
 	}
 	const rows = await db
-		.select({ id: invoices.id, period: invoices.period })
+		.select({ id: invoices.id, unitId: invoices.unitId, period: invoices.period })
 		.from(invoices)
 		.where(
 			inArray(
@@ -231,11 +184,34 @@ async function settlementsOf(
 				allocations.map((allocation) => allocation.invoiceId)
 			)
 		);
-	const periodById = new Map(rows.map((row) => [row.id, row.period]));
-	return allocations.map((allocation) => ({
-		// Falls back to the id itself only if the invoice row is somehow gone — allocations.invoiceId
-		// has no `onDelete`, so this is unreachable in practice, not a case worth its own error type.
-		period: periodById.get(allocation.invoiceId) ?? allocation.invoiceId,
-		amount: allocation.amount
-	}));
+	const invoiceById = new Map(rows.map((row) => [row.id, row]));
+	const view = await viewOfRecorder(db, clock, recordedBy);
+
+	const settlements: PaymentVerifiedSettlement[] = [];
+	let outsideTenureAmount = 0;
+	for (const allocation of allocations) {
+		const invoice = invoiceById.get(allocation.invoiceId);
+		// `allocations.invoiceId` has no `onDelete`, so a missing invoice row is unreachable in
+		// practice, not a case worth its own error type. Without the row there is no Unit to test
+		// against, so what it settled is counted as outside rather than shown.
+		if (invoice && isInvoiceVisible(view, invoice)) {
+			settlements.push({ period: invoice.period, amount: allocation.amount });
+		} else {
+			outsideTenureAmount = rupiah(outsideTenureAmount + allocation.amount);
+		}
+	}
+	return { settlements, outsideTenureAmount };
+}
+
+/** The `ResidentView` of the account behind `residents.id` `recordedBy`; empty when it has none. */
+async function viewOfRecorder(
+	db: Database,
+	clock: Clock,
+	recordedBy: string
+): Promise<ResidentView> {
+	const [recorder] = await db
+		.select({ userId: residents.userId })
+		.from(residents)
+		.where(eq(residents.id, recordedBy));
+	return recorder ? residentViewFor(db, clock, recorder.userId) : { units: [] };
 }

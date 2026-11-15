@@ -1,9 +1,15 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	requireUser,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import {
 	createUnit,
 	DEFAULT_UNIT_PAGE_SIZE,
@@ -15,26 +21,39 @@ import type { Actions, PageServerLoad } from './$types';
 
 /**
  * The superuser screen for the house register: search and pagination over `units`, and a form to
- * add a new one. Follows the shape `src/routes/(app)/admin/roles/+page.server.ts` settled — nobody
- * who is not signed in reaches the service layer, and `PermissionDeniedError` becomes `error(403,
- * …)` here, never in the service.
+ * add a new one. Nobody who is not signed in reaches the service layer, `PermissionDeniedError`
+ * becomes `error(403, …)` here and never in the service, and a rule the service refuses comes back
+ * as a rejected form. All three go through `#lib/server/route-action.ts` (#318).
  *
  * Deactivating and reactivating a unit live on `[id]/+page.server.ts`, next to the single unit they
  * act on, not here.
  */
 
+/** The page's own refusal: the 403 for anyone without `ACTION.manageUnits`. There is no 404 page. */
+const PAGE = { forbidden: m.adminUnits_forbidden } satisfies PageMessages;
+
+/** What the add form says when the service refuses it. */
+const FORM = {
+	...PAGE,
+	fallback: m.adminUnits_invalidForm,
+	refusals: [
+		refusal(UnitConflictError, ({ error }) =>
+			m.adminUnits_conflict({ block: error.block, number: error.number })
+		)
+	]
+} satisfies FormMessages;
+
 export const load: PageServerLoad = async ({ locals, url }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+	const user = requireUser(locals);
 
 	const page = parsePositivePage(url.searchParams.get('page'));
 	const search = url.searchParams.get('q')?.trim() || undefined;
 	const includeInactive = url.searchParams.get('includeInactive') === 'true';
 
 	try {
-		const result = await listUnits(database(), systemClock, {
-			actorId: locals.user.id,
+		const { db, clock } = productionDependencies();
+		const result = await listUnits(db, clock, {
+			actorId: user.id,
 			page,
 			pageSize: DEFAULT_UNIT_PAGE_SIZE,
 			search,
@@ -53,26 +72,25 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			includeInactive
 		};
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	create: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const block = String(form.get('block') ?? '').trim();
-		const number = String(form.get('number') ?? '').trim();
+		const block = readText(form, 'block');
+		const number = readText(form, 'number');
 		if (block === '' || number === '') {
 			return fail(400, { message: m.adminUnits_invalidForm() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			const created = await createUnit(database(), systemClock, {
-				actorId: locals.user.id,
+			const created = await createUnit(db, clock, {
+				actorId: user.id,
 				block,
 				number
 			});
@@ -80,12 +98,7 @@ export const actions: Actions = {
 				message: m.adminUnits_addSuccess({ block: created.block, number: created.number })
 			};
 		} catch (caught) {
-			if (caught instanceof UnitConflictError) {
-				return fail(400, {
-					message: m.adminUnits_conflict({ block: caught.block, number: caught.number })
-				});
-			}
-			throwAsRouteError(caught);
+			return failOrThrow(caught, FORM);
 		}
 	}
 };
@@ -97,18 +110,4 @@ function parsePositivePage(value: string | null): number | undefined {
 	}
 	const parsed = Number(value);
 	return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- *
- * Always throws — the return type is `never` so that this can sit in a `catch` block without
- * widening the type SvelteKit infers for what an action or a load function returns, exactly as the
- * roles screen's copy of this helper explains.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminUnits_forbidden());
-	}
-	throw caught;
 }

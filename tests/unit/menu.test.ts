@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { activeMatchOf } from '#lib/components/app-shell/app-sidebar.svelte';
 import {
 	MENU,
 	visibleMenu,
@@ -142,5 +143,44 @@ describe('visibleMenu', () => {
 		expect(isAllowed(ADMIN, ACTION.verifyPayments)).toBe(true);
 		const wargaItems = visibleMenu(WARGA).flatMap((group) => group.items.map((item) => item.key));
 		expect(wargaItems).not.toContain('verifyPayments');
+	});
+});
+
+describe('activeMatchOf', () => {
+	const POST_ID = '0b9c7f0e-3c53-4a35-9a0a-6f1f2f6c3b11';
+
+	it('lights up Pengumuman on the announcement board', () => {
+		expect(activeMatchOf(visibleMenu(WARGA), '/posts')).toEqual({
+			groupKey: 'posts',
+			itemKey: 'posts'
+		});
+	});
+
+	it('lights up Pengumuman on a Post, which is the board plus an id', () => {
+		for (const roles of [WARGA, ADMIN, SUPERUSER]) {
+			expect(activeMatchOf(visibleMenu(roles), `/posts/${POST_ID}`)).toEqual({
+				groupKey: 'posts',
+				itemKey: 'posts'
+			});
+		}
+	});
+
+	it('does not light up Pengumuman on the admin Post screens, which have their own item', () => {
+		expect(activeMatchOf(visibleMenu(ADMIN), '/admin/posts')).toEqual({
+			groupKey: 'services',
+			itemKey: 'managePosts'
+		});
+		expect(activeMatchOf(visibleMenu(ADMIN), `/admin/posts/${POST_ID}`)).toEqual({
+			groupKey: 'services',
+			itemKey: 'managePosts'
+		});
+	});
+
+	it('does not mistake a path that merely starts with the same letters for the board', () => {
+		expect(activeMatchOf(visibleMenu(WARGA), '/posts-archive')).toBeNull();
+	});
+
+	it('lights up nothing for an address no item covers', () => {
+		expect(activeMatchOf(visibleMenu(WARGA), '/unsubscribe/abc')).toBeNull();
 	});
 });
