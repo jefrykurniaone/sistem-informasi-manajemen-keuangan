@@ -1,5 +1,5 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
-import { Pool } from 'pg';
+import type { Locator, Page } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 /**
  * Where the app shell is, and where it is not, through a real browser.
@@ -18,11 +18,13 @@ import { Pool } from 'pg';
  *
  * ## Signing in
  *
- * The shell now only exists behind a session, so the tests that open it need one. There is no
- * seeded account under this harness, so `signedInSuperuser` registers one, reads its verification
- * link straight out of `email_queue` and grants `superuser` by SQL, the same shortest path
- * `tests/e2e/registration.spec.ts` takes and for the same reasons. `superuser` rather than a bare
- * resident because an account with no `residents` row and no pengurus role is sent to
+ * The shell only exists behind a session, so the tests that open it stand on the `superuserPage`
+ * fixture of `./fixtures.ts`: the Data Contoh superuser (`README.md`, "Data Contoh"), signed in once
+ * per worker rather than once per test, because every sign-in counts against the login limit the
+ * whole suite shares (#336). Before that, each of these tests registered a superuser of its own,
+ * read its verification link out of `email_queue` and granted `superuser` by SQL, the shortest path
+ * `tests/e2e/registration.spec.ts` still takes for the accounts it is about. `superuser` rather than
+ * a bare resident because an account with no `residents` row and no pengurus role is sent to
  * `/pending-approval` by the `(app)` layout, and these tests are about the shell, not that guard.
  */
 
@@ -38,22 +40,6 @@ const MAIN_NAV_ID = 'Navigasi utama';
 /** Every element the shadcn sidebar renders carries this attribute, the trigger included. */
 const ANY_SIDEBAR_PART = '[data-sidebar]';
 
-/** The database the application under test is using. `playwright.config.ts` loads it out of `.env`. */
-const DATABASE_URL = process.env.DATABASE_URL;
-
-/** How long to keep looking for a queued verification email, and how long between two looks. */
-const QUEUE_WAIT_MILLISECONDS = 10_000;
-const QUEUE_POLL_MILLISECONDS = 200;
-
-/** A password that clears the minimum length. Invented here, used by this file only. */
-const PASSWORD = 'kata sandi kerangka aplikasi';
-
-/** The label on the address field of the registration and sign-in forms. */
-const EMAIL_FIELD = 'Alamat email';
-
-/** The display name every account this file registers carries. */
-const ACCOUNT_NAME = 'Pengurus Kerangka';
-
 /**
  * The complex name the server under test was built with, worked out the way `src/lib/complex-name.ts`
  * does: trimmed, and "Komplek" when nothing is left. That module cannot be imported here, because
@@ -68,87 +54,12 @@ function expectedComplexName(): string {
 const COMPLEX_NAME = expectedComplexName();
 
 /**
- * This file's own connection, opened on first use by each job and closed by the job that opened
- * it. See `tests/e2e/auth.spec.ts` for why `fullyParallel` runs `afterAll` more than once in one
- * worker process, and what `pg` does about a pool closed twice.
- */
-let openPool: Pool | undefined;
-
-function pool(): Pool {
-	openPool ??= new Pool({ connectionString: DATABASE_URL });
-	return openPool;
-}
-
-test.afterAll(async () => {
-	const closing = openPool;
-	openPool = undefined;
-	await closing?.end();
-});
-
-/**
  * Opens `path` and waits until the page can be typed into: hydration writes every `value={…}`
  * binding back over whatever was typed before it ran. See `tests/e2e/auth.spec.ts`.
  */
 async function open(page: Page, path: string): Promise<void> {
 	await page.goto(path);
 	await page.waitForLoadState('networkidle');
-}
-
-/** An address no other run of this spec will have used. */
-function anAddress(): string {
-	return `e2e-layout-${Date.now()}-${Math.floor(Math.random() * 1e6)}@komplek.local`;
-}
-
-/** Waits for a verification email to be queued for `recipient`, and returns its token. */
-async function verificationToken(recipient: string): Promise<string> {
-	const deadline = Date.now() + QUEUE_WAIT_MILLISECONDS;
-	while (Date.now() < deadline) {
-		const result = await pool().query<{ payload: { url?: string } }>(
-			"select payload from email_queue where recipient = $1 and kind = 'verify-email' order by created_at desc limit 1",
-			[recipient]
-		);
-		const url = result.rows[0]?.payload?.url;
-		if (typeof url === 'string') {
-			const token = new URL(url).searchParams.get('token');
-			if (token !== null) {
-				return token;
-			}
-		}
-		await new Promise((resolve) => setTimeout(resolve, QUEUE_POLL_MILLISECONDS));
-	}
-	throw new Error(`No verification email was queued for ${recipient}.`);
-}
-
-/** Registers, verifies and signs a superuser in, granting the role by SQL; see the file comment. */
-async function signedInSuperuser(page: Page): Promise<void> {
-	const email = anAddress();
-	await open(page, '/register');
-	await page.getByLabel('Nama').fill(ACCOUNT_NAME);
-	await page.getByLabel(EMAIL_FIELD).fill(email);
-	await page.getByLabel('Blok rumah').fill('E2E');
-	await page.getByLabel('Nomor rumah').fill('0');
-	await page.getByLabel('Kata sandi', { exact: true }).fill(PASSWORD);
-	await page.getByLabel('Ulangi kata sandi').fill(PASSWORD);
-	await page.getByRole('button', { name: 'Daftar' }).click();
-	await expect(page).toHaveURL(/\/verify/);
-
-	const token = await verificationToken(email);
-	await page.goto(`/verify?token=${encodeURIComponent(token)}`);
-	await expect(page.getByText('Alamat email Anda sudah terverifikasi')).toBeVisible();
-
-	await pool().query(
-		`insert into user_roles (user_id, role, created_at)
-		 select id, 'superuser', now() from "user" where email = $1
-		 on conflict do nothing`,
-		[email]
-	);
-
-	await open(page, '/login');
-	await page.getByLabel(EMAIL_FIELD).fill(email);
-	await page.getByLabel('Kata sandi').fill(PASSWORD);
-	await page.getByRole('button', { name: 'Masuk' }).click();
-	// Waiting for the session cookie to land before the caller's next `goto` races it.
-	await expect(page).toHaveURL(/\/$/);
 }
 
 /**
@@ -207,9 +118,9 @@ test('/posts without a session shows a header with the complex name and a Masuk 
 });
 
 test('with a session, / carries the shell with the complex name as its brand, and /posts carries the same shell with Pengumuman & Kegiatan as the current page', async ({
-	page
+	superuserPage: page
 }) => {
-	await signedInSuperuser(page);
+	await open(page, '/');
 
 	await expect(page.locator(ANY_SIDEBAR_PART).first()).toBeAttached();
 	await expect(page.getByRole('button', { name: MENU_BUTTON_ID })).toBeVisible();
@@ -235,12 +146,12 @@ test('with a session, / carries the shell with the complex name as its brand, an
 });
 
 test('with a session at 1920px, the sidebar is on screen beside the page and the page does not scroll sideways', async ({
-	page
+	superuserPage: page
 }) => {
 	// Set before the first page loads, so the shell hydrates as the desktop sidebar rather than
 	// switching over from the telephone drawer mid-test.
 	await page.setViewportSize({ width: 1920, height: 1080 });
-	await signedInSuperuser(page);
+	await open(page, '/');
 
 	await expect(page.getByRole('navigation', { name: MAIN_NAV_ID })).toBeVisible();
 	await expect(page.locator('[data-sidebar="header"]')).toContainText(COMPLEX_NAME);
@@ -254,15 +165,11 @@ test('with a session at 1920px, the sidebar is on screen beside the page and the
  * This proves the two axes match once collapsed, and that neither icon moved off its own button.
  */
 test('with a session at 1920px, collapsing the sidebar puts the brand icon on the same horizontal axis as a menu icon', async ({
-	page
+	superuserPage: page
 }) => {
 	await page.setViewportSize({ width: 1920, height: 1080 });
-	await signedInSuperuser(page);
-
-	// `signedInSuperuser` ends right after the client-side navigation off `/login`, a page the
-	// sidebar's code never loads on. Without this, the trigger's click handler is not attached yet
-	// and the click below is simply lost. `open` re-navigates to `/` and waits for `networkidle`, the
-	// same hydration wait every other test in this file relies on.
+	// `open` waits for `networkidle`, the hydration wait every test in this file relies on. Without
+	// it the trigger's click handler is not attached yet and the click below is simply lost.
 	await open(page, '/');
 
 	await page.getByRole('button', { name: MENU_BUTTON_ID }).click();
@@ -294,9 +201,9 @@ test('with a session at 1920px, collapsing the sidebar puts the brand icon on th
 });
 
 test('the drawer at 390px shows the menu and the way out, with every link at least 44 pixels tall and no horizontal overflow', async ({
-	page
+	superuserPage: page
 }) => {
-	await signedInSuperuser(page);
+	await open(page, '/');
 
 	const nav = page.getByRole('navigation', { name: MAIN_NAV_ID });
 	await expect(nav).toBeHidden();
@@ -315,8 +222,10 @@ test('the drawer at 390px shows the menu and the way out, with every link at lea
 	expect(await overflowsHorizontally(page)).toBe(false);
 });
 
-test('choosing a link in the drawer closes it and moves to that page', async ({ page }) => {
-	await signedInSuperuser(page);
+test('choosing a link in the drawer closes it and moves to that page', async ({
+	superuserPage: page
+}) => {
+	await open(page, '/');
 
 	const nav = page.getByRole('navigation', { name: MAIN_NAV_ID });
 	await openDrawer(page, MENU_BUTTON_ID, nav);
@@ -333,9 +242,9 @@ test('choosing a link in the drawer closes it and moves to that page', async ({ 
 });
 
 test('the language switcher is a labelled, keyboard-usable control whose choice survives a reload', async ({
-	page
+	superuserPage: page
 }) => {
-	await signedInSuperuser(page);
+	await open(page, '/');
 
 	const switcher = page.getByLabel('Bahasa');
 	await openDrawer(page, MENU_BUTTON_ID, switcher);

@@ -1,5 +1,6 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import type { Browser, Page } from '@playwright/test';
 import { Pool } from 'pg';
+import { expect, test } from './fixtures';
 
 /**
  * The invitation flow, through a browser: a superuser sends the link, the invitee sets their own
@@ -14,9 +15,11 @@ import { Pool } from 'pg';
  *
  * ## The fixtures this spec writes directly
  *
- * The `superuser` role grant and the unit row are inserted with SQL. Granting the role has no UI
- * that does not itself require a superuser — the first one is always seeded from outside — and the
- * unit register belongs to another spec's flow; re-walking it here would test that screen twice.
+ * The superuser is the Data Contoh account, already signed in by the `superuserPage` fixture of
+ * `./fixtures.ts`: the first superuser is always seeded from outside, and signing it in once per
+ * worker keeps this spec off the login limit the whole suite shares. The unit row is inserted with
+ * SQL, because the unit register belongs to another spec's flow; re-walking it here would test that
+ * screen twice.
  *
  * ## The expired case travels through the database on purpose
  *
@@ -97,52 +100,9 @@ async function linkFromQueuedEmail(recipient: string, kind: string): Promise<str
 	throw new Error(`No email of kind "${kind}" was queued for ${recipient}.`);
 }
 
-/** The token a verification link carries in its query string. */
-function tokenFromQuery(link: string): string {
-	const token = new URL(link).searchParams.get('token');
-	if (token === null) {
-		throw new Error(`The link carries no token: ${link}`);
-	}
-	return token;
-}
-
 /** The invitation accept path, taken from the emailed link so the test walks what was really sent. */
 function acceptPathOf(link: string): string {
 	return new URL(link).pathname;
-}
-
-/** Registers, verifies and signs a superuser in, granting the role by SQL — see the doc comment. */
-async function signedInSuperuser(page: Page): Promise<string> {
-	const email = anAddress('superuser');
-	await open(page, '/register');
-	await page.getByLabel('Nama').fill('Pengurus E2E');
-	await page.getByLabel(EMAIL_FIELD).fill(email);
-	// The claimed house the form asks for since #21. Nothing here checks it against `units`, and a
-	// registration nobody approves grants nothing, so this spec's flows are unaffected by its value.
-	await page.getByLabel('Blok rumah').fill('E2E');
-	await page.getByLabel('Nomor rumah').fill('0');
-	await page.getByLabel('Kata sandi', { exact: true }).fill(PASSWORD);
-	await page.getByLabel('Ulangi kata sandi').fill(PASSWORD);
-	await page.getByRole('button', { name: 'Daftar' }).click();
-	await expect(page).toHaveURL(/\/verify/);
-
-	const verifyLink = await linkFromQueuedEmail(email, 'verify-email');
-	await page.goto(`/verify?token=${encodeURIComponent(tokenFromQuery(verifyLink))}`);
-	await expect(page.getByText('Alamat email Anda sudah terverifikasi')).toBeVisible();
-
-	await pool().query(
-		`insert into user_roles (user_id, role, created_at)
-		 select id, 'superuser', now() from "user" where email = $1
-		 on conflict do nothing`,
-		[email]
-	);
-
-	await open(page, '/login');
-	await page.getByLabel(EMAIL_FIELD).fill(email);
-	await page.getByLabel('Kata sandi').fill(PASSWORD);
-	await page.getByRole('button', { name: 'Masuk' }).click();
-	await expect(page).toHaveURL(/\/$/);
-	return email;
 }
 
 /** A unit row of this run's own, returning its id and block. */
@@ -192,10 +152,9 @@ async function acceptInBrowser(browser: Browser, acceptPath: string, block: stri
 }
 
 test('a superuser invites, the invitee sets a password and lands on their house, once', async ({
-	page,
+	superuserPage: page,
 	browser
 }) => {
-	await signedInSuperuser(page);
 	const { block } = await insertUnit();
 	const inviteeEmail = anAddress('invitee');
 
@@ -204,10 +163,9 @@ test('a superuser invites, the invitee sets a password and lands on their house,
 });
 
 test('an expired link is refused with its own message, and a resend makes a working one', async ({
-	page,
+	superuserPage: page,
 	browser
 }) => {
-	await signedInSuperuser(page);
 	const { block } = await insertUnit();
 	const inviteeEmail = anAddress('expired');
 	const oldPath = await inviteThroughScreen(page, block, inviteeEmail);

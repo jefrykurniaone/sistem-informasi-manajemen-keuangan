@@ -66,10 +66,23 @@ for (const [name, value] of Object.entries(loadEnv('production', process.cwd(), 
  */
 process.env.ORIGIN = ORIGIN;
 
+/**
+ * The most workers a run starts.
+ *
+ * Every spec signs in from one address, and `POST /login` allows 30 attempts per address per
+ * minute (`RATE_LIMIT_POLICY.login`). `tests/e2e/fixtures.ts` signs the Data Contoh superuser in
+ * once per worker, so the workers are a term of the sum: the tests that sign an account in by
+ * themselves make 17 attempts, each worker adds one, and 17 + 3 is the 20 that leaves the headroom
+ * of 10 (#336). Playwright's own default here is half the machine's cores, which is six on this
+ * one and would take the sum to 23. Raise this number only together with the count in `fixtures.ts`.
+ */
+const MAX_WORKERS = 3;
+
 export default defineConfig({
 	testDir: 'tests/e2e',
 	testMatch: '**/*.spec.ts',
 	fullyParallel: true,
+	workers: MAX_WORKERS,
 	forbidOnly: Boolean(process.env.CI),
 	retries: process.env.CI ? 1 : 0,
 	use: { baseURL: ORIGIN },

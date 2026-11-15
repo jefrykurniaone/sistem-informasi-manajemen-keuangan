@@ -22,9 +22,13 @@ import { SUBSCRIPTION_KIND } from '#lib/server/services/subscription/kinds.ts';
 /**
  * `notifyNewPost` — the recipient side of #41 — and the `new-post` template it renders through.
  * `tests/unit/post-service.test.ts` already proves the acceptance criteria that are about
- * `publishPost` itself (queues on first publish, stays silent on an edit or a re-publish); this file
- * proves the two pieces underneath that: who `notifyNewPost` decides to email, and what
- * `newPostTemplate` writes for them.
+ * `publishPost` itself (queues on first publish, stays silent on an edit or a re-publish, never fails
+ * because of the email); this file proves the two pieces underneath that: who `notifyNewPost`
+ * addresses and what payload it builds, and what `newPostTemplate` writes for them.
+ *
+ * Which of the addressed residents a `new-post` email actually reaches — the Langganan, opt-in and
+ * off by default — and the unsubscribe link it carries are the announce module's rules, proven once
+ * for every kind in `tests/unit/announce.test.ts` (#316) rather than again here.
  */
 
 const testDb = testDatabase();
@@ -105,27 +109,28 @@ async function newPostRowsFor(postTitle: string) {
 
 describe('notifyNewPost', () => {
 	// `subscribeToNewPost` writes a row that outlives its own test — this file's schema is shared
-	// for the whole file, per `testDatabase()`'s contract — so the one test that needs to prove
-	// "queues nothing at all" runs first, before any sibling test leaves a resident subscribed
-	// behind it. Every test after it asserts by recipient rather than by a total row count, since a
-	// still-subscribed resident from an earlier test is correctly notified about a later test's
-	// Post too — that is what "subscribed" means — and is not a fact this file's own test order
-	// should be read as contradicting.
-	it('queues nothing at all when nobody is subscribed', async () => {
-		const adminId = await insertAdmin(unique('Pengurus Sepi'));
+	// for the whole file, per `testDatabase()`'s contract — so every test asserts by recipient rather
+	// than by a total row count: a still-subscribed resident from an earlier test is correctly
+	// notified about a later test's Post too.
+	it('addresses every resident, an admin as much as anyone, so each one subscribed is queued an email', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Notifikasi'));
 		const clock = new FakeClock(START);
-		await insertAccount(unique('Warga Diam Saja'));
+		const residentId = await insertAccount(unique('Warga Berlangganan'));
+		await subscribeToNewPost(residentId, clock, true);
+		await subscribeToNewPost(adminId, clock, true);
 		const post = await createPost(testDb.db, clock, { actorId: adminId, ...announcementContent() });
 
 		await notifyNewPost(testDb.db, clock, post);
 
-		expect(await newPostRowsFor(post.title)).toEqual([]);
+		const recipients = (await newPostRowsFor(post.title)).map((row) => row.recipient);
+		expect(recipients).toContain(await emailOf(residentId));
+		expect(recipients).toContain(await emailOf(adminId));
 	});
 
-	it('queues one email per resident subscribed to new-post, built from the title, the summary and the public link', async () => {
-		const adminId = await insertAdmin(unique('Pengurus Notifikasi'));
+	it('builds the payload from the title, the summary and the public link, never the body', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Isi Notifikasi'));
 		const clock = new FakeClock(START);
-		const subscriberId = await insertAccount(unique('Warga Berlangganan'));
+		const subscriberId = await insertAccount(unique('Warga Baca Notifikasi'));
 		await subscribeToNewPost(subscriberId, clock, true);
 		const post = await createPost(testDb.db, clock, { actorId: adminId, ...announcementContent() });
 
@@ -142,23 +147,7 @@ describe('notifyNewPost', () => {
 			url: `${readOrigin()}/posts/${post.id}`,
 			locale: 'id'
 		});
-	});
-
-	it('never emails a resident who switched the kind back off, but still emails one who stayed on', async () => {
-		const adminId = await insertAdmin(unique('Pengurus Diamkan'));
-		const clock = new FakeClock(START);
-		const optedOutId = await insertAccount(unique('Warga Berhenti Langganan'));
-		await subscribeToNewPost(optedOutId, clock, true);
-		await subscribeToNewPost(optedOutId, clock, false);
-		const staysSubscribedId = await insertAccount(unique('Warga Tetap Langganan'));
-		await subscribeToNewPost(staysSubscribedId, clock, true);
-		const post = await createPost(testDb.db, clock, { actorId: adminId, ...announcementContent() });
-
-		await notifyNewPost(testDb.db, clock, post);
-
-		const recipients = (await newPostRowsFor(post.title)).map((row) => row.recipient);
-		expect(recipients).toContain(await emailOf(staysSubscribedId));
-		expect(recipients).not.toContain(await emailOf(optedOutId));
+		expect(JSON.stringify(own.payload)).not.toContain(post.bodyHtml);
 	});
 });
 

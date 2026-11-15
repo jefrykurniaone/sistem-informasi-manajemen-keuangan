@@ -1,8 +1,8 @@
-import { and, asc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, isNull, lte, sql } from 'drizzle-orm';
 import { rupiah, type Rupiah } from '#lib/money.ts';
+import { civilMonthOf } from '#lib/time.ts';
 import type { DatabaseWriter } from '../../authz';
 import type { Database } from '../../db';
-import { allocations } from '../../db/schema/allocation';
 import {
 	CASH_CATEGORY_TYPE,
 	cashCategories,
@@ -13,8 +13,7 @@ import { invoices } from '../../db/schema/invoice';
 import type { MonthlyReportCategoryLine } from '../../db/schema/monthly-report';
 import type { Clock } from '../../ports/clock';
 import { cashBalanceBefore, monthDayRange, type MonthDayRange } from '../cash/balance';
-import { COMPLEX_TIME_ZONE } from '../dues/issuance';
-import { INVOICE_STATUS, invoiceStatus } from '../dues/queries';
+import { INVOICE_STATUS, invoiceStandings } from '../dues/invoice-standing';
 
 /**
  * Working out what one Periode's Laporan Bulanan says, from the buku kas and the Tagihan of that
@@ -55,13 +54,9 @@ import { INVOICE_STATUS, invoiceStatus } from '../dues/queries';
  * improved its own lunas count every time somebody paid in March would be a different document each
  * time it was opened.
  *
- * ## Which calendar the month boundary is read against — `Asia/Jakarta`, deliberately
+ * ## Which calendar the month boundary is read against — `Asia/Jakarta`
  *
- * Two conventions live in this repository today and their unification is not yet ticketed:
- * `currentDay(clock)` in `../occupancy/visibility.ts` reads a **UTC** civil day, while Tagihan
- * issuance and `../dues/queries.ts` read one in **`COMPLEX_TIME_ZONE` (`Asia/Jakarta`)**. This
- * module chooses Jakarta, and the choice is narrower than it looks — most of a report does not have
- * the question at all:
+ * Most of a report does not have the question at all:
  *
  * - **Which transactions fall inside the month is not a clock question.** `cash_transactions.occurredOn`
  *   is a `date`, and `monthDayRange` in `../cash/balance.ts` turns `YYYY-MM` into the first and last
@@ -69,20 +64,15 @@ import { INVOICE_STATUS, invoiceStatus } from '../dues/queries';
  * - **Which Tagihan belong to the Periode is not one either.** `invoices.period` is already `YYYY-MM`.
  *
  * What is left is the two places an *instant* becomes a civil date: "which month is the periode
- * berjalan an admin previews by default", and the `today` `invoiceStatus` decides "sudah lewat jatuh
- * tempo" against. Both are Jakarta here, for three reasons that point the same way. The day written
- * on a Transaksi Kas was typed by an admin sitting in the complex, so the days this report adds up
- * are already Jakarta days and reading their boundary in UTC would make the application disagree
- * with the dates its own users entered. `invoiceStatus`'s due dates were written in Jakarta's
- * calendar by `dueDateOfPeriod`, and `../dues/queries.ts` already documents at length why comparing
- * them to a UTC "today" is a seven-hour error twice a day rather than a harmless simplification.
- * And a default that reads UTC would, for the first seven hours of the first day of every month
- * local, offer an admin the *previous* month as "periode berjalan" — at exactly the turn of the
- * month, which is when a publication is most likely to happen.
- *
- * The UTC reading stays where it is. `currentDay` documents its own skew as accepted for screens
- * that decide visibility; this module's number is a document residents read and cannot be quietly
- * corrected afterwards, so it does not inherit that tolerance.
+ * berjalan an admin previews by default", and the day lunas or belum lunas is judged on. Both read
+ * the complex's own calendar from `src/lib/time.ts`, the one every other screen reads too: the month
+ * is `civilMonthOf(clock.now())`, and the day is the one `invoiceStandings` in
+ * `../dues/invoice-standing.ts` reads from the same clock. The day written on a Transaksi Kas was
+ * typed by an admin sitting in the complex, so the days this report adds up are already Jakarta days;
+ * a due date was written in Jakarta's calendar by `dueDateOfPeriod`; and a default that read UTC
+ * would, for the first seven hours of the first day of every month local, offer an admin the
+ * *previous* month as "periode berjalan", at exactly the turn of the month, which is when a
+ * publication is most likely to happen.
  *
  * ## What this module reads through `../cash/balance.ts`, and what it reads itself
  *
@@ -102,9 +92,6 @@ import { INVOICE_STATUS, invoiceStatus } from '../dues/queries';
  * for the same month, so the day the two readers disagree about which rows a month holds, a test
  * says so by name.
  */
-
-/** How many characters `YYYY-MM` takes, so the slice below is not a bare number. */
-const MONTH_LENGTH = 'YYYY-MM'.length;
 
 /**
  * Every figure a Laporan Bulanan carries, in the shape `monthly_reports` stores them — so that
@@ -132,10 +119,11 @@ export interface ReportFigures {
 
 /**
  * The calendar month the complex is in right now, as `YYYY-MM` — the "periode berjalan" user story
- * 12 asks an admin to be able to preview. Read in `COMPLEX_TIME_ZONE`; see this module's doc comment.
+ * 12 asks an admin to be able to preview. Read in the complex's own calendar by `civilMonthOf`; see
+ * this module's doc comment.
  */
 export function currentReportPeriod(clock: Clock): string {
-	return todayInComplexZone(clock).slice(0, MONTH_LENGTH);
+	return civilMonthOf(clock.now());
 }
 
 /**
@@ -365,15 +353,15 @@ interface DuesSummary {
  * money moved. `docs/spec-kas-laporan-v1.md` forbids hiding either, so a report carries both and
  * labels them apart.
  *
- * A voided Tagihan is left out of all three numbers. `invoiceStatus` calls it `void` rather than any
- * of the four ordinary states, and `src/lib/server/db/schema/allocation.ts` records that a Tagihan
- * that has absorbed a payment cannot be cancelled at all — so a cancelled one is neither lunas nor
- * belum lunas, and counting it either way would answer "berapa rumah" with a house that owes
- * nothing.
+ * A voided Tagihan is left out of all three numbers. `invoiceStandings` calls it `void` rather
+ * than any of the four ordinary states, and `src/lib/server/db/schema/allocation.ts` records that a
+ * Tagihan that has absorbed a payment cannot be cancelled at all — so a cancelled one is neither
+ * lunas nor belum lunas, and counting it either way would answer "berapa rumah" with a house that
+ * owes nothing.
  *
- * The lunas/belum-lunas split is `invoiceStatus`'s, never a comparison written again here. It is the
- * one place `docs/spec-iuran-v1.md` allows that comparison to live, and two screens that computed it
- * separately would eventually disagree about one Tagihan.
+ * The allocated sum and the lunas/belum-lunas split are both `invoiceStandings`'s, never a sum or a
+ * comparison written again here. It is the one place `docs/spec-iuran-v1.md` allows that comparison
+ * to live, and two screens that computed it separately would eventually disagree about one Tagihan.
  */
 async function duesSummaryFor(
 	writer: DatabaseWriter,
@@ -382,38 +370,21 @@ async function duesSummaryFor(
 ): Promise<DuesSummary> {
 	const rows = await writer
 		.select({
-			id: invoices.id,
+			invoiceId: invoices.id,
+			unitId: invoices.unitId,
+			period: invoices.period,
 			amount: invoices.amount,
 			dueDate: invoices.dueDate,
 			voidedAt: invoices.voidedAt
 		})
 		.from(invoices)
 		.where(and(eq(invoices.period, period), isNull(invoices.voidedAt)));
-	if (rows.length === 0) {
-		return { collected: rupiah(0), unitsPaid: 0, unitsUnpaid: 0 };
-	}
-
-	const allocated = await allocatedAmountsByInvoice(
-		writer,
-		rows.map((row) => row.id)
-	);
-	const today = todayInComplexZone(clock);
 
 	let collected = 0;
 	let unitsPaid = 0;
-	for (const row of rows) {
-		const allocatedAmount = allocated.get(row.id) ?? rupiah(0);
-		collected += allocatedAmount;
-		const status = invoiceStatus(
-			{
-				amount: row.amount,
-				allocatedAmount,
-				dueDate: row.dueDate,
-				voidedAt: row.voidedAt
-			},
-			today
-		);
-		if (status === INVOICE_STATUS.paid) {
+	for (const invoice of await invoiceStandings(writer, clock, rows)) {
+		collected += invoice.allocatedAmount;
+		if (invoice.status === INVOICE_STATUS.paid) {
 			unitsPaid += 1;
 		}
 	}
@@ -423,50 +394,4 @@ async function duesSummaryFor(
 		unitsPaid,
 		unitsUnpaid: rows.length - unitsPaid
 	};
-}
-
-/**
- * How much has been allocated to each of `invoiceIds`, keyed by invoice id and absent for one with
- * no allocation — the caller reads a missing entry as zero.
- *
- * A `Map`, never an object literal: the keys are invoice ids that reach this module from a request,
- * and a lookup in an object literal answers for names nobody put in it.
- */
-async function allocatedAmountsByInvoice(
-	writer: DatabaseWriter,
-	invoiceIds: readonly string[]
-): Promise<ReadonlyMap<string, Rupiah>> {
-	const rows = await writer
-		.select({
-			invoiceId: allocations.invoiceId,
-			total: sql<string>`coalesce(sum(${allocations.amount}), 0)::text`
-		})
-		.from(allocations)
-		.where(inArray(allocations.invoiceId, [...invoiceIds]))
-		.groupBy(allocations.invoiceId);
-
-	return new Map(rows.map((row) => [row.invoiceId, rupiah(Number(row.total))]));
-}
-
-/**
- * A formatter that renders an instant as the calendar day it falls on in `COMPLEX_TIME_ZONE`. Built
- * once and reused, the same shape `../dues/queries.ts` and `src/lib/server/scheduler/registry.ts`
- * both already use — a fresh `Intl.DateTimeFormat` is not free to construct.
- */
-const COMPLEX_DAY_FORMATTER = new Intl.DateTimeFormat('en-US', {
-	timeZone: COMPLEX_TIME_ZONE,
-	year: 'numeric',
-	month: '2-digit',
-	day: '2-digit'
-});
-
-/**
- * `YYYY-MM-DD` for the day `clock.now()` falls on in `COMPLEX_TIME_ZONE`, built from the parts so
- * the order never depends on locale. See this module's doc comment for why this zone and not UTC.
- */
-function todayInComplexZone(clock: Clock): string {
-	const parts = COMPLEX_DAY_FORMATTER.formatToParts(clock.now());
-	const partOfType = (type: Intl.DateTimeFormatPartTypes): string =>
-		parts.find((part) => part.type === type)?.value ?? '';
-	return `${partOfType('year')}-${partOfType('month')}-${partOfType('day')}`;
 }

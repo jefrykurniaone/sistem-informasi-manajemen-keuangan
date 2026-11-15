@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PermissionDeniedError } from '#lib/errors.ts';
 import { auditEntriesFor } from '#lib/server/audit.ts';
 import { readOrigin } from '#lib/server/auth.ts';
@@ -977,5 +977,44 @@ describe('publishing queues the new-post email — #41', () => {
 
 		expect(notifiedPostId).toBe(created.id);
 		expect(await newPostRowsFor(created.title)).toEqual([]);
+	});
+});
+
+describe('publishing never fails because of the email — #316', () => {
+	// The defect #309 names: the Post is committed before the email is queued, so an exception from
+	// the notifier used to reach the admin as a 500 for a Post that was already on the board. Pressing
+	// again then answered "already published", and the subscribers the first attempt had not reached
+	// were never sent anything. The notifier here is the injected one on purpose: the rule sits at
+	// the call site, so it has to hold for whatever `PublishPostSettings.notify` is given.
+	it('answers with the published Post and logs the failure when the notifier throws', async () => {
+		const adminId = await insertAdmin(unique('Pengurus Email Gagal'));
+		const clock = new FakeClock(START);
+		const created = await createPost(testDb.db, clock, {
+			actorId: adminId,
+			...announcementContent()
+		});
+		const failure = new Error('Antrean email tidak bisa ditulis.');
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+		try {
+			const published = await publishPost(
+				testDb.db,
+				clock,
+				{ actorId: adminId, postId: created.id },
+				{
+					notify: async () => {
+						throw failure;
+					}
+				}
+			);
+
+			expect(published.status).toBe(POST_STATUS.published);
+			const [stored] = await testDb.db.select().from(posts).where(eq(posts.id, created.id));
+			expect(stored.status).toBe(POST_STATUS.published);
+			expect(stored.publishedAt).toEqual(clock.now());
+			expect(logged).toHaveBeenCalledWith(expect.stringContaining(created.id), failure);
+		} finally {
+			logged.mockRestore();
+		}
 	});
 });

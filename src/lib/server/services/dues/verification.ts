@@ -58,11 +58,13 @@ import { UnitNotFoundError } from './queries';
  * - The status columns move in **one** `update`: `payments_verification_check` refuses `status`,
  *   `verifiedBy` and `verifiedAt` written apart, exactly so that no statement boundary exists at
  *   which the row claims a verification that has not finished being decided.
- * - The cash row is written by `recordDuesIncome` in `src/lib/server/services/cash/transaction.ts`,
- *   which takes this transaction, resolves the system category by its `systemKey`, and is the one
- *   insert into that category in the codebase — the manual recording path refuses it by name. That
- *   is what makes "saldo kas dan status tagihan tidak bisa saling bertentangan" structural: the two
- *   are written by one transaction or not at all.
+ * - The cash row is written through `recordDuesIncome` in
+ *   `src/lib/server/services/cash/transaction.ts`, which takes this transaction and hands it to
+ *   `writeCashTransaction` in `src/lib/server/services/cash/writer.ts` with the `duesIncome` kind.
+ *   That writer holds the one `insert` into `cash_transactions` in the codebase, and Payment
+ *   verification is the one caller of the `duesIncome` kind. That is what makes "saldo kas dan
+ *   status tagihan tidak bisa saling bertentangan" structural: the two are written by one
+ *   transaction or not at all.
  *
  * ## The locks, and why each is taken
  *
@@ -73,7 +75,10 @@ import { UnitNotFoundError } from './queries';
  *    gone and answered as not found), instead of a cash transaction pointing at a deleted row.
  * 2. **The Unit's open Tagihan, `for update`, before the plan is made** — `lockOpenInvoicesOfUnit`
  *    in `./allocation.ts`, which is what keeps two concurrent verifications of one Unit from both
- *    filling the same remaining amount.
+ *    filling the same remaining amount. The remaining amounts it plans against are summed after
+ *    those locks by `allocatedAmountsOf`, the second door of `./invoice-standing.ts`, so the
+ *    verification and every screen read one rule; the door takes no lock of its own, and this order
+ *    is what `tests/unit/payment-verification.test.ts` holds with a second connection.
  * 3. **The Periode, `for share`, last** — inside `recordDuesIncome`, against `receivedOn`, which is
  *    the day the cash row is dated on. The order — the rows the money is about first, the Periode
  *    second — is the one `src/lib/server/services/cash/period.ts` fixes for every money write.

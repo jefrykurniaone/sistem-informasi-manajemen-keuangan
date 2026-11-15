@@ -14,7 +14,6 @@ import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
 	INVOICE_STATUS,
 	invoiceHistoryForUnit,
-	invoiceStatus,
 	invoicesForUser,
 	listOverdueUnits,
 	UnitNotFoundError
@@ -22,9 +21,13 @@ import {
 import { PermissionDeniedError } from '#lib/errors.ts';
 
 /**
- * `invoiceStatus`'s comparison table, a warga's own list filtered by Masa Huni, admin's daftar
- * penunggak, and admin's per-unit history — `docs/spec-iuran-v1.md`'s "saya masih harus bayar
- * berapa" and "siapa saja yang menunggak".
+ * A warga's own list filtered by Masa Huni, admin's daftar penunggak, and admin's per-unit history —
+ * `docs/spec-iuran-v1.md`'s "saya masih harus bayar berapa" and "siapa saja yang menunggak".
+ *
+ * Where each Tagihan stands (its allocated and remaining amounts, and its status on a WIB day,
+ * including the due-date boundary) is `invoiceStandings`'s, tested at that seam in
+ * `tests/unit/invoice-standing.test.ts`. The tests here check what each read selects, totals and
+ * sorts.
  *
  * `tests/unit/overdue-privacy.test.ts` is the other half: the direct proof that a `resident` cannot
  * reach `listOverdueUnits` or `invoiceHistoryForUnit` at the service layer.
@@ -184,81 +187,6 @@ async function allocate(paymentId: string, invoiceId: string, amount: Rupiah): P
 		.insert(allocations)
 		.values({ paymentId, invoiceId, amount, createdAt: new Date('2026-03-02T00:00:00.000Z') });
 }
-
-describe('invoiceStatus', () => {
-	const AMOUNT = rupiah(150_000);
-	const DUE_DATE = '2026-03-05';
-	const BEFORE_DUE = '2026-03-04';
-	const AFTER_DUE = '2026-03-06';
-
-	it('is paid once the allocated amount reaches the invoice amount', () => {
-		expect(
-			invoiceStatus(
-				{ amount: AMOUNT, allocatedAmount: AMOUNT, dueDate: DUE_DATE, voidedAt: null },
-				AFTER_DUE
-			)
-		).toBe(INVOICE_STATUS.paid);
-	});
-
-	it('is unpaid before the due date with nothing allocated', () => {
-		expect(
-			invoiceStatus(
-				{ amount: AMOUNT, allocatedAmount: rupiah(0), dueDate: DUE_DATE, voidedAt: null },
-				BEFORE_DUE
-			)
-		).toBe(INVOICE_STATUS.unpaid);
-	});
-
-	it('is partial before the due date with something, but not everything, allocated', () => {
-		expect(
-			invoiceStatus(
-				{ amount: AMOUNT, allocatedAmount: rupiah(50_000), dueDate: DUE_DATE, voidedAt: null },
-				BEFORE_DUE
-			)
-		).toBe(INVOICE_STATUS.partial);
-	});
-
-	it('is not yet overdue on the due date itself — "lewat" means the date has passed', () => {
-		expect(
-			invoiceStatus(
-				{ amount: AMOUNT, allocatedAmount: rupiah(0), dueDate: DUE_DATE, voidedAt: null },
-				DUE_DATE
-			)
-		).toBe(INVOICE_STATUS.unpaid);
-	});
-
-	it('is overdue, not partial, once an unpaid balance is also past due', () => {
-		expect(
-			invoiceStatus(
-				{ amount: AMOUNT, allocatedAmount: rupiah(50_000), dueDate: DUE_DATE, voidedAt: null },
-				AFTER_DUE
-			)
-		).toBe(INVOICE_STATUS.overdue);
-	});
-
-	it('is overdue with nothing allocated at all, once past due', () => {
-		expect(
-			invoiceStatus(
-				{ amount: AMOUNT, allocatedAmount: rupiah(0), dueDate: DUE_DATE, voidedAt: null },
-				AFTER_DUE
-			)
-		).toBe(INVOICE_STATUS.overdue);
-	});
-
-	it('is void whatever the amounts say, once cancelled', () => {
-		expect(
-			invoiceStatus(
-				{
-					amount: AMOUNT,
-					allocatedAmount: rupiah(0),
-					dueDate: DUE_DATE,
-					voidedAt: new Date(START)
-				},
-				AFTER_DUE
-			)
-		).toBe(INVOICE_STATUS.void);
-	});
-});
 
 describe('invoicesForUser', () => {
 	it('is empty for a signed-in account with no residents row at all', async () => {
@@ -479,6 +407,13 @@ describe('listOverdueUnits', () => {
 		const payment = await insertPaymentRow(paidUp.id, residentId, rupiah(100_000));
 		await allocate(payment, paidInvoice, rupiah(100_000));
 		await insertInvoiceRow(notYetDue.id, { period: '2026-06', dueDate: '2026-06-05' });
+		const partlyPaid = await insertUnitRow();
+		const partlyPaidInvoice = await insertInvoiceRow(partlyPaid.id, {
+			dueDate: '2026-02-05',
+			amount: rupiah(150_000)
+		});
+		const partPayment = await insertPaymentRow(partlyPaid.id, residentId, rupiah(120_000));
+		await allocate(partPayment, partlyPaidInvoice, rupiah(120_000));
 
 		const overdue = await listOverdueUnits(
 			testDb.db,
@@ -486,31 +421,11 @@ describe('listOverdueUnits', () => {
 			admin.userId
 		);
 
-		expect(overdue.map((row) => row.unitId)).toEqual([bigDebt.id, smallDebt.id]);
+		expect(overdue.map((row) => row.unitId)).toEqual([bigDebt.id, smallDebt.id, partlyPaid.id]);
 		expect(overdue[0]).toMatchObject({ overdueInvoiceCount: 2, totalOverdue: rupiah(300_000) });
 		expect(overdue[1]).toMatchObject({ overdueInvoiceCount: 1, totalOverdue: rupiah(100_000) });
-	});
-
-	it('reads "sudah lewat jatuh tempo" in the complex\'s own zone, not in UTC', async () => {
-		// 2026-03-05T20:00:00Z is already 03:00 on 6 March in Jakarta (UTC+7) — genuinely past a
-		// 5 March due date locally, even though the UTC calendar day is still the 5th.
-		const admin = await insertAdmin('Admin Zona Waktu');
-		const unit = await insertUnitRow();
-		await insertInvoiceRow(unit.id, { dueDate: '2026-03-05' });
-
-		const stillOnTime = await listOverdueUnits(
-			testDb.db,
-			new FakeClock('2026-03-05T10:00:00.000Z'),
-			admin.userId
-		);
-		const overdueLocally = await listOverdueUnits(
-			testDb.db,
-			new FakeClock('2026-03-05T20:00:00.000Z'),
-			admin.userId
-		);
-
-		expect(stillOnTime).toEqual([]);
-		expect(overdueLocally.map((row) => row.unitId)).toEqual([unit.id]);
+		// What is still owed, not the full charge.
+		expect(overdue[2]).toMatchObject({ overdueInvoiceCount: 1, totalOverdue: rupiah(30_000) });
 	});
 });
 

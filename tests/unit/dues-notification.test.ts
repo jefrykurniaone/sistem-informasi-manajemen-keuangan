@@ -312,54 +312,6 @@ describe('notifyInvoiceIssued', () => {
 		expect(await emailsTo(occupant.email, INVOICE_ISSUED_KIND)).toEqual([]);
 	});
 
-	it('picks the flagged stay that started last when two are running, whichever was written first', async () => {
-		// The Occupancy service keeps one flag per unit among the stays that have not passed, but rows
-		// written under the old date-clash model can hold two running at once. The recipient must not
-		// then depend on which row PostgreSQL reaches first: the older stay is inserted first here, so
-		// a lookup with no order would pick it.
-		const unit = await insertUnit();
-		const older = await insertResident('Warga Penanda Lama Urutan');
-		const newer = await insertResident('Warga Penanda Baru Urutan');
-		await insertOccupancy(unit, older.residentId, {
-			isPrimaryOccupant: true,
-			startedOn: '2025-01-01',
-			endedOn: '2099-01-01'
-		});
-		await insertOccupancy(unit, newer.residentId, {
-			isPrimaryOccupant: true,
-			startedOn: '2026-02-01',
-			endedOn: null
-		});
-
-		expect(await notifyUnit(unit)).toBe(true);
-
-		expect(await emailsTo(newer.email, INVOICE_ISSUED_KIND)).toHaveLength(1);
-		expect(await emailsTo(older.email, INVOICE_ISSUED_KIND)).toEqual([]);
-	});
-
-	it('breaks a tie on the start day by the stay recorded last', async () => {
-		const unit = await insertUnit();
-		const earlier = await insertResident('Warga Dicatat Duluan Notifikasi');
-		const later = await insertResident('Warga Dicatat Belakangan Notifikasi');
-		await insertOccupancy(unit, earlier.residentId, {
-			isPrimaryOccupant: true,
-			startedOn: '2026-01-01',
-			endedOn: null,
-			createdAt: '2026-01-01T01:00:00.000Z'
-		});
-		await insertOccupancy(unit, later.residentId, {
-			isPrimaryOccupant: true,
-			startedOn: '2026-01-01',
-			endedOn: '2099-01-01',
-			createdAt: '2026-01-01T02:00:00.000Z'
-		});
-
-		expect(await notifyUnit(unit)).toBe(true);
-
-		expect(await emailsTo(later.email, INVOICE_ISSUED_KIND)).toHaveLength(1);
-		expect(await emailsTo(earlier.email, INVOICE_ISSUED_KIND)).toEqual([]);
-	});
-
 	it('never picks a flagged stay that has not started, even one that would sort first', async () => {
 		// A stay flagged ahead of time starts later than the running holder's, so it would win the
 		// order above if the lookup did not read the start date. It is inserted first as well.

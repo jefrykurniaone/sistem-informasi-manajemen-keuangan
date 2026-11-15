@@ -1,10 +1,9 @@
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import type { Rupiah } from '#lib/money.ts';
 import type { DatabaseWriter } from '../../authz';
 import { user } from '../../db/schema/auth';
 import type { Allocation } from '../../db/schema/allocation';
 import { invoices } from '../../db/schema/invoice';
-import { occupancies } from '../../db/schema/occupancy';
 import type { Payment } from '../../db/schema/payment';
 import { residents } from '../../db/schema/resident';
 import { enqueueEmail } from '../../email/queue';
@@ -19,7 +18,8 @@ import {
 	type PaymentVerifiedSettlement
 } from '../../email/templates/payment-verified';
 import type { Clock } from '../../ports/clock';
-import { currentDay, stillRunningOn } from '../occupancy/visibility';
+import { primaryOccupantsOn } from '../occupancy';
+import { currentDay } from '../occupancy/visibility';
 
 /**
  * Where the three transactional emails ticket #31 adds get queued from: `invoice-issued` and
@@ -30,11 +30,11 @@ import { currentDay, stillRunningOn } from '../occupancy/visibility';
  *
  * ## Recipients, and why each is found the way it is
  *
- * - **`invoice-issued`** goes to the Unit's Penanggung Jawab: the flagged Masa Huni that is running
- *   today, `occupancies.isPrimaryOccupant` together with `stillRunningOn` from
- *   `../occupancy/visibility.ts` — never a redefinition of "living here now". The flag moves between
- *   stays (`docs/adr/0001-penanggung-jawab-berpindah.md`), so a flagged stay that has not begun is
- *   not the recipient yet, and one whose last day has passed no longer is. A Unit with none is still
+ * - **`invoice-issued`** goes to the Unit's Penanggung Jawab today, as `primaryOccupantsOn` in
+ *   `../occupancy/index.ts` answers it — the one read, with the one pick order, every screen and
+ *   service that names the Penanggung Jawab asks. The flag moves between stays
+ *   (`docs/adr/0001-penanggung-jawab-berpindah.md`), so a flagged stay that has not begun is not the
+ *   recipient yet, and one whose last day has passed no longer is. A Unit with none is still
  *   invoiced; this module only answers whether it found somewhere to send the email, and the caller
  *   in `./issuance.ts` is the one that records the skip in `InvoiceIssuanceSummary`.
  * - **`payment-verified`** and **`payment-rejected`** both go to the Pembayaran's recorder
@@ -168,39 +168,17 @@ async function swallowing(kind: string, action: () => Promise<void>): Promise<vo
 }
 
 /**
- * The email of `unitId`'s Penanggung Jawab today, or `undefined` when it has none —
- * `occupancies.isPrimaryOccupant` together with `stillRunningOn`, the one definition of "living here
- * now" `src/lib/server/services/occupancy/visibility.ts` publishes.
- *
- * **The order is part of the answer.** The Occupancy service keeps at most one flagged row among the
- * stays that have not passed, so at most one can match — but rows written under the old date-clash
- * model can hold two, and `limit 1` with no order would then pick whichever row PostgreSQL happened
- * to reach first. The latest start day wins, then the latest recorded, then the id, so the same rows
- * always give the same recipient. `summarizeActiveOccupancies` in `../unit/queries.ts` picks the
- * Penanggung Jawab the admin screens name with this same order, so the name on the screen and the
- * address on the email cannot differ.
+ * The email of `unitId`'s Penanggung Jawab today, or `undefined` when it has none: the answer of
+ * `primaryOccupantsOn` for the day `clock` reads in WIB. The screen's name and the email's address
+ * are the same person because both come from that one read.
  */
 async function activePrimaryOccupantEmail(
 	db: DatabaseWriter,
 	clock: Clock,
 	unitId: string
 ): Promise<string | undefined> {
-	const today = currentDay(clock);
-	const [row] = await db
-		.select({ email: user.email })
-		.from(occupancies)
-		.innerJoin(residents, eq(residents.id, occupancies.residentId))
-		.innerJoin(user, eq(user.id, residents.userId))
-		.where(
-			and(
-				eq(occupancies.unitId, unitId),
-				eq(occupancies.isPrimaryOccupant, true),
-				stillRunningOn(occupancies, today)
-			)
-		)
-		.orderBy(desc(occupancies.startedOn), desc(occupancies.createdAt), desc(occupancies.id))
-		.limit(1);
-	return row?.email;
+	const primary = await primaryOccupantsOn(db, currentDay(clock), [unitId]);
+	return primary.get(unitId)?.email;
 }
 
 /** The email behind a `residents.id`, or `undefined` when the row is somehow gone. */

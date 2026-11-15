@@ -482,52 +482,6 @@ describe('listUnits', () => {
 		expect(row && needsPrimaryOccupant(row)).toBe(true);
 	});
 
-	it('takes the newest of two flagged running stays for the Penanggung Jawab, as the invoice email does', async () => {
-		// Rows written under the date-clash model can leave two flagged stays running at once. The
-		// summary picks one the way `notifyInvoiceIssued` picks its recipient — latest start day, then
-		// latest recorded — so the screen and the email name the same person, and only that person
-		// wears the badge. The older one is inserted first, so a query with no order would find it.
-		const superuserId = await insertSuperuser('Pengurus Dua Penanda');
-		const unitId = await insertUnitRow();
-		const older = await insertResident('Anton Penanda Lama');
-		const newer = await insertResident('Budi Penanda Baru');
-		await insertOccupancy(unitId, older, { endedOn: FUTURE_END, isPrimaryOccupant: true });
-		await insertOccupancy(unitId, newer, { startedOn: '2026-02-01', isPrimaryOccupant: true });
-
-		const detail = await getUnit(testDb.db, superuserId, unitId, READ_CLOCK);
-
-		expect(detail.activeOccupants).toEqual([
-			{ residentId: newer, name: 'Budi Penanda Baru', isPrimaryOccupant: true },
-			{ residentId: older, name: 'Anton Penanda Lama', isPrimaryOccupant: false }
-		]);
-		expect(detail.primaryOccupantNeed).toBeNull();
-	});
-
-	it('breaks a tie on the start day by the later recorded of two flagged stays', async () => {
-		const superuserId = await insertSuperuser('Pengurus Seri Tanggal');
-		const unitId = await insertUnitRow();
-		const earlier = await insertResident('Warga Dicatat Duluan');
-		const later = await insertResident('Warga Dicatat Belakangan');
-		await insertOccupancy(unitId, earlier, {
-			isPrimaryOccupant: true,
-			createdAt: '2026-01-01T01:00:00.000Z'
-		});
-		await insertOccupancy(unitId, later, {
-			endedOn: FUTURE_END,
-			isPrimaryOccupant: true,
-			createdAt: '2026-01-01T02:00:00.000Z'
-		});
-
-		const detail = await getUnit(testDb.db, superuserId, unitId, READ_CLOCK);
-
-		expect(detail.primaryOccupantNeed).toEqual({
-			kind: 'leaving',
-			residentId: later,
-			name: 'Warga Dicatat Belakangan',
-			endedOn: FUTURE_END
-		});
-	});
-
 	it('counts one person with two running stays in the same house once', async () => {
 		// The schema has no unique pair on unit and resident, so an owner row beside a tenant row, or a
 		// plain duplicate, is possible. Penghuni Aktif is a count of people, not of Masa Huni.
