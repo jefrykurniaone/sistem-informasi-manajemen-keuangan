@@ -3,15 +3,13 @@ import { sequence, type Handle } from '@sveltejs/kit/hooks';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
 import { auth } from '#lib/server/auth.ts';
 import { database } from '#lib/server/db/index.ts';
-import { registerEmailJobs } from '#lib/server/email/jobs.ts';
 import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	applicationJobs,
 	isSchedulerProcess,
+	registerApplicationJobs,
 	startJobScheduler
 } from '#lib/server/scheduler/index.ts';
-import { registerDuesJobs } from '#lib/server/services/dues/jobs.ts';
-import { registerReportJobs } from '#lib/server/services/report/jobs.ts';
 import { paraglideMiddleware } from '#lib/paraglide/server.js';
 import { getTextDirection } from '#lib/paraglide/runtime.js';
 
@@ -62,16 +60,16 @@ import { getTextDirection } from '#lib/paraglide/runtime.js';
  * per route; `src/lib/server/scheduler/index.ts` doing it on import would run inside every test file
  * and every `vite build` that so much as mentions the scheduler.
  *
- * 1. **`registerEmailJobs()`, `registerDuesJobs()` and `registerReportJobs()` — unconditional.** Each builds a
- *    `JobDefinition` and puts it in `applicationJobs`. No environment is read, no connection is
- *    opened, nothing is started, so both are safe while `building`; and doing it unconditionally is
- *    what makes `/admin/jobs` list the jobs on any process that serves that page. The page itself
- *    needed no change for either — it already walks `applicationJobs` through
- *    `listJobsWithLastRun`. A job module that nothing imports registers nothing, which is why the
- *    import is here and not left to whoever happens to need the service: `registerDuesJobs` was
- *    added by ticket #26, and the monthly Tagihan issuance exists on a running server only because
- *    this line does. `registerReportJobs` was added by ticket #37 for the same reason: the daily
- *    `send-monthly-report` job, and its manual trigger on `/admin/jobs`, exist only because of it.
+ * 1. **`registerApplicationJobs()` — unconditional.** It calls each owner's idempotent
+ *    `register…Jobs` (the scheduler's own prune, the email drain, the Tagihan issuance and the
+ *    Laporan Bulanan announcement), and each builds a `JobDefinition` and puts it in
+ *    `applicationJobs`. No environment is read, no connection is opened, nothing is started, so it
+ *    is safe while `building`; and doing it unconditionally is what makes `/admin/jobs` list the
+ *    jobs on any process that serves that page. Since ticket #317 this call is the only
+ *    registration there is: no module registers on import, so a job exists on a running server only
+ *    because `registerApplicationJobs` names its owner, and `tests/unit/scheduler-jobs.test.ts`
+ *    calls the same function and checks every permanent name. Decision 4 in
+ *    `src/lib/server/scheduler/index.ts` has the history.
  * 2. **`startJobScheduler(…)` — only when `isSchedulerProcess` says so.** That predicate is `false`
  *    while `building` and `false` under Vitest; see the periodic-trigger section in
  *    `src/lib/server/scheduler/index.ts` for what each exclusion is for and for why the handle is
@@ -80,9 +78,7 @@ import { getTextDirection } from '#lib/paraglide/runtime.js';
  *    its first query rather than when it is constructed.
  */
 
-registerEmailJobs();
-registerDuesJobs();
-registerReportJobs();
+registerApplicationJobs();
 
 if (isSchedulerProcess({ building })) {
 	startJobScheduler({ db: database(), clock: systemClock, registry: applicationJobs });
