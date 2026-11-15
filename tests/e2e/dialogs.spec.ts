@@ -1,4 +1,5 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 /**
  * Proves `dialog:modal { margin: auto; }` in `src/app.css` really centers an open `<dialog>` on the
@@ -10,17 +11,9 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
  * `src/routes/(app)/admin/units/[id]/finance/+page.svelte`. It is only ever cancelled here: Data
  * Contoh is shared across specs in this run, and confirming would void a seeded Tagihan for good.
  *
- * The sign-in helper is copied from `tests/e2e/payments.spec.ts` rather than imported: importing a
- * spec file would register its tests a second time, and this repository keeps no shared e2e helper
- * module yet.
+ * The page is the Data Contoh superuser's (`README.md`, "Data Contoh", on unit `A-01`), already
+ * signed in: the `superuserPage` fixture of `./fixtures.ts` signs in once per worker.
  */
-
-/** The Data Contoh superuser account (`README.md`, "Data Contoh"), on unit `A-01`. */
-const SUPERUSER_EMAIL = 'superuser@komplek.local';
-const SUPERUSER_PASSWORD = 'kata-sandi-dummy-123';
-
-/** The label on the address field in the sign-in form. */
-const EMAIL_FIELD = 'Alamat email';
 
 /** How far off-center the dialog's midpoint may land, on each axis, and still count as centered. */
 const CENTER_TOLERANCE_PIXELS = 2;
@@ -32,22 +25,13 @@ const VIEWPORTS = [
 ];
 
 /**
- * Opens `path` and waits until the page can be typed into. Copied from `tests/e2e/payments.spec.ts`
- * and `tests/e2e/auth.spec.ts`: hydration overwrites anything typed before it runs, and
- * `networkidle` is the signal that it has already happened.
+ * Opens `path` and waits until the page can be typed into. Copied from `tests/e2e/auth.spec.ts`:
+ * hydration overwrites anything typed before it runs, and `networkidle` is the signal that it has
+ * already happened.
  */
 async function open(page: Page, path: string): Promise<void> {
 	await page.goto(path);
 	await page.waitForLoadState('networkidle');
-}
-
-/** Signs the Data Contoh superuser in on `page`. */
-async function signInAsSuperuser(page: Page): Promise<void> {
-	await open(page, '/login');
-	await page.getByLabel(EMAIL_FIELD).fill(SUPERUSER_EMAIL);
-	await page.getByLabel('Kata sandi').fill(SUPERUSER_PASSWORD);
-	await page.getByRole('button', { name: 'Masuk' }).click();
-	await expect(page).toHaveURL(/\/$/);
 }
 
 /**
@@ -104,9 +88,10 @@ async function centerOffsetFromViewport(locator: Locator): Promise<{ x: number; 
 }
 
 for (const viewport of VIEWPORTS) {
-	test(`the batalkan Tagihan dialog is centered at ${viewport.name}`, async ({ page }) => {
+	test(`the batalkan Tagihan dialog is centered at ${viewport.name}`, async ({
+		superuserPage: page
+	}) => {
 		await page.setViewportSize({ width: viewport.width, height: viewport.height });
-		await signInAsSuperuser(page);
 		await openUnitA01Finance(page);
 
 		// `.first()` is intentional here too: A-01 can carry more than one un-voided Tagihan (a
