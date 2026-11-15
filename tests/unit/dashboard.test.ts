@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { rupiah, type Rupiah } from '#lib/money.ts';
 import { civilDayOf } from '#lib/time.ts';
@@ -28,22 +28,19 @@ import { recordOpeningBalance } from '#lib/server/services/cash/opening-balance.
 import { recordCashTransaction } from '#lib/server/services/cash/transaction.ts';
 import { adminDashboard, residentDashboard } from '#lib/server/services/dashboard/index.ts';
 import { issueInvoicesForPeriod } from '#lib/server/services/dues/issuance.ts';
-import { INVOICE_STATUS, invoiceStatus } from '#lib/server/services/dues/queries.ts';
 
 /**
  * The Beranda service over a database seeded once: two houses billed for `2026-09` through the real
  * issuance path, one of them paid off, one Pembayaran still waiting, an opening balance in the month
  * before and two Transaksi Kas inside the month, two Keluhan, and three Post of which one is a draft.
  *
- * Two things this file is careful about:
- *
- * 1. **The invoice figures are compared, never memorised.** `the invoice figures agree with
- *    invoiceStatus` reads the same rows back and folds them with `invoiceStatus` itself, so the test
- *    fails if the service ever starts deciding "lunas" or "menunggak" its own way, not only if the
- *    numbers move.
- * 2. **Every figure is pinned to a fake `Clock`**, including the WIB month boundary: half past
- *    midnight on 1 September in Jakarta is still 31 August in UTC, and the summary must be
- *    September's either way.
+ * What "lunas", "menunggak" and "what is still owed" mean is not tested here: the Beranda reads
+ * them from `invoiceStandings` in `src/lib/server/services/dues/invoice-standing.ts`, and
+ * `tests/unit/invoice-standing.test.ts` tests that module and proves the Beranda, the Laporan Bulanan
+ * and "Tagihan saya" agree on one set of Tagihan. This file checks how the Beranda puts its figures
+ * together, with every figure pinned to a fake `Clock`, including the WIB month boundary: half past
+ * midnight on 1 September in Jakarta is still 31 August in UTC, and the summary must be September's
+ * either way.
  */
 
 const testDb = testDatabase();
@@ -360,14 +357,6 @@ describe('adminDashboard', () => {
 		expect(summary.invoices.overdueCount).toBe(0);
 		expect(summary.invoices.paidCount).toBe(1);
 	});
-
-	it('agrees with invoiceStatus computed over the same rows', async () => {
-		const clock = new FakeClock(DURING_MONTH);
-		const summary = await adminDashboard(testDb.db, clock, pengurus.userId);
-		const expected = await invoiceFiguresFromInvoiceStatus(clock);
-
-		expect(summary.invoices).toEqual(expected);
-	});
 });
 
 describe('residentDashboard', () => {
@@ -502,63 +491,3 @@ describe('residentDashboard', () => {
 		expect(summary).toMatchObject({ hasUnit: false, units: [] });
 	});
 });
-
-/**
- * The same six figures, worked out here from the rows in the database and `invoiceStatus` itself.
- *
- * Deliberately not a copy of the service's shape: it reads the Tagihan and the Alokasi back, asks
- * `invoiceStatus` what each one is, and adds them up, so the comparison proves the service uses that
- * definition rather than proving it still returns the numbers somebody typed into this file.
- */
-async function invoiceFiguresFromInvoiceStatus(clock: FakeClock) {
-	const rows = await testDb.db
-		.select({ id: invoices.id, amount: invoices.amount, dueDate: invoices.dueDate })
-		.from(invoices)
-		.where(eq(invoices.period, MONTH));
-	const allocated = await testDb.db
-		.select({ invoiceId: allocations.invoiceId, amount: allocations.amount })
-		.from(allocations)
-		.where(
-			inArray(
-				allocations.invoiceId,
-				rows.map((row) => row.id)
-			)
-		);
-
-	const today = civilDayOf(clock.now());
-
-	let issuedAmount = 0;
-	let paidCount = 0;
-	let paidAmount = 0;
-	let overdueCount = 0;
-	let overdueAmount = 0;
-	for (const row of rows) {
-		const allocatedAmount = rupiah(
-			allocated
-				.filter((allocation) => allocation.invoiceId === row.id)
-				.reduce((total, allocation) => total + allocation.amount, 0)
-		);
-		issuedAmount += row.amount;
-		const status = invoiceStatus(
-			{ amount: row.amount, allocatedAmount, dueDate: row.dueDate, voidedAt: null },
-			today
-		);
-		if (status === INVOICE_STATUS.paid) {
-			paidCount += 1;
-			paidAmount += row.amount;
-		}
-		if (status === INVOICE_STATUS.overdue) {
-			overdueCount += 1;
-			overdueAmount += row.amount - allocatedAmount;
-		}
-	}
-
-	return {
-		issuedCount: rows.length,
-		issuedAmount: rupiah(issuedAmount),
-		paidCount,
-		paidAmount: rupiah(paidAmount),
-		overdueCount,
-		overdueAmount: rupiah(overdueAmount)
-	};
-}

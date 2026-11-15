@@ -1,48 +1,36 @@
-import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { rupiah, type Rupiah } from '#lib/money.ts';
 import { ACTION, requirePermission, type DatabaseWriter } from '../../authz';
-import { allocations } from '../../db/schema/allocation';
 import { invoices } from '../../db/schema/invoice';
 import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
-import { COMPLEX_TIME_ZONE } from './issuance';
-import { isInvoiceVisible, residentViewFor } from '../occupancy/resident-view';
+import { residentViewFor } from '../occupancy/resident-view';
+import {
+	INVOICE_STATUS,
+	invoiceStandings,
+	type InvoiceStanding,
+	type InvoiceStatus
+} from './invoice-standing';
 
 /**
  * Reading Tagihan back, from the two angles `docs/spec-iuran-v1.md` asks a screen for: "saya masih
  * harus bayar berapa" for a warga, and "siapa saja yang menunggak" for an admin — a question the
  * spec is explicit nobody else may ask ("Daftar penunggak … hanya bisa dibuka oleh admin").
  * `./invoice.ts` and `./issuance.ts` own writing a Tagihan; this module only ever reads `invoices`
- * and `allocations` and writes nothing.
+ * and writes nothing.
  *
- * ## Status is computed here, once, and nowhere else
+ * ## Where a Tagihan stands is not decided here
  *
  * `invoices` has no status column — see that schema's own doc comment — so every screen that shows
- * "lunas", "sebagian", "belum bayar" or "menunggak" has to compute the same comparison the same way,
- * or two screens can disagree about one Tagihan. `invoiceStatus` below is that one comparison,
- * exported and pure so a test can walk every combination of amount, allocation and due date without
- * a database.
+ * "lunas", "sebagian", "belum bayar" or "menunggak" has to compute the same thing the same way, or
+ * two screens can disagree about one Tagihan. Since #320 every read below selects its Tagihan and
+ * hands them to `invoiceStandings` in `./invoice-standing.ts`, which sums their Alokasi, subtracts,
+ * and decides the status on today's WIB day (`civilDayOf` in `src/lib/time.ts`, read once per call).
+ * This module adds no sum, no remainder and no "today" of its own: it chooses which Tagihan, joins
+ * the house's block and number, and sorts.
  *
- * ## Which "today" decides "sudah lewat jatuh tempo"
- *
- * This is the decision `./issuance.ts`'s own doc comment leaves to "the iuran spec", naming the gap
- * outright: `currentDay(clock)` in `../occupancy/visibility.ts` reads a **UTC** calendar day, while
- * `dueDateOfPeriod` in `./invoice.ts` writes a due date that means the fifth **in `COMPLEX_TIME_ZONE`
- * (Asia/Jakarta)** — the same zone issuance reads the Tarif and the Pembebasan against. Comparing a
- * Jakarta-meant date to a UTC-read "today" would not fail loudly; it would flip the menunggak badge
- * at the wrong instant, up to seven hours off, twice a day, forever.
- *
- * This module reads "today" in `COMPLEX_TIME_ZONE`, not in UTC, with `todayInComplexZone` below —
- * the same `Intl.DateTimeFormat(timeZone, …)` technique `civilDateFormatter` in
- * `src/lib/server/scheduler/registry.ts` already uses to turn an instant into a civil date without
- * depending on locale part order. The choice is deliberate rather than a copy of what the rest of
- * this codebase already does: `duesRateOn`'s "in force today" and `visibility.ts`'s "living here
- * now" both still read UTC, and both say plainly that is a known, accepted skew this ticket is not
- * the one to close. Menunggak is different — it is the one figure this whole spec exists to get
- * right ("saya masih harus bayar berapa"), it is read against a due date that was itself written in
- * Jakarta's calendar, and admin's daftar penunggak is exactly the number a pengurus acts on. Reusing
- * the UTC convention here would not be consistency; it would be the same seven-hour error the rest
- * of the codebase tolerates, applied to the one number this ticket is responsible for getting right.
+ * "Today" is the WIB day because a due date is: `dueDateOfPeriod` in `./invoice.ts` writes the fifth
+ * of the month in Jakarta's calendar, so menunggak flips at WIB midnight, not seven hours later.
  *
  * ## Voided Tagihan
  *
@@ -53,58 +41,12 @@ import { isInvoiceVisible, residentViewFor } from '../occupancy/resident-view';
  */
 
 /**
- * What a computed Tagihan status can be. Not in `CONTEXT.md`'s "Nama di kode" table because it is
- * not a stored value with a value set to enumerate — `docs/spec-iuran-v1.md:163-165` is explicit
- * that there is no status column at all. `void` is the one exception, and it is already the code
- * name `CONTEXT.md` gives "pembatalan Tagihan".
+ * The status vocabulary, and its pure rule, re-exported from `./invoice-standing.ts` where they now
+ * live. The re-export keeps the imports outside #320's surface compiling unchanged: the type in
+ * `src/lib/components/dues/invoice-status-badge.svelte` and `invoice-card.svelte`, and the rule in
+ * `tests/unit/invoice-void.test.ts`. A new caller imports from `./invoice-standing.ts`.
  */
-export const INVOICE_STATUS = {
-	paid: 'paid',
-	partial: 'partial',
-	unpaid: 'unpaid',
-	overdue: 'overdue',
-	void: 'void'
-} as const;
-
-/** One of the values `INVOICE_STATUS` names. */
-export type InvoiceStatus = (typeof INVOICE_STATUS)[keyof typeof INVOICE_STATUS];
-
-/** Just enough of a Tagihan, plus what has been allocated to it, to decide its status. */
-export interface InvoiceStatusInput {
-	readonly amount: Rupiah;
-	readonly allocatedAmount: Rupiah;
-	/** The day payment is due, as `YYYY-MM-DD`. */
-	readonly dueDate: string;
-	/** When this Tagihan was cancelled, or `null` while it stands. */
-	readonly voidedAt: Date | null;
-}
-
-/**
- * A Tagihan's status, computed rather than read — `docs/spec-iuran-v1.md:163-165` verbatim:
- * "Lunas, sebagian, atau belum bayar adalah perbandingan antara besaran Tagihan dan jumlah
- * Alokasinya. Menunggak adalah belum lunas dan sudah lewat jatuh tempo."
- *
- * Menunggak takes precedence over sebagian and belum bayar rather than sitting beside them: a
- * Tagihan that is both partly paid and past its due date is shown as menunggak, not sebagian, which
- * is what the glossary's own wording ("belum lunas **dan** sudah lewat jatuh tempo") asks for — it
- * describes one state, not a fifth combination.
- *
- * @param today the day, as `YYYY-MM-DD`, "sudah lewat jatuh tempo" is decided against. See this
- *   module's doc comment for why that day has to come from `todayInComplexZone`, not
- *   `currentDay(clock)`.
- */
-export function invoiceStatus(invoice: InvoiceStatusInput, today: string): InvoiceStatus {
-	if (invoice.voidedAt !== null) {
-		return INVOICE_STATUS.void;
-	}
-	if (invoice.allocatedAmount >= invoice.amount) {
-		return INVOICE_STATUS.paid;
-	}
-	if (invoice.dueDate < today) {
-		return INVOICE_STATUS.overdue;
-	}
-	return invoice.allocatedAmount > 0 ? INVOICE_STATUS.partial : INVOICE_STATUS.unpaid;
-}
+export { INVOICE_STATUS, invoiceStatus, type InvoiceStatus } from './invoice-standing';
 
 /**
  * Thrown by `invoiceHistoryForUnit` when `unitId` names no row.
@@ -155,11 +97,12 @@ export interface ResidentInvoicesView {
  * rentang masa huninya".
  *
  * Which houses those are, and which of a house's Tagihan this person may see, are both answered by
- * `residentViewFor` and `isInvoiceVisible` in `../occupancy/resident-view.ts`, the one module every
- * personal screen asks. That module reads no role, so a superuser or an admin who lives in a house
- * sees here exactly what any other Warga of that house would: never the months a previous occupant
- * left behind. The admin screens (`invoiceHistoryForUnit` below) are where a house's whole history
- * is shown.
+ * `residentViewFor` in `../occupancy/resident-view.ts`, the one module every personal screen asks;
+ * the view is handed to `invoiceStandings` as `visibleTo`, which keeps only the Tagihan that
+ * module's `isInvoiceVisible` lets this person see. That module reads no role, so a superuser or an
+ * admin who lives in a house sees here exactly what any other Warga of that house would: never the
+ * months a previous occupant left behind. The admin screens (`invoiceHistoryForUnit` below) are
+ * where a house's whole history is shown.
  *
  * Refuses nobody and checks no permission: the only key this function takes is the caller's own
  * account id, the same reasoning `occupiedUnitsForUser` in `../occupancy/index.ts` and
@@ -179,17 +122,9 @@ export async function invoicesForUser(
 	}
 
 	const rows = await invoiceRowsForUnits(db, unitIds, { includeVoid: false });
-	const visibleRows = rows.filter((row) => isInvoiceVisible(view, row));
+	const standings = await invoiceStandings(db, clock, rows, { visibleTo: view });
 
-	const allocatedByInvoice = await allocatedAmountsByInvoice(
-		db,
-		visibleRows.map((row) => row.invoiceId)
-	);
-	const today = todayInComplexZone(clock);
-
-	const invoiceRows: ResidentInvoiceRow[] = visibleRows
-		.map((row) => toInvoiceRow(row, allocatedByInvoice, today))
-		.sort(byPeriodDescending);
+	const invoiceRows: ResidentInvoiceRow[] = standings.map(toInvoiceRow).sort(byPeriodDescending);
 
 	const totalOverdue = rupiah(
 		invoiceRows
@@ -215,10 +150,12 @@ export interface OverdueUnitRow {
  * Every house with at least one Tagihan menunggak, largest total first — "Admin melihat daftar
  * rumah yang menunggak beserta unit, jumlah bulan, dan total tunggakan, terurut dari yang terbesar."
  *
- * A voided Tagihan is never menunggak — cancelling one is exactly the acknowledgement that nothing
- * is owed on it any more — and neither is one that is fully allocated despite being past due, which
- * is why the SQL filter (not void, past due) is only the first half of the test and the amount is
- * still checked in `toOverdueTotals` below.
+ * Menunggak is `invoiceStandings`'s `overdue`, never a date comparison written here. A voided
+ * Tagihan is never menunggak — cancelling one is exactly the acknowledgement that nothing is owed on
+ * it any more — so the `where` clause leaves voided rows out before anything is summed. Every other
+ * Tagihan of the complex is read and judged, including the ones not yet due; those are at most one
+ * month per house, and filtering them in SQL would need a second "today" beside the one
+ * `invoiceStandings` reads.
  *
  * @throws {PermissionDeniedError} when `actorId` does not hold `ACTION.readOverdue` — "Peran warga
  *   tidak dapat membuka daftar penunggak", including a direct call that skips the screen entirely.
@@ -230,29 +167,22 @@ export async function listOverdueUnits(
 ): Promise<readonly OverdueUnitRow[]> {
 	await requirePermission(db, actorId, ACTION.readOverdue);
 
-	const today = todayInComplexZone(clock);
 	const candidates = await db
 		.select({
 			invoiceId: invoices.id,
 			unitId: invoices.unitId,
 			block: units.block,
 			number: units.number,
-			amount: invoices.amount
+			period: invoices.period,
+			amount: invoices.amount,
+			dueDate: invoices.dueDate,
+			voidedAt: invoices.voidedAt
 		})
 		.from(invoices)
 		.innerJoin(units, eq(units.id, invoices.unitId))
-		.where(and(isNull(invoices.voidedAt), lt(invoices.dueDate, today)));
+		.where(isNull(invoices.voidedAt));
 
-	if (candidates.length === 0) {
-		return [];
-	}
-
-	const allocatedByInvoice = await allocatedAmountsByInvoice(
-		db,
-		candidates.map((candidate) => candidate.invoiceId)
-	);
-
-	return toOverdueTotals(candidates, allocatedByInvoice);
+	return toOverdueTotals(await invoiceStandings(db, clock, candidates));
 }
 
 /** One Tagihan on admin's full history screen for a house. */
@@ -304,20 +234,14 @@ export async function invoiceHistoryForUnit(
 	}
 
 	const rows = await invoiceRowsForUnits(db, [unitId], { includeVoid: true });
-	const allocatedByInvoice = await allocatedAmountsByInvoice(
-		db,
-		rows.map((row) => row.invoiceId)
-	);
-	const today = todayInComplexZone(clock);
-
-	const invoiceRows = rows
-		.map((row) => toHistoryRow(row, allocatedByInvoice, today))
+	const invoiceRows = (await invoiceStandings(db, clock, rows))
+		.map(toHistoryRow)
 		.sort(byPeriodDescending);
 
 	return { unitId: unit.id, block: unit.block, number: unit.number, invoices: invoiceRows };
 }
 
-/** One raw row `invoiceRowsForUnits` selects, before an allocated amount or a status is attached. */
+/** One raw row `invoiceRowsForUnits` selects, before `invoiceStandings` adds its amounts and status. */
 interface RawInvoiceRow {
 	readonly invoiceId: string;
 	readonly unitId: string;
@@ -331,36 +255,11 @@ interface RawInvoiceRow {
 	readonly voidReason: string | null;
 }
 
-/** What `allocatedByInvoice` and `invoiceStatus` add to one `RawInvoiceRow`. */
-interface ComputedInvoiceAmounts {
-	readonly allocatedAmount: Rupiah;
-	readonly remainingAmount: Rupiah;
-	readonly status: InvoiceStatus;
-}
+/** One `RawInvoiceRow` with where it stands, as `invoiceStandings` hands it back. */
+type StandingInvoiceRow = RawInvoiceRow & InvoiceStanding;
 
-/** The allocated amount, the remaining amount, and the status computed from both. */
-function computeInvoiceAmounts(
-	row: RawInvoiceRow,
-	allocatedByInvoice: ReadonlyMap<string, Rupiah>,
-	today: string
-): ComputedInvoiceAmounts {
-	const allocatedAmount = allocatedByInvoice.get(row.invoiceId) ?? rupiah(0);
-	return {
-		allocatedAmount,
-		remainingAmount: rupiah(row.amount - allocatedAmount),
-		status: invoiceStatus(
-			{ amount: row.amount, allocatedAmount, dueDate: row.dueDate, voidedAt: row.voidedAt },
-			today
-		)
-	};
-}
-
-/** `RawInvoiceRow`, plus the allocated amount and the status computed from it — a warga's own row. */
-function toInvoiceRow(
-	row: RawInvoiceRow,
-	allocatedByInvoice: ReadonlyMap<string, Rupiah>,
-	today: string
-): ResidentInvoiceRow {
+/** A warga's own row: the fields their screen shows, and nothing it does not. */
+function toInvoiceRow(row: StandingInvoiceRow): ResidentInvoiceRow {
 	return {
 		invoiceId: row.invoiceId,
 		unitId: row.unitId,
@@ -368,69 +267,62 @@ function toInvoiceRow(
 		number: row.number,
 		period: row.period,
 		amount: row.amount,
+		allocatedAmount: row.allocatedAmount,
+		remainingAmount: row.remainingAmount,
 		dueDate: row.dueDate,
 		issuedAt: row.issuedAt,
-		...computeInvoiceAmounts(row, allocatedByInvoice, today)
+		status: row.status
 	};
 }
 
-/** `RawInvoiceRow`, plus its computed amounts and its void reason — one row of admin's unit history. */
-function toHistoryRow(
-	row: RawInvoiceRow,
-	allocatedByInvoice: ReadonlyMap<string, Rupiah>,
-	today: string
-): UnitInvoiceHistoryRow {
+/** One row of admin's unit history: a warga's fields less the house, plus the void reason. */
+function toHistoryRow(row: StandingInvoiceRow): UnitInvoiceHistoryRow {
 	return {
 		invoiceId: row.invoiceId,
 		period: row.period,
 		amount: row.amount,
+		allocatedAmount: row.allocatedAmount,
+		remainingAmount: row.remainingAmount,
 		dueDate: row.dueDate,
 		issuedAt: row.issuedAt,
-		voidReason: row.voidReason,
-		...computeInvoiceAmounts(row, allocatedByInvoice, today)
+		status: row.status,
+		voidReason: row.voidReason
 	};
 }
 
-/** One candidate row `listOverdueUnits` reads before the allocated amount narrows it to menunggak. */
-interface OverdueCandidateRow {
-	readonly invoiceId: string;
+/** One standing Tagihan `listOverdueUnits` reads, with the house it belongs to. */
+interface OverdueCandidateRow extends InvoiceStanding {
 	readonly unitId: string;
 	readonly block: string;
 	readonly number: string;
-	readonly amount: Rupiah;
 }
 
 /**
- * `candidates` — already past due and never voided — reduced to the houses that are still owed
- * money on at least one of them, aggregated and sorted largest total first.
+ * `candidates` reduced to their menunggak Tagihan, aggregated per house and sorted largest total
+ * first. What is still owed is each Tagihan's `remainingAmount`, never its full amount.
  */
-function toOverdueTotals(
-	candidates: readonly OverdueCandidateRow[],
-	allocatedByInvoice: ReadonlyMap<string, Rupiah>
-): readonly OverdueUnitRow[] {
+function toOverdueTotals(candidates: readonly OverdueCandidateRow[]): readonly OverdueUnitRow[] {
 	const byUnit = new Map<
 		string,
 		{ block: string; number: string; overdueInvoiceCount: number; totalOverdue: number }
 	>();
 
 	for (const candidate of candidates) {
-		const allocatedAmount = allocatedByInvoice.get(candidate.invoiceId) ?? rupiah(0);
-		const remaining = candidate.amount - allocatedAmount;
-		if (remaining <= 0) {
+		if (candidate.status !== INVOICE_STATUS.overdue) {
 			continue;
 		}
 
 		const existing = byUnit.get(candidate.unitId);
 		if (existing) {
 			existing.overdueInvoiceCount += 1;
-			existing.totalOverdue += remaining;
+			existing.totalOverdue += candidate.remainingAmount;
 			continue;
 		}
 		byUnit.set(candidate.unitId, {
 			block: candidate.block,
 			number: candidate.number,
 			overdueInvoiceCount: 1,
-			totalOverdue: remaining
+			totalOverdue: candidate.remainingAmount
 		});
 	}
 
@@ -486,57 +378,4 @@ async function invoiceRowsForUnits(
 				options.includeVoid ? undefined : isNull(invoices.voidedAt)
 			)
 		);
-}
-
-/**
- * How much has been allocated to each of `invoiceIds`, keyed by invoice id and absent for one with
- * no allocation at all — the caller reads a missing entry as zero.
- *
- * `::text` and `coalesce`, the same idiom `SIGNED_TOTAL` in `src/lib/server/services/cash/balance.ts`
- * uses: PostgreSQL widens `sum(bigint)` to `numeric`, which the driver would otherwise hand back as
- * a string only sometimes depending on how it happens to be configured, and `sum` over an empty
- * group is `null`.
- */
-async function allocatedAmountsByInvoice(
-	db: DatabaseWriter,
-	invoiceIds: readonly string[]
-): Promise<ReadonlyMap<string, Rupiah>> {
-	if (invoiceIds.length === 0) {
-		return new Map();
-	}
-
-	const rows = await db
-		.select({
-			invoiceId: allocations.invoiceId,
-			total: sql<string>`coalesce(sum(${allocations.amount}), 0)::text`
-		})
-		.from(allocations)
-		.where(inArray(allocations.invoiceId, invoiceIds))
-		.groupBy(allocations.invoiceId);
-
-	return new Map(rows.map((row) => [row.invoiceId, rupiah(Number(row.total))]));
-}
-
-/**
- * A formatter that renders an instant as the calendar day it falls on in `COMPLEX_TIME_ZONE`. Built
- * once and reused — the same shape `civilDateFormatter` in `src/lib/server/scheduler/registry.ts`
- * already is, for the same reason: a fresh `Intl.DateTimeFormat` is not free to construct.
- */
-const OVERDUE_DAY_FORMATTER = new Intl.DateTimeFormat('en-US', {
-	timeZone: COMPLEX_TIME_ZONE,
-	year: 'numeric',
-	month: '2-digit',
-	day: '2-digit'
-});
-
-/**
- * `YYYY-MM-DD` for the day `clock.now()` falls on **in `COMPLEX_TIME_ZONE`**, built from the parts
- * rather than a formatted string so the order never depends on locale. See this module's doc
- * comment for why "sudah lewat jatuh tempo" is decided in this zone and not in UTC.
- */
-function todayInComplexZone(clock: Clock): string {
-	const parts = OVERDUE_DAY_FORMATTER.formatToParts(clock.now());
-	const partOfType = (type: Intl.DateTimeFormatPartTypes): string =>
-		parts.find((part) => part.type === type)?.value ?? '';
-	return `${partOfType('year')}-${partOfType('month')}-${partOfType('day')}`;
 }
