@@ -15,13 +15,18 @@ import type { Clock } from '../../ports/clock';
  * keuangan". The iuran spec and the kas-laporan spec both filter rows by date against this module;
  * neither reads `occupancies` for itself, and neither decides on its own what a resident may see.
  *
- * ## Personal screens do not call `unitVisibilityFor`
+ * ## `unitVisibilityFor` has no production caller, and personal screens must not call it
  *
  * Its `{ kind: 'all' }` answer is a pengurus right, and a pengurus who also lives in a house is a
- * Warga on their own screens. Since #313 every personal screen ("Tagihan saya", the payment form and
- * its guard, the payment list, the Warga card on the Beranda) asks `./resident-view.ts` instead,
- * which reads no role and builds its answer from `mergeDateRanges` and `isVisibleOn` below.
- * `unitVisibilityFor` stays for a screen that shows a Unit's history to whoever administers it.
+ * Warga on their own screens. Its only callers were two personal screens, "Tagihan saya" and the
+ * payment picker, and that answer leaked a previous occupant's Tagihan to a superuser living in the
+ * house. Since #313 every personal screen ("Tagihan saya", the payment form and its guard, the
+ * payment list, the Warga card on the Beranda) asks `./resident-view.ts` instead, which reads no
+ * role and builds its answer from `mergeDateRanges` and `isVisibleOn` below, and
+ * `tests/unit/occupancy-visibility.test.ts` holds that boundary. No admin screen calls
+ * `unitVisibilityFor` either: the admin Tagihan screens read a Unit's whole history behind their
+ * own permission check. It is kept, uncalled, because #313 keeps the "all" visibility for an admin
+ * history screen that may want it.
  *
  * ## The shape, and why it is this one
  *
@@ -97,8 +102,9 @@ export interface UnitVisibilityRequest {
 }
 
 /**
- * What `viewerUserId` may see of `unitId`'s history, **for an admin history screen only**. A
- * personal screen asks `./resident-view.ts`, which reads no role: see this module's doc comment.
+ * What `viewerUserId` may see of `unitId`'s history. **No production code calls this today**; it
+ * is kept for an admin history screen, and a personal screen must never call it, but ask
+ * `./resident-view.ts`, which reads no role. See this module's doc comment.
  *
  * `{ kind: 'all' }` for a caller holding `ACTION.manageOccupancies`; otherwise the days their own
  * occupancies of that unit cover, merged and sorted. An account with no `residents` row — an
