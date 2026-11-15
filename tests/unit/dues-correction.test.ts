@@ -1,13 +1,21 @@
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { describe, expect, it, vi } from 'vitest';
 import { PermissionDeniedError } from '#lib/errors.ts';
 import { rupiah, type Rupiah } from '#lib/money.ts';
 import { auditEntriesFor, recordAuditEntry } from '#lib/server/audit.ts';
 import { allocations } from '#lib/server/db/schema/allocation.ts';
 import { user } from '#lib/server/db/schema/auth.ts';
 import { ROLE, userRoles, type Role } from '#lib/server/db/schema/authz.ts';
+import {
+	CASH_CATEGORY_TYPE,
+	cashCategories,
+	SYSTEM_CATEGORY_KEY
+} from '#lib/server/db/schema/cash-category.ts';
+import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
 import { invoices } from '#lib/server/db/schema/invoice.ts';
 import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '#lib/server/db/schema/payment.ts';
+import { refunds } from '#lib/server/db/schema/refund.ts';
 import { residents } from '#lib/server/db/schema/resident.ts';
 import { units } from '#lib/server/db/schema/unit.ts';
 import { testDatabase } from '#lib/server/db/test-helpers.ts';
@@ -24,32 +32,39 @@ import {
 	CREDIT_REFUNDED_ACTION,
 	DUES_CORRECTION_ACTIONS,
 	INVOICE_VOIDED_ACTION,
+	REFUND_REVERSED_ACTION,
 	REFUND_RULE,
 	RELEASE_RULE,
+	REVERSE_REFUND_RULE,
 	RefundRuleError,
 	ReleaseRuleError,
+	ReverseRefundRuleError,
 	VOID_RULE,
 	VoidRuleError,
 	duesCorrectionSummary,
 	readDuesCorrectionRecord,
 	refundCredit,
 	releaseAllocation,
+	reverseRefund,
 	voidInvoice,
 	type DuesCorrectionRecord,
 	type StoredDuesCorrectionRow
 } from '#lib/server/services/dues/dues-correction.ts';
+import { INVOICE_STATUS } from '#lib/server/services/dues/invoice-standing.ts';
 import * as invoiceVoidPath from '#lib/server/services/dues/invoice-void.ts';
 
 /**
- * The dues-correction module (#324, spec #308 decision 4): Pembatalan Tagihan, Pelepasan Alokasi
- * and Pengembalian behind one module, sharing one right, one reason rule and one typed Audit Log
- * record per action, and the corrections history reading those records through the same types.
+ * The dues-correction module (#324, spec #308 decision 4): Pembatalan Tagihan, Pelepasan Alokasi,
+ * Pengembalian and, since #329, Pembatalan Pengembalian behind one module, sharing one right, one
+ * reason rule and one typed Audit Log record per action, and the corrections history reading those
+ * records through the same types.
  *
- * The history is read here from records the three actions really wrote, never from rows a test
- * made up: a field renamed in a record type is a compile error in the writer, in the record's check
- * and in its history summary, and a writer and reader that disagreed at run time would fail the
- * first test below. Each action's own refusals stay in its own file (`invoice-void.test.ts`,
- * `allocation-release.test.ts`, `credit-refund.test.ts`); this file holds what the three share.
+ * The history is read here from records the actions really wrote, never from rows a test made up:
+ * a field renamed in a record type is a compile error in the writer, in the record's check and in
+ * its history summary, and a writer and reader that disagreed at run time would fail the first test
+ * below. Each action's own refusals stay in its own file (`invoice-void.test.ts`,
+ * `allocation-release.test.ts`, `credit-refund.test.ts`, `refund-reverse.test.ts`); this file holds
+ * what they share.
  */
 
 const testDb = testDatabase();
@@ -66,6 +81,7 @@ const REFUND_DAY = '2026-03-08';
 const VOID_REASON = 'Tagihan terbit untuk rumah yang sedang dibebaskan.';
 const RELEASE_REASON = 'Uangnya untuk bulan lain; peruntukannya salah pilih.';
 const REFUND_REASON = 'Masa huninya berakhir dan saldo titipannya dikembalikan.';
+const REVERSE_REASON = 'Pengembalian salah catat: uangnya tidak jadi diserahkan.';
 
 /** The display name of the superuser who makes every correction in this file. */
 const ACTOR_NAME = 'Pengurus Koreksi Iuran';
@@ -164,10 +180,52 @@ async function insertAllocation(
 }
 
 /**
- * One house that goes through all three corrections, a minute apart, every reason padded with
+ * A Pengembalian of `amount` from `paymentId`, written straight into `refunds` and the buku kas with
+ * the one cash expense row it points at, and so with no Audit Log record: the arrangement for a
+ * Pembatalan Pengembalian in the shared-run table, whose tests read a history that must hold only
+ * the reversal. Returns the `refunds` row's id.
+ */
+async function insertRefundRows(paymentId: string, amount: Rupiah): Promise<string> {
+	const refundedBy = await insertUserWithRole('Pengurus Pengembalian Tertanam', ROLE.superuser);
+	const [category] = await testDb.db
+		.select()
+		.from(cashCategories)
+		.where(eq(cashCategories.systemKey, SYSTEM_CATEGORY_KEY.dues));
+	const [cashRow] = await testDb.db
+		.insert(cashTransactions)
+		.values({
+			id: randomUUID(),
+			occurredOn: REFUND_DAY,
+			type: CASH_CATEGORY_TYPE.expense,
+			categoryId: category.id,
+			amount,
+			description: `Pengembalian saldo titipan (pembayaran ${paymentId})`,
+			attachmentKey: null,
+			recordedBy: refundedBy,
+			createdAt: new Date(START)
+		})
+		.returning();
+	const [row] = await testDb.db
+		.insert(refunds)
+		.values({
+			paymentId,
+			cashTransactionId: cashRow.id,
+			amount,
+			reason: REFUND_REASON,
+			refundedBy,
+			createdAt: new Date(START)
+		})
+		.returning();
+	return row.id;
+}
+
+/**
+ * One house that goes through all four corrections, a minute apart, every reason padded with
  * spaces: a Rp120.000 Tagihan for February cancelled, a Rp150.000 Alokasi of a Rp200.000
- * Pembayaran released, and Rp80.000 of the Saldo Titipan that leaves returned. Three different
- * amounts, so the history can only show each one by reading it from the right record and field.
+ * Pembayaran released, Rp80.000 of the Saldo Titipan that leaves returned, and that Pengembalian
+ * reversed. The first three amounts differ, so the history can only show each one by reading it
+ * from the right record and field; the reversal's is the refund's by definition, and its own
+ * record type and reason tell it apart.
  */
 async function correctOneHouse() {
 	const actorId = await insertRegisteredSuperuser(ACTOR_NAME);
@@ -197,6 +255,12 @@ async function correctOneHouse() {
 		occurredOn: REFUND_DAY,
 		reason: `  ${REFUND_REASON}  `
 	});
+	clock.advance(MINUTE);
+	const reversal = await reverseRefund(testDb.db, clock, {
+		actorId,
+		refundId: refund.portions[0].refund.id,
+		reason: `  ${REVERSE_REASON}  `
+	});
 
 	return {
 		actorId,
@@ -205,7 +269,9 @@ async function correctOneHouse() {
 		paidInvoiceId,
 		paymentId,
 		allocationId,
-		refundCashTransactionId: refund.portions[0].cashTransaction.id
+		refundId: refund.portions[0].refund.id,
+		refundCashTransactionId: refund.portions[0].cashTransaction.id,
+		reversalCorrectionId: reversal.correction.id
 	};
 }
 
@@ -217,7 +283,7 @@ async function onlyAuditRowOf(targetId: string) {
 }
 
 describe('the corrections history', () => {
-	it('reads the records the three actions really wrote, newest first, one Unit only', async () => {
+	it('reads the records the four actions really wrote, newest first, one Unit only', async () => {
 		const house = await correctOneHouse();
 		// A correction on another house, which must not reach this house's history.
 		const otherActorId = await insertRegisteredSuperuser('Pengurus Rumah Lain');
@@ -240,6 +306,14 @@ describe('the corrections history', () => {
 				period: entry.period
 			}))
 		).toEqual([
+			{
+				action: REFUND_REVERSED_ACTION,
+				occurredAt: '2026-03-10T09:03:00.000Z',
+				actorName: ACTOR_NAME,
+				reason: REVERSE_REASON,
+				amount: 80_000,
+				period: null
+			},
 			{
 				action: CREDIT_REFUNDED_ACTION,
 				occurredAt: '2026-03-10T09:02:00.000Z',
@@ -269,6 +343,7 @@ describe('the corrections history', () => {
 
 		// Each entry is keyed by the audit row it was read from.
 		expect(history.map((entry) => entry.id)).toEqual([
+			(await onlyAuditRowOf(house.refundId)).id,
 			(await onlyAuditRowOf(house.unitId)).id,
 			(await onlyAuditRowOf(house.allocationId)).id,
 			(await onlyAuditRowOf(house.voidedInvoiceId)).id
@@ -281,6 +356,7 @@ describe('the corrections history', () => {
 		const voided = readDuesCorrectionRecord(await onlyAuditRowOf(house.voidedInvoiceId));
 		const released = readDuesCorrectionRecord(await onlyAuditRowOf(house.allocationId));
 		const refunded = readDuesCorrectionRecord(await onlyAuditRowOf(house.unitId));
+		const reversed = readDuesCorrectionRecord(await onlyAuditRowOf(house.refundId));
 
 		expect(voided).toEqual({
 			action: INVOICE_VOIDED_ACTION,
@@ -322,6 +398,20 @@ describe('the corrections history', () => {
 				]
 			}
 		} satisfies DuesCorrectionRecord);
+		expect(reversed).toEqual({
+			action: REFUND_REVERSED_ACTION,
+			targetId: house.refundId,
+			before: null,
+			after: {
+				unitId: house.unitId,
+				reason: REVERSE_REASON,
+				paymentId: house.paymentId,
+				cashTransactionId: house.refundCashTransactionId,
+				correctionId: house.reversalCorrectionId,
+				amount: rupiah(80_000),
+				occurredOn: REFUND_DAY
+			}
+		} satisfies DuesCorrectionRecord);
 	});
 
 	it('still lists a row that is not its action record, with the blank fields the old reader showed', async () => {
@@ -336,9 +426,20 @@ describe('the corrections history', () => {
 			before: { voidedAt: null },
 			after: { unitId, period: '2026-02', amount: 120_000, reason: 42 }
 		});
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+		const warnings: string[] = [];
 
-		const history = await correctionsHistoryFor(testDb.db, actorId, unitId);
+		const history = await correctionsHistoryFor(testDb.db, actorId, unitId).finally(() => {
+			// Read before the restore, which empties the record of calls.
+			warnings.push(...warn.mock.calls.map((call: unknown[]) => String(call[0])));
+			warn.mockRestore();
+		});
 
+		// Said in the log, naming the row and its action, so a check a new action's writer does not
+		// satisfy cannot pass as a correction whose reason was simply never given.
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain(history[0].id);
+		expect(warnings[0]).toContain(INVOICE_VOIDED_ACTION);
 		expect(history).toHaveLength(1);
 		expect(history[0]).toMatchObject({
 			action: INVOICE_VOIDED_ACTION,
@@ -348,17 +449,25 @@ describe('the corrections history', () => {
 		});
 	});
 
-	it('asks for exactly the three actions this module writes', () => {
+	it('asks for exactly the four actions this module writes', () => {
 		expect([...DUES_CORRECTION_ACTIONS].sort()).toEqual(
-			[ALLOCATION_RELEASED_ACTION, CREDIT_REFUNDED_ACTION, INVOICE_VOIDED_ACTION].sort()
+			[
+				ALLOCATION_RELEASED_ACTION,
+				CREDIT_REFUNDED_ACTION,
+				INVOICE_VOIDED_ACTION,
+				REFUND_REVERSED_ACTION
+			].sort()
 		);
 	});
 });
 
 describe('the unit finance screen model', () => {
-	it('sums each Tagihan through the module of where a Tagihan stands, agreeing with the rows it lists', async () => {
-		// #324 moved the per-Tagihan sum out of `unitFinanceFor` into `allocatedAmountsOf`, read in one
-		// snapshot with the Alokasi rows, so the total shown and the rows listed under it still agree.
+	it('sums and labels each Tagihan through the module of where a Tagihan stands, agreeing with the rows it lists', async () => {
+		// #324 moved the per-Tagihan sum out of `unitFinanceFor` into `./invoice-standing.ts`, read in
+		// one snapshot with the Alokasi rows, so the total shown and the rows listed under it still
+		// agree. #329 reads the status from there too (`invoiceStandings`), so the screen decides no
+		// label of its own: on 2026-03-10 the February Tagihan (due on the 5th) is past due, so partly
+		// paid it is menunggak, not sebagian.
 		const actorId = await insertRegisteredSuperuser('Pengurus Layar Keuangan');
 		const unitId = await insertUnit();
 		const january = await insertInvoice(unitId, '2026-01', rupiah(150_000));
@@ -375,7 +484,7 @@ describe('the unit finance screen model', () => {
 			reason: VOID_REASON
 		});
 
-		const finance = await unitFinanceFor(testDb.db, actorId, unitId);
+		const finance = await unitFinanceFor(testDb.db, new FakeClock(START), actorId, unitId);
 
 		// Rp300.000 verified, Rp240.000 allocated.
 		expect(finance.creditBalance).toBe(60_000);
@@ -385,15 +494,24 @@ describe('the unit finance screen model', () => {
 				allocatedAmount: invoice.allocatedAmount,
 				remainingAmount: invoice.remainingAmount,
 				voided: invoice.voidedAt !== null,
+				status: invoice.status,
 				listed: invoice.allocations.map((allocation) => allocation.allocationId).sort()
 			}))
 		).toEqual([
-			{ invoiceId: march, allocatedAmount: 0, remainingAmount: 150_000, voided: true, listed: [] },
+			{
+				invoiceId: march,
+				allocatedAmount: 0,
+				remainingAmount: 150_000,
+				voided: true,
+				status: INVOICE_STATUS.void,
+				listed: []
+			},
 			{
 				invoiceId: february,
 				allocatedAmount: 90_000,
 				remainingAmount: 60_000,
 				voided: false,
+				status: INVOICE_STATUS.overdue,
 				listed: [second, third].sort()
 			},
 			{
@@ -401,6 +519,7 @@ describe('the unit finance screen model', () => {
 				allocatedAmount: 150_000,
 				remainingAmount: 0,
 				voided: false,
+				status: INVOICE_STATUS.paid,
 				listed: [first]
 			}
 		]);
@@ -473,7 +592,7 @@ describe('readDuesCorrectionRecord — every field checked against its record ty
 	});
 });
 
-/** One of the three actions, run against fresh rows, as the shared-run table below drives it. */
+/** One of the actions, run against fresh rows, as the shared-run table below drives it. */
 interface CorrectionCase {
 	readonly name: string;
 	/** The error class this action refuses an empty reason with, and the rule it names. */
@@ -559,6 +678,31 @@ const CASES: readonly CorrectionCase[] = [
 						unitId,
 						amount: rupiah(0),
 						occurredOn: REFUND_DAY,
+						reason
+					})
+			};
+		}
+	},
+	{
+		name: 'Pembatalan Pengembalian',
+		reasonError: ReverseRefundRuleError,
+		rule: REVERSE_REFUND_RULE.reasonMissing,
+		arrange: async () => {
+			const unitId = await insertUnit();
+			// Written straight in, so the Unit's history starts empty and holds only the reversal.
+			const refundId = await insertRefundRows(
+				await insertVerifiedPayment(unitId, rupiah(100_000)),
+				rupiah(50_000)
+			);
+			return {
+				unitId,
+				run: (actorId, reason) =>
+					reverseRefund(testDb.db, new FakeClock(START), { actorId, refundId, reason }),
+				// A Pengembalian that does not exist.
+				runBrokenTwice: (actorId, reason) =>
+					reverseRefund(testDb.db, new FakeClock(START), {
+						actorId,
+						refundId: randomUUID(),
 						reason
 					})
 			};

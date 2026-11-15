@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
+import { NotFoundError, RuleViolationError } from '#lib/errors.ts';
 import type { Rupiah } from '#lib/money.ts';
 import { recordAuditEntry } from '../../audit';
 import { ACTION, requirePermission, type Transaction } from '../../authz';
 import type { Database } from '../../db';
 import { allocations, type Allocation } from '../../db/schema/allocation';
-import type { CashTransaction } from '../../db/schema/cash-transaction';
+import { cashTransactions, type CashTransaction } from '../../db/schema/cash-transaction';
 import { invoices, type Invoice } from '../../db/schema/invoice';
 import { payments } from '../../db/schema/payment';
 import { refunds, type Refund } from '../../db/schema/refund';
@@ -13,6 +14,7 @@ import { residents } from '../../db/schema/resident';
 import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
 import { recordDuesRefund } from '../cash/transaction';
+import { CASH_WRITE_KIND, writeCashTransaction } from '../cash/writer';
 import { currentDay } from '../occupancy/visibility';
 import { planCreditSpend } from './allocation';
 import { lockUnallocatedVerifiedPayments } from './credit-balance';
@@ -20,17 +22,19 @@ import { UnitNotFoundError } from './queries';
 
 /**
  * The dues-correction module (koreksi iuran, spec #308 decision 4): the superuser's corrections of
- * the dues side, and the typed Audit Log record each one leaves. Today it holds three actions, all
- * landed by #30 and gathered here by #324:
+ * the dues side, and the typed Audit Log record each one leaves. Today it holds four actions: the
+ * first three landed by #30 and gathered here by #324, the fourth added by #329:
  *
  * - **Pembatalan Tagihan** (`voidInvoice`): one Tagihan marked `void` with a reason, never deleted.
  * - **Pelepasan Alokasi** (`releaseAllocation`): one Alokasi deleted, its money Saldo Titipan again.
  * - **Pengembalian** (`refundCredit`): part of a Unit's Saldo Titipan paid back out of the kas.
+ * - **Pembatalan Pengembalian** (`reverseRefund`, spec #308 decision 6): one Pengembalian's cash
+ *   expense reversed by a Koreksi, its money Saldo Titipan again.
  *
- * Pembatalan Pengembalian (#329) and Pembatalan verifikasi (#331) join this same module. The
- * corrections history in `./corrections-history.ts` reads the records through the types declared
- * here, and the old homes of the three actions (`./invoice-void.ts`, `./allocation-release.ts`,
- * `./credit-refund.ts`) only re-export from here, because `src/lib/server/route-action.ts` and
+ * Pembatalan verifikasi (#331) joins this same module. The corrections history in
+ * `./corrections-history.ts` reads the records through the types declared here, and the old homes
+ * of the first three actions (`./invoice-void.ts`, `./allocation-release.ts`, `./credit-refund.ts`)
+ * only re-export from here, because `src/lib/server/route-action.ts` and
  * `tests/unit/unit-money-invariant.test.ts` import from those paths.
  *
  * `ACTION.correctDues` in `src/lib/server/authz.ts` is granted to `superuser` alone, so every
@@ -49,13 +53,14 @@ import { UnitNotFoundError } from './queries';
  *   statement of the transaction. An action does not call `recordAuditEntry` itself: it returns its
  *   record, so it can neither forget it nor write two.
  * - **The refusal for an empty reason stays each action's own** (`VOID_RULE.reasonMissing`,
- *   `RELEASE_RULE.reasonMissing`, `REFUND_RULE.reasonMissing`), handed to the run as a callback.
- *   The finance screen maps each rule set through an exhaustive `Record` to that action's sentence,
- *   so one shared class would change what the screen says.
+ *   `RELEASE_RULE.reasonMissing`, `REFUND_RULE.reasonMissing`, `REVERSE_REFUND_RULE.reasonMissing`),
+ *   handed to the run as a callback. The finance screen maps each rule set through an exhaustive
+ *   `Record` to that action's sentence, so one shared class would change what the screen says.
  * - **The actor lookup** is `requireActorResidentId`, for an action that stores a `residents`
  *   reference to its actor. Today that is only Pembatalan Tagihan (`invoices.voidedBy`): a release
  *   and a refund attribute by account (`refunds.refundedBy` is a `user.id`) and never needed a
- *   `residents` row, so they do not look one up.
+ *   `residents` row, so they do not look one up. Nor does a Pembatalan Pengembalian, whose Koreksi
+ *   is attributed by account as well (`cash_transactions.recordedBy` is a `user.id`).
  *
  * ## The typed Audit Log record (the decision #324 makes)
  *
@@ -80,7 +85,7 @@ import { UnitNotFoundError } from './queries';
  *   check whose field list is keyed by the record type itself, and the action's history summary
  *   (`DuesCorrectionSummary`). A field renamed in a record type is therefore a compile error in the
  *   writer, the check and the summary at once, and `tests/unit/dues-correction.test.ts` reads back
- *   the rows the three actions really wrote. A stored row that is not its action's record reads as
+ *   the rows the actions really wrote. A stored row that is not its action's record reads as
  *   `undefined`; the history still lists it, with the blank reason and empty amount the untyped
  *   reader showed for a missing field, rather than handing the screen an `undefined` the type
  *   promised was a string.
@@ -95,12 +100,14 @@ import { UnitNotFoundError } from './queries';
  *    `satisfies` the record type.
  * 4. Its label on the finance screen, whose `HISTORY_LABELS` is an exhaustive `Record` over the
  *    actions the history returns.
+ * 5. Its case in `CASES` in `tests/unit/dues-correction.test.ts`, the shared-run table. That list is
+ *    written by hand, so nothing forces a new action into it: this step is the reminder.
  *
  * ## Locks
  *
  * Each action keeps the locks #30 gave it; #324 moved none of them. The fixed order everywhere is
- * the money rows first (a Pembayaran before a Tagihan), the Periode last, inside
- * `writeCashTransaction`. Each action's own section below says what it locks and why.
+ * the money rows first (a Pembayaran before a Tagihan, a Pembayaran before a cash line), the Periode
+ * last, inside `writeCashTransaction`. Each action's own section below says what it locks and why.
  */
 
 // ---------------------------------------------------------------------------------------------
@@ -115,6 +122,9 @@ export const ALLOCATION_RELEASED_ACTION = 'allocation_released';
 
 /** The audit log's `action` for a Saldo Titipan a superuser returned. */
 export const CREDIT_REFUNDED_ACTION = 'credit_refunded';
+
+/** The audit log's `action` for a Pengembalian a superuser reversed (Pembatalan Pengembalian). */
+export const REFUND_REVERSED_ACTION = 'refund_reversed';
 
 /** What the `after` of every dues-correction record carries, whichever action wrote it. */
 export interface DuesCorrectionAfter {
@@ -189,9 +199,34 @@ export interface CreditRefundedRecord {
 	};
 }
 
+/** The record a Pembatalan Pengembalian leaves: one per Pengembalian reversed. */
+export interface RefundReversedRecord {
+	readonly action: typeof REFUND_REVERSED_ACTION;
+	/** The reversed Pengembalian: its `refunds` row, which is never changed or deleted. */
+	readonly targetId: string;
+	/**
+	 * A reversal changes no stored row: it adds a Koreksi beside the Pengembalian's cash line, and
+	 * that Koreksi is what makes the Pengembalian count as reversed. So no `before`: SQL `null`, the
+	 * same as a Pengembalian's own record.
+	 */
+	readonly before: null;
+	readonly after: DuesCorrectionAfter & {
+		/** The Pembayaran whose remainder the Pengembalian had consumed, and now gets back. */
+		readonly paymentId: string;
+		/** The Pengembalian's cash expense row, the line the Koreksi reverses. */
+		readonly cashTransactionId: string;
+		/** The Koreksi this reversal wrote, an `income` row in "Iuran warga". */
+		readonly correctionId: string;
+		/** The Pengembalian's amount, which the Unit's Saldo Titipan gets back. */
+		readonly amount: Rupiah;
+		/** The day the Pengembalian's money moved, which its Koreksi carries too, as `YYYY-MM-DD`. */
+		readonly occurredOn: string;
+	};
+}
+
 /** Every record this module writes: one type per action. */
 export type DuesCorrectionRecord =
-	InvoiceVoidedRecord | AllocationReleasedRecord | CreditRefundedRecord;
+	InvoiceVoidedRecord | AllocationReleasedRecord | CreditRefundedRecord | RefundReversedRecord;
 
 /** The audit `action` of one dues correction. */
 export type DuesCorrectionAction = DuesCorrectionRecord['action'];
@@ -201,7 +236,10 @@ export type DuesCorrectionAction = DuesCorrectionRecord['action'];
  * Each action decides it in its `RECORD_KINDS` entry.
  */
 export interface DuesCorrectionSummary {
-	/** The money the action was about: the voided Tagihan's, the released Alokasi's, the refund's. */
+	/**
+	 * The money the action was about: the voided Tagihan's, the released Alokasi's, the refund's, the
+	 * reversed refund's.
+	 */
 	readonly amount: Rupiah | null;
 	/** The Periode, for an action about one Tagihan; `null` for the others. */
 	readonly period: string | null;
@@ -325,6 +363,23 @@ const RECORD_KINDS: RecordKinds = {
 						amount: isRupiah
 					})
 				)
+			})
+		}),
+		summary: (record) => ({ amount: record.after.amount, period: null })
+	},
+	[REFUND_REVERSED_ACTION]: {
+		record: objectOf<RefundReversedRecord>({
+			action: isExactly(REFUND_REVERSED_ACTION),
+			targetId: isString,
+			before: isNull,
+			after: objectOf<RefundReversedRecord['after']>({
+				unitId: isString,
+				reason: isString,
+				paymentId: isString,
+				cashTransactionId: isString,
+				correctionId: isString,
+				amount: isRupiah,
+				occurredOn: isString
 			})
 		}),
 		summary: (record) => ({ amount: record.after.amount, period: null })
@@ -850,8 +905,9 @@ export async function releaseAllocation(
 }
 
 /**
- * Takes `for update` on the Pembayaran whose money the Alokasi holds (the same lock every spender
- * of that payment's remainder takes) and answers the Unit it belongs to, which the record needs.
+ * Takes `for update` on the Pembayaran whose money an Alokasi or a Pengembalian holds (the same lock
+ * every spender of that payment's remainder takes) and answers the Unit it belongs to, which the
+ * record needs. Used by the release and by the Pembatalan Pengembalian.
  */
 async function lockSpentPayment(transaction: Transaction, paymentId: string): Promise<string> {
 	const [row] = await transaction
@@ -860,10 +916,13 @@ async function lockSpentPayment(transaction: Transaction, paymentId: string): Pr
 		.where(eq(payments.id, paymentId))
 		.limit(1)
 		.for('update');
-	// Unreachable while the allocation exists: `allocations_payment_id_payments_id_fk` carries no
-	// cascade, so a payment with an allocation cannot be deleted. Stated rather than asserted away.
+	// Unreachable while the allocation or refund exists: neither
+	// `allocations_payment_id_payments_id_fk` nor the `refunds` foreign key to `payments` carries a
+	// cascade, so a payment one of them points at cannot be deleted. Stated rather than asserted away.
 	if (!row) {
-		throw new Error(`Payment "${paymentId}" is gone although an allocation still points at it.`);
+		throw new Error(
+			`Payment "${paymentId}" is gone although an allocation or a refund still points at it.`
+		);
 	}
 	return row.unitId;
 }
@@ -892,17 +951,19 @@ async function lockAllocatedInvoice(transaction: Transaction, invoiceId: string)
 //
 // ## The invariant a Pengembalian answers for
 //
-// Refunded money must be money nothing can spend again. Saldo Titipan has one other spender,
+// Refunded money must be money nothing can spend again, for as long as the refund is in force (a
+// Pembatalan Pengembalian, below, gives it back). Saldo Titipan has one other spender,
 // `applyCreditToInvoice` in `./allocation.ts`, run by every month's issuance, which drains
 // **per-payment remainders** handed to it by `lockUnallocatedVerifiedPayments`. So a refund is
 // stored per payment: one `refunds` row and one cash expense row for each Pembayaran whose
 // remainder it consumed, drained oldest money first by the very function issuance drains with,
-// `planCreditSpend` in `./allocation.ts`. `./credit-balance.ts` subtracts `refunds` beside
-// `allocations` in both of its reads, which yields the two halves of the invariant in one stroke:
+// `planCreditSpend` in `./allocation.ts`. `./credit-balance.ts` subtracts the `refunds` in force
+// beside `allocations` in both of its reads, which yields the two halves of the invariant in one
+// stroke:
 //
-// - **A Pembayaran is never spent past its amount** (allocations plus refunds never exceed it),
-//   because both spenders draw from the same remainder arithmetic under the same lock.
-// - **`verified = allocations + saldo titipan + refunds` holds for every Unit** (the equation
+// - **A Pembayaran is never spent past its amount** (allocations plus refunds in force never exceed
+//   it), because both spenders draw from the same remainder arithmetic under the same lock.
+// - **`verified = allocations + saldo titipan + refunds in force` holds for every Unit** (the equation
 //   `tests/unit/unit-money-invariant.test.ts` runs), because the refund is a term of the very
 //   subtraction that defines the balance, not a second ledger that could drift from it.
 //
@@ -1151,4 +1212,206 @@ function assertRefundDay(day: string, clock: Clock): void {
 			`"${day}" has not arrived; the latest day money can already have been handed back is ${latest}.`
 		);
 	}
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pembatalan Pengembalian
+// ---------------------------------------------------------------------------------------------
+//
+// Reversing one Pengembalian that was recorded by mistake: spec #308 decision 6, `reverse` on
+// `Refund` in `CONTEXT.md` ("Pengeluaran kasnya dibalik dengan Koreksi dan Saldo Titipan Unit kembali
+// seperti sebelum Pengembalian itu").
+//
+// ## One Pengembalian, one Koreksi, no column
+//
+// One Pengembalian is one `refunds` row and the one cash expense row it points at
+// (`refunds_cash_transaction_id_unique`). A refund action that drained two Pembayaran stored two
+// Pengembalian, and each is reversed on its own. The reversal writes exactly one row: a Koreksi of
+// that cash expense, through the writer's `refundReverseCorrection` kind, which reads its amount,
+// category and day off the expense line, gives it the opposite direction (`income`), and asks the
+// Periode of that day. Nothing else changes: the `refunds` row is never updated or deleted (its
+// schema says so), and no column records the reversal.
+//
+// **"Already reversed" is derived, from the Koreksi on the refund's cash line**, and one rule says
+// so everywhere: `refundInForce` in `./credit-balance.ts`, which both balance reads and the finance
+// screen's list use. A Pengembalian in force is one whose cash line has no Koreksi. Since the
+// moment a Koreksi exists the refund stops counting, the Saldo Titipan rises by the refund's amount
+// in the very commit that writes the Koreksi, with no second write that could be skipped.
+//
+// A reversal is permanent. No writer can take the Koreksi back: the ordinary Koreksi refuses every
+// line in "Iuran warga" (`duesLine`), and both dues kinds refuse a line that is itself a Koreksi
+// (`notThisKind`), both in `assertCorrectableBy` in `../cash/writer.ts`. So once a Pengembalian is
+// reversed it stays reversed, and a Pembayaran's remainder only ever *rises* through this action.
+//
+// ## The locks, in the fixed order: the Pembayaran, then the cash line, then the Periode
+//
+// - **The Pembayaran the refund drained, `for update`, first.** The same lock every spender of that
+//   payment's remainder takes (verification on its own row, issuance's credit application and the
+//   Pengembalian through `lockUnallocatedVerifiedPayments`), and the one #331's Pembatalan
+//   verifikasi takes before it asks whether a Pengembalian of the payment is in force. Holding it
+//   means a reversal and anything that reads or spends this payment's remainder serialise: whichever
+//   runs second reads the other's committed rows in fresh statements.
+// - **"Already reversed" is read under that lock**, in a fresh statement, and refused by name
+//   (`REVERSE_REFUND_RULE.alreadyReversed`). Two reversals of one refund serialise on the payment
+//   row, and the second sees the first's committed Koreksi. The only other writer that could put a
+//   Koreksi on this line is refused by the writer before it writes, as above.
+// - **The cash line, `for update`, second**, inside the writer (`lockTransaction`), which re-checks
+//   that the line has no Koreksi and refuses with `CashTransactionAlreadyCorrectedError` if it has:
+//   the backstop that holds even for a caller that took no payment lock.
+// - **The Periode, `for share`, last**, inside the writer (`requireOpenPeriodFor`), against the
+//   refund's own day: a reversal of a month whose Laporan Bulanan is published waits for the month
+//   to be reopened (`PeriodLockedError`) and is never re-dated into an open one.
+//
+// No writer takes a cash line and then a Pembayaran: the ordinary Koreksi locks a line and nothing
+// after it, and verification and the Pengembalian lock their Pembayaran before they insert their
+// cash rows. So the order cannot form a cycle.
+//
+// ## Why the balance cannot go wrong under any order of operations
+//
+// A reversal only ever adds to a Pembayaran's remainder. A spender that read the remainder before the
+// reversal committed spends at most what was there without it, which is less than is there now: a
+// lost opportunity, never an overdraft. A spender that reads after it sees the larger remainder,
+// which is exactly the money the refund had taken and the reversal gave back. And the reversal
+// itself spends nothing, so it needs no balance check of its own. The payment lock adds to this that
+// a reversal and a spender of the same Pembayaran never overlap at all, so every reader of the
+// remainder sees either both of the reversal's effects (the Koreksi and the higher remainder) or
+// neither.
+
+/**
+ * Every rule a Pembatalan Pengembalian is refused for, other than permission and the locked Periode,
+ * which keeps its own named error (`PeriodLockedError`). Refusals of a request, never of the caller:
+ * `fail(400, …)` at the route, each mapped to its sentence through an exhaustive `Record`.
+ */
+export const REVERSE_REFUND_RULE = {
+	/** A reversal records why, so an empty reason is refused. */
+	reasonMissing: 'reasonMissing',
+	/** The Pengembalian's cash line already has a Koreksi: it is reversed once. */
+	alreadyReversed: 'alreadyReversed'
+} as const;
+
+/** One of the rules above. */
+export type ReverseRefundRule = (typeof REVERSE_REFUND_RULE)[keyof typeof REVERSE_REFUND_RULE];
+
+/** Thrown when a Pembatalan Pengembalian is refused by one of the rules in `REVERSE_REFUND_RULE`. */
+export class ReverseRefundRuleError extends RuleViolationError {
+	override readonly name = 'ReverseRefundRuleError';
+
+	/** Which rule refused the request. */
+	readonly rule: ReverseRefundRule;
+
+	constructor(rule: ReverseRefundRule, detail: string) {
+		super(`A refund reversal was refused by the rule "${rule}": ${detail}`);
+		this.rule = rule;
+	}
+}
+
+/** Thrown when `refundId` names no Pengembalian: an id no screen ever rendered. */
+export class RefundNotFoundError extends NotFoundError {
+	override readonly name = 'RefundNotFoundError';
+
+	/** The id that named no refund. */
+	readonly refundId: string;
+
+	constructor(refundId: string) {
+		super(`No refund exists with id "${refundId}".`);
+		this.refundId = refundId;
+	}
+}
+
+/** Who is reversing, which Pengembalian, and the reason the Koreksi and the audit log will keep. */
+export interface ReverseRefundRequest extends DuesCorrectionRequest {
+	/** The `refunds` row being reversed. */
+	readonly refundId: string;
+}
+
+/** What one reversal came to, committed together. */
+export interface ReversedRefund {
+	/** The Unit whose Saldo Titipan got the money back. */
+	readonly unitId: string;
+	/** The reversed Pengembalian, unchanged. */
+	readonly refund: Refund;
+	/** The Koreksi of its cash line: `income`, same amount, same day, in "Iuran warga". */
+	readonly correction: CashTransaction;
+}
+
+/**
+ * Reverses one Pengembalian: its Pembayaran locked, "already reversed" refused under that lock, one
+ * Koreksi of its cash expense written through the writer's `refundReverseCorrection` kind on the
+ * expense's own day, and one `RefundReversedRecord`. The Unit's Saldo Titipan rises by the refund's
+ * amount in the same commit, because a refund whose cash line has a Koreksi is no longer in force.
+ *
+ * @throws {PermissionDeniedError} when `actorId` may not correct dues.
+ * @throws {RefundNotFoundError} when `refundId` names no Pengembalian.
+ * @throws {ReverseRefundRuleError} `reasonMissing` or `alreadyReversed`.
+ * @throws {PeriodLockedError} when the Pengembalian's day falls inside a Periode that is locked.
+ *   Nothing is written; the month is reopened first.
+ */
+export async function reverseRefund(
+	db: Database,
+	clock: Clock,
+	request: ReverseRefundRequest
+): Promise<ReversedRefund> {
+	return runDuesCorrection(
+		db,
+		clock,
+		request,
+		() =>
+			new ReverseRefundRuleError(
+				REVERSE_REFUND_RULE.reasonMissing,
+				'Reversing a refund records why on its Koreksi and in the audit log, so an empty reason is refused.'
+			),
+		async ({ transaction, actorId, reason }) => {
+			// A plain read: a `refunds` row is never updated or deleted, so what it says cannot move.
+			// It names the Pembayaran to lock and the cash line to reverse.
+			const [refund] = await transaction
+				.select()
+				.from(refunds)
+				.where(eq(refunds.id, request.refundId))
+				.limit(1);
+			if (!refund) {
+				throw new RefundNotFoundError(request.refundId);
+			}
+
+			const unitId = await lockSpentPayment(transaction, refund.paymentId);
+
+			// Under the payment lock, in a fresh statement: a reversal that won the lock has committed
+			// its Koreksi, and this read sees it.
+			const [existing] = await transaction
+				.select({ id: cashTransactions.id })
+				.from(cashTransactions)
+				.where(eq(cashTransactions.correctionOf, refund.cashTransactionId))
+				.limit(1);
+			if (existing) {
+				throw new ReverseRefundRuleError(
+					REVERSE_REFUND_RULE.alreadyReversed,
+					`Refund "${refund.id}" was already reversed by Koreksi "${existing.id}", and a refund is reversed once.`
+				);
+			}
+
+			const correction = await writeCashTransaction(transaction, clock, {
+				kind: CASH_WRITE_KIND.refundReverseCorrection,
+				recordedBy: actorId,
+				transactionId: refund.cashTransactionId,
+				reason
+			});
+
+			return {
+				outcome: { unitId, refund, correction },
+				record: {
+					action: REFUND_REVERSED_ACTION,
+					targetId: refund.id,
+					before: null,
+					after: {
+						unitId,
+						reason,
+						paymentId: refund.paymentId,
+						cashTransactionId: refund.cashTransactionId,
+						correctionId: correction.id,
+						amount: refund.amount,
+						occurredOn: correction.occurredOn
+					}
+				} satisfies RefundReversedRecord
+			};
+		}
+	);
 }

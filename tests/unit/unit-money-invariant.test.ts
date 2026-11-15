@@ -5,6 +5,12 @@ import { rupiah, type Rupiah } from '#lib/money.ts';
 import { allocations } from '#lib/server/db/schema/allocation.ts';
 import { user } from '#lib/server/db/schema/auth.ts';
 import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
+import {
+	CASH_CATEGORY_TYPE,
+	cashCategories,
+	SYSTEM_CATEGORY_KEY
+} from '#lib/server/db/schema/cash-category.ts';
+import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
 import { duesRates } from '#lib/server/db/schema/dues-rate.ts';
 import { invoices } from '#lib/server/db/schema/invoice.ts';
 import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '#lib/server/db/schema/payment.ts';
@@ -15,6 +21,7 @@ import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import { FakeClock, FakeFileStore } from '#lib/server/ports/fakes.ts';
 import { creditBalanceOfUnit } from '#lib/server/services/dues/credit-balance.ts';
 import { refundCredit } from '#lib/server/services/dues/credit-refund.ts';
+import { reverseRefund } from '#lib/server/services/dues/dues-correction.ts';
 import { issueInvoicesForPeriod } from '#lib/server/services/dues/issuance.ts';
 import { cancelOwnPayment } from '#lib/server/services/dues/payment.ts';
 import { openInvoicesOfUnit } from '#lib/server/services/dues/allocation.ts';
@@ -29,26 +36,35 @@ import {
  * setelah rangkaian aksi acak yang panjang, bukan hanya pada satu skenario yang dipilih tangan":
  *
  * ```
- * Σ verified payments of a Unit = Σ allocations of those payments + saldo titipan + Σ pengembalian
+ * Σ verified payments of a Unit = Σ allocations of those payments + saldo titipan
+ *                                 + Σ pengembalian in force
  * ```
  *
  * The refund term is real since #30 landed Pengembalian (user story 23): the sequence below
  * returns random parts of a Unit's balance through the real `refundCredit`, and the sum of its
- * `refunds` rows is the term the equation carries — no longer identically zero.
+ * `refunds` rows is the term the equation carries — no longer identically zero. Since #329 the
+ * sequence also reverses random Pengembalian through the real `reverseRefund` (Pembatalan
+ * Pengembalian), and the term counts only the Pengembalian in force: those whose cash row has no
+ * Koreksi, recomputed here from raw rows rather than through the production predicate.
  *
  * The action sequence is driven by a **seeded** linear congruential generator, so a failure replays
  * exactly by re-running the file — a random sequence that cannot be reproduced proves nothing about
  * the run that failed. The actions are the real service calls, never direct writes: verification
  * with and without explicit invoice choices, rejection, an admin's cash payment, the payer's own
- * cancellation, a superuser's refund of part of the balance, and monthly issuance with its
- * automatic saldo titipan consumption.
+ * cancellation, a superuser's refund of part of the balance, a superuser's reversal of one
+ * Pengembalian, and monthly issuance with its automatic saldo titipan consumption.
  *
- * Beyond the headline equation, three supporting invariants are asserted after every action,
+ * Beyond the headline equation, four supporting invariants are asserted after every action,
  * because each is a way the equation could hold while the books were still wrong:
  *
- * - no payment is over-spent: its allocations **plus its refunds** never sum past its amount;
+ * - no payment is over-spent: its allocations **plus its refunds in force** never sum past its
+ *   amount;
  * - no invoice is over-allocated: its allocations never sum past its amount;
- * - every allocation joins a *verified* payment to a *standing* invoice **of the same Unit**.
+ * - every allocation joins a *verified* payment to a *standing* invoice **of the same Unit**;
+ * - **the buku kas agrees with the dues side** (#329): the signed total of the system category
+ *   "Iuran warga", Koreksi included, is the verified money of every Unit less every Pengembalian in
+ *   force. A reversal that moved the balance without its Koreksi, or wrote a Koreksi without moving
+ *   the balance, breaks this one even when the per-Unit equation still holds.
  */
 
 const testDb = testDatabase();
@@ -177,6 +193,59 @@ async function pendingPaymentsOf(unitId: string): Promise<readonly string[]> {
  * the verified and allocated sums are recomputed here in plain JavaScript, so agreeing with
  * `creditBalanceOfUnit` is a check of the production SQL rather than of itself.
  */
+/**
+ * The refunds of `rows` still in force: those whose cash row no Koreksi points at. Recomputed from
+ * the cash book here, independently of `refundInForce` in the production module.
+ */
+async function inForce<T extends { readonly cashTransactionId: string }>(
+	rows: readonly T[]
+): Promise<readonly T[]> {
+	if (rows.length === 0) {
+		return [];
+	}
+	const koreksi = await testDb.db
+		.select({ correctionOf: cashTransactions.correctionOf })
+		.from(cashTransactions)
+		.where(
+			inArray(
+				cashTransactions.correctionOf,
+				rows.map((row) => row.cashTransactionId)
+			)
+		);
+	const reversed = new Set(koreksi.map((row) => row.correctionOf));
+	return rows.filter((row) => !reversed.has(row.cashTransactionId));
+}
+
+/**
+ * The buku kas side: the signed total of "Iuran warga", every row and every Koreksi in it, equals
+ * the verified money of every Unit less every Pengembalian in force. This file's schema is its own,
+ * so the category holds only what the sequence below wrote.
+ */
+async function assertCashBookAgrees(step: string): Promise<void> {
+	const [category] = await testDb.db
+		.select()
+		.from(cashCategories)
+		.where(eq(cashCategories.systemKey, SYSTEM_CATEGORY_KEY.dues));
+	const duesRows = await testDb.db
+		.select()
+		.from(cashTransactions)
+		.where(eq(cashTransactions.categoryId, category.id));
+	const net = duesRows.reduce(
+		(sum, row) => sum + (row.type === CASH_CATEGORY_TYPE.income ? row.amount : -row.amount),
+		0
+	);
+
+	const verifiedSum = (
+		await testDb.db.select().from(payments).where(eq(payments.status, PAYMENT_STATUS.verified))
+	).reduce((sum, row) => sum + row.amount, 0);
+	const refundedSum = (await inForce(await testDb.db.select().from(refunds))).reduce(
+		(sum, row) => sum + row.amount,
+		0
+	);
+
+	expect(net, step).toBe(verifiedSum - refundedSum);
+}
+
 async function assertInvariants(unitId: string, step: string): Promise<void> {
 	const paymentRows = await testDb.db.select().from(payments).where(eq(payments.unitId, unitId));
 	const invoiceRows = await testDb.db.select().from(invoices).where(eq(invoices.unitId, unitId));
@@ -192,7 +261,7 @@ async function assertInvariants(unitId: string, step: string): Promise<void> {
 							paymentRows.map((row) => row.id)
 						)
 					);
-	const refundRows =
+	const allRefundRows =
 		paymentRows.length === 0
 			? []
 			: await testDb.db
@@ -204,13 +273,15 @@ async function assertInvariants(unitId: string, step: string): Promise<void> {
 							paymentRows.map((row) => row.id)
 						)
 					);
+	const refundRows = await inForce(allRefundRows);
 
 	const verifiedSum = paymentRows
 		.filter((row) => row.status === PAYMENT_STATUS.verified)
 		.reduce((sum, row) => sum + row.amount, 0);
 	const allocatedSum = allocationRows.reduce((sum, row) => sum + row.amount, 0);
 	const credit = await creditBalanceOfUnit(testDb.db, unitId);
-	// The real Pengembalian term, summed from the rows #30's refund action writes below.
+	// The real Pengembalian term, summed from the rows #30's refund action writes below, less the
+	// ones #329's reversal reversed.
 	const refundedSum = refundRows.reduce((sum, row) => sum + row.amount, 0);
 
 	expect(verifiedSum, step).toBe(allocatedSum + credit + refundedSum);
@@ -275,10 +346,11 @@ describe('the unit money invariant, over a long random action sequence', () => {
 		const clock = new FakeClock(START);
 		const fileStore = new FakeFileStore(clock);
 		let nextMonth = 3; // Issuance walks 2026-03 onward, one new Periode per issuance action.
+		let reversals = 0;
 
 		for (let step = 1; step <= ACTION_COUNT; step += 1) {
 			const household = pick(households);
-			const action = Math.floor(random() * 7);
+			const action = Math.floor(random() * 8);
 			const label = `step ${step}, action ${action}, unit ${household.unitId}`;
 
 			switch (action) {
@@ -355,6 +427,38 @@ describe('the unit money invariant, over a long random action sequence', () => {
 					}
 					break;
 				}
+				case 6: {
+					// #329: the superuser reverses one Pengembalian of the unit still in force, picked at
+					// random. The real service, under the payment lock; skipped while there is none.
+					const unitPayments = await testDb.db
+						.select({ id: payments.id })
+						.from(payments)
+						.where(eq(payments.unitId, household.unitId));
+					const standing =
+						unitPayments.length === 0
+							? []
+							: await inForce(
+									await testDb.db
+										.select()
+										.from(refunds)
+										.where(
+											inArray(
+												refunds.paymentId,
+												unitPayments.map((row) => row.id)
+											)
+										)
+										.orderBy(asc(refunds.createdAt), asc(refunds.id))
+								);
+					if (standing.length > 0) {
+						await reverseRefund(testDb.db, clock, {
+							actorId: superuserId,
+							refundId: pick(standing).id,
+							reason: 'Pengembalian salah catat, dibatalkan.'
+						});
+						reversals += 1;
+					}
+					break;
+				}
 				default: {
 					// A new month's issuance, which also consumes saldo titipan — for every unit at once.
 					if (nextMonth <= 12) {
@@ -372,6 +476,7 @@ describe('the unit money invariant, over a long random action sequence', () => {
 			for (const each of households) {
 				await assertInvariants(each.unitId, label);
 			}
+			await assertCashBookAgrees(label);
 		}
 
 		// The sequence really exercised the books: money moved, obligations were issued.
@@ -379,5 +484,7 @@ describe('the unit money invariant, over a long random action sequence', () => {
 		const invoiceCount = await testDb.db.select({ id: invoices.id }).from(invoices);
 		expect(paymentCount.length).toBeGreaterThan(0);
 		expect(invoiceCount.length).toBeGreaterThan(0);
+		// And the reversal really ran, so the in-force term was exercised rather than vacuous.
+		expect(reversals).toBeGreaterThan(0);
 	}, 120_000);
 });

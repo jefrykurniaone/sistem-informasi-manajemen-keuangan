@@ -1,7 +1,8 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import { rupiah, type Rupiah } from '#lib/money.ts';
 import type { DatabaseWriter, Transaction } from '../../authz';
 import { allocations } from '../../db/schema/allocation';
+import { cashTransactions } from '../../db/schema/cash-transaction';
 import { PAYMENT_STATUS, payments } from '../../db/schema/payment';
 import { refunds } from '../../db/schema/refund';
 
@@ -20,7 +21,7 @@ import { refunds } from '../../db/schema/refund';
  * ```
  * saldo titipan = Σ amount of its verified payments
  *               − Σ amount of those payments' allocations
- *               − Σ amount of those payments' refunds
+ *               − Σ amount of those payments' refunds in force
  * ```
  *
  * Three consequences, each of which some caller depends on:
@@ -41,16 +42,25 @@ import { refunds } from '../../db/schema/refund';
  * (`src/lib/server/db/schema/refund.ts` records why per-payment attribution is the only shape that
  * works), so a refund reduces both this balance and the per-payment remainders below through the
  * very same subtraction that allocations use. That is what keeps
- * `verified = allocations + saldo titipan + refunds` — the invariant
+ * `verified = allocations + saldo titipan + refunds in force` — the invariant
  * `tests/unit/unit-money-invariant.test.ts` runs — true with no second bookkeeping: money a refund
  * returned is money `lockUnallocatedVerifiedPayments` no longer offers, so the next issuance
  * cannot spend it a second time.
  *
+ * **"In force" is #329's Pembatalan Pengembalian** (spec #308 decision 6): a refund stops counting
+ * the moment its cash expense row has a Koreksi, which is what `reverseRefund` in
+ * `./dues-correction.ts` writes. There is no column for it; `refundInForce` below is the one
+ * statement of the rule, used by both reads here and by the finance screen's list of Pengembalian
+ * in `./corrections-history.ts`, so the balance and the list can never disagree about which refunds
+ * still count. A reversed refund's money is therefore back in the balance and back in its
+ * Pembayaran's remainder in the same commit as the Koreksi, through the same subtraction.
+ *
  * ## Who writes, who reads
  *
  * Nothing here writes anything. `./allocation.ts` is the one writer of `allocations` rows, with
- * `./verification.ts` and `./issuance.ts` as its two callers, and
- * `./credit-refund.ts` is the one writer of `refunds` rows. The reads here take no `actorId` and
+ * `./verification.ts` and `./issuance.ts` as its two callers, and `refundCredit` in
+ * `./dues-correction.ts` is the one writer of `refunds` rows (`reverseRefund` beside it writes a
+ * Koreksi, never a `refunds` row). The reads here take no `actorId` and
  * check no permission, the same shape `duesRateOn` and `isUnitExemptOn` have and for the same
  * reason: issuance calls them from a scheduled job that has no session, and every screen that shows
  * the number is guarded by its own action or by row ownership before it asks.
@@ -61,7 +71,10 @@ export interface PaymentRemainder {
 	readonly paymentId: string;
 	/** The payment's full amount, in whole rupiah. */
 	readonly amount: Rupiah;
-	/** What is neither allocated nor refunded yet — its contribution to the Unit's saldo titipan. */
+	/**
+	 * What is neither allocated nor refunded by a refund in force — its contribution to the Unit's
+	 * saldo titipan.
+	 */
 	readonly remainder: Rupiah;
 }
 
@@ -75,7 +88,7 @@ export interface PaymentRemainder {
 export async function creditBalanceOfUnit(db: DatabaseWriter, unitId: string): Promise<Rupiah> {
 	const [row] = await db
 		.select({
-			// `::text` and `coalesce`, the idiom `allocatedAmountsByInvoice` in `./queries.ts` records:
+			// `::text` and `coalesce`, the idiom `allocatedByInvoice` in `./invoice-standing.ts` records:
 			// PostgreSQL widens `sum(bigint)` to `numeric`, and `sum` over no rows is `null`.
 			verified: sql<string>`coalesce(sum(${payments.amount}), 0)::text`,
 			allocated: sql<string>`coalesce((
@@ -93,6 +106,7 @@ export async function creditBalanceOfUnit(db: DatabaseWriter, unitId: string): P
 					select ${payments.id} from ${payments}
 					where ${payments.unitId} = ${unitId} and ${payments.status} = ${PAYMENT_STATUS.verified}
 				)
+				and ${refundInForce()}
 			), 0)::text`
 		})
 		.from(payments)
@@ -176,10 +190,11 @@ export async function allocatedAmountsByPayment(
 }
 
 /**
- * How much of each of `paymentIds` has already been refunded, keyed by payment id and absent for
- * one never refunded — the exact counterpart of `allocatedAmountsByPayment`, because a
+ * How much of each of `paymentIds` has been refunded by refunds still in force, keyed by payment id
+ * and absent for one with none — the exact counterpart of `allocatedAmountsByPayment`, because a
  * Pengembalian spends a payment's remainder the same way an Alokasi does and every reader of a
- * remainder must subtract both or over-count the money.
+ * remainder must subtract both or over-count the money. A reversed refund (`refundInForce`) spends
+ * nothing.
  */
 export async function refundedAmountsByPayment(
 	db: DatabaseWriter,
@@ -195,8 +210,28 @@ export async function refundedAmountsByPayment(
 			total: sql<string>`coalesce(sum(${refunds.amount}), 0)::text`
 		})
 		.from(refunds)
-		.where(inArray(refunds.paymentId, paymentIds))
+		.where(and(inArray(refunds.paymentId, paymentIds), refundInForce()))
 		.groupBy(refunds.paymentId);
 
 	return new Map(rows.map((row) => [row.paymentId, rupiah(Number(row.total))]));
+}
+
+/**
+ * Whether the `refunds` row of the surrounding query is still in force: its cash expense row has no
+ * Koreksi. A SQL condition over `refunds`, for a query that reads that table.
+ *
+ * Spec #308 decision 6 derives "sudah dibatalkan" from the Koreksi on the refund's cash row, with no
+ * column of its own, and this is the one place the derivation is written. It counts any Koreksi,
+ * whichever kind wrote it: since #323 only `reverseRefund` can write one on a Pengembalian's line,
+ * and a Koreksi an Admin wrote there before #323 reverses the money in the buku kas all the same, so
+ * the refund it reversed must stop counting too (the spec's "Risiko" section accepts exactly this).
+ *
+ * At most one Koreksi exists per line (the line lock in `writeCashTransaction`), so `not exists` and
+ * a count agree; `not exists` is used because it cannot multiply rows.
+ */
+export function refundInForce(): SQL {
+	return sql`not exists (
+		select 1 from ${cashTransactions}
+		where ${cashTransactions.correctionOf} = ${refunds.cashTransactionId}
+	)`;
 }
