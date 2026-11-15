@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { rupiah, type Rupiah } from '#lib/money.ts';
 import type { DatabaseWriter } from '../../authz';
 import type { Database } from '../../db';
@@ -12,7 +12,7 @@ import { cashTransactions } from '../../db/schema/cash-transaction';
 import { invoices } from '../../db/schema/invoice';
 import type { MonthlyReportCategoryLine } from '../../db/schema/monthly-report';
 import type { Clock } from '../../ports/clock';
-import { CASH_BOOK_MONTH_PATTERN } from '../cash/balance';
+import { cashBalanceBefore, monthDayRange, type MonthDayRange } from '../cash/balance';
 import { COMPLEX_TIME_ZONE } from '../dues/issuance';
 import { INVOICE_STATUS, invoiceStatus } from '../dues/queries';
 
@@ -64,8 +64,8 @@ import { INVOICE_STATUS, invoiceStatus } from '../dues/queries';
  * the question at all:
  *
  * - **Which transactions fall inside the month is not a clock question.** `cash_transactions.occurredOn`
- *   is a `date`, and `monthRange` turns `YYYY-MM` into the two `YYYY-MM-DD` it spans by string
- *   arithmetic. No instant is converted, so no zone can be wrong.
+ *   is a `date`, and `monthDayRange` in `../cash/balance.ts` turns `YYYY-MM` into the first and last
+ *   `YYYY-MM-DD` it spans. No instant is converted, so no zone can be wrong.
  * - **Which Tagihan belong to the Periode is not one either.** `invoices.period` is already `YYYY-MM`.
  *
  * What is left is the two places an *instant* becomes a civil date: "which month is the periode
@@ -84,38 +84,23 @@ import { INVOICE_STATUS, invoiceStatus } from '../dues/queries';
  * that decide visibility; this module's number is a document residents read and cannot be quietly
  * corrected afterwards, so it does not inherit that tolerance.
  *
- * ## Why this module reads `cash_transactions` itself instead of calling `../cash/balance.ts`
+ * ## What this module reads through `../cash/balance.ts`, and what it reads itself
  *
- * This is the second reader of the buku kas, and it exists for a reason that is worth writing down
- * rather than shrugging at, because duplicating cash arithmetic is normally a mistake.
+ * The two pieces of cash arithmetic a report shares with the buku kas come from the cash book's read
+ * module, not from a copy here. `cashBalanceBefore` is the signed total that becomes a report's
+ * opening balance, so the sign convention (income adds, everything else subtracts) is written once,
+ * as `SIGNED_TOTAL` there. `monthDayRange` is the span of days a month covers, so a report and a
+ * filtered buku kas select the same rows for the same month by construction. Until #315 both were
+ * restated here, because the append-only test pinned that module's export list; it now pins the
+ * writer's surface only (`../cash/writer.ts`).
  *
- * `cashBook` is the natural home for both reads below, and it is not reachable. It is guarded by
- * `ACTION.recordCashTransactions`, which is `admin`'s — a Warga opening a report is answered 403 —
- * and the guard may not be loosened, because `/admin/cash/+page.server.ts` depends on it. The
- * obvious fix is to add two unguarded read-only exports beside it, and that is not available either:
- * **`tests/unit/cash-transaction.test.ts:148` asserts `Object.keys` of that module equals exactly
- * `['CASH_BOOK_MONTH_PATTERN', 'cashBook']`**, as the append-only guarantee's own surface test, and
- * that file is outside this ticket's `writes:`. Any new export there fails a test this ticket may
- * not edit. So the read lives here, where the report owns it.
- *
- * What is duplicated is kept to the smallest possible thing, and each piece is pinned by a test that
- * compares this module's answer to `cashBook`'s:
- *
- * - **The month boundary is not duplicated, it is avoided.** `cashBook` spans a month as the
- *   inclusive `[first day, last day]`, which needs to know that February has 28 days or 29. This
- *   module uses the half-open `[first day of the month, first day of the next month)`, which needs
- *   no such knowledge at all — so there is no leap-year rule written twice to drift apart. The two
- *   select the same civil days, and `tests/unit/report-composition.test.ts` proves it on February
- *   in particular by checking this module's answer against `cashBook`'s for the same month.
- * - **The sign convention is duplicated**, once, in `OPENING_BALANCE_TOTAL` below: income adds and
- *   everything else subtracts, the same rule `SIGNED_TOTAL` in `../cash/balance.ts` states. There is
- *   no way to share it across a module boundary that refuses new exports. The mitigation is a test
- *   rather than a comment: the opening balance a report freezes is asserted equal to the balance
- *   `cashBook` carries into the same month, so the day the two conventions disagree, that test says
- *   so by name.
- *
- * If `tests/unit/cash-transaction.test.ts` is ever widened to allow read-only exports on
- * `../cash/balance.ts`, both reads below should move there and this section should go with them.
+ * `cashBook` itself is still not called. It is an Admin's screen, guarded by
+ * `ACTION.recordCashTransactions`, and a report is read by every Warga. What this module still
+ * queries on its own are the shapes only a report has: one total per category per direction, and
+ * the drill-down rows of one category. Neither carries sign arithmetic; each sums `amount` within one
+ * direction. `tests/unit/report-composition.test.ts` keeps comparing those answers to `cashBook`'s
+ * for the same month, so the day the two readers disagree about which rows a month holds, a test
+ * says so by name.
  */
 
 /** How many characters `YYYY-MM` takes, so the slice below is not a bare number. */
@@ -183,12 +168,12 @@ export async function composeReportFigures(
 	clock: Clock,
 	period: string
 ): Promise<ReportFigures> {
-	const range = monthRange(period);
+	const range = monthDayRange(period);
 	// Sequential, not `Promise.all`: `writer` is the caller's own transaction client when publication
 	// calls this (see the doc comment above), and `pg`'s deprecation warning is exactly what firing
 	// more than one query at once on the same client does, removed outright in `pg@9`, per #231. The
 	// order here is the order the three used to run in, so the figures they produce do not change.
-	const openingBalance = await openingBalanceOn(writer, range.from);
+	const openingBalance = await cashBalanceBefore(writer, range.from);
 	const categoryBreakdown = await categoryLines(writer, range);
 	const dues = await duesSummaryFor(writer, clock, period);
 
@@ -208,70 +193,6 @@ export async function composeReportFigures(
 		duesUnitsUnpaid: dues.unitsUnpaid,
 		categoryBreakdown
 	};
-}
-
-/** The half-open stretch of days one calendar month covers. See this module's doc comment. */
-interface MonthRange {
-	/** The first day of the month, as `YYYY-MM-DD`. Included. */
-	readonly from: string;
-	/** The first day of the *next* month. Excluded, which is what avoids a leap-year rule. */
-	readonly before: string;
-}
-
-/**
- * `YYYY-MM` as the half-open range of days it covers: from its first day, up to but not including
- * the first day of the month after it.
- *
- * Half-open on purpose. The inclusive form `../cash/balance.ts` uses has to work out the last day of
- * the month, which is a leap-year rule; this form never asks. December rolls to January of the next
- * year, which is the only case worth looking at twice.
- *
- * @throws {TypeError} when `month` is not a calendar month written as `YYYY-MM`.
- */
-function monthRange(month: string): MonthRange {
-	if (!CASH_BOOK_MONTH_PATTERN.test(month)) {
-		throw new TypeError(`"${month}" is not a calendar month written as YYYY-MM.`);
-	}
-	const year = Number(month.slice(0, YEAR_LENGTH));
-	const number = Number(month.slice(YEAR_LENGTH + 1));
-	const nextYear = number === MONTHS_IN_YEAR ? year + 1 : year;
-	const nextMonth = number === MONTHS_IN_YEAR ? 1 : number + 1;
-	return {
-		from: `${month}-01`,
-		before: `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`
-	};
-}
-
-/** Where the year ends in a `YYYY-MM`, which is also how many characters it takes. */
-const YEAR_LENGTH = 4;
-
-/** How many months a year has, so that "December rolls over" is written once. */
-const MONTHS_IN_YEAR = 12;
-
-/**
- * The signed total of the rows a query selects, as text — income adds, everything else subtracts.
- *
- * The one piece of `../cash/balance.ts`'s arithmetic this module really does restate; see the "Why
- * this module reads `cash_transactions` itself" section above for why it cannot be shared, and for
- * the test that keeps the two honest. `::text` and `coalesce` for the reason that module records:
- * PostgreSQL widens `sum(bigint)` to `numeric`, which the driver hands back as a string, and `sum`
- * over an empty set is `null`.
- */
-const OPENING_BALANCE_TOTAL = sql<string>`coalesce(sum(case when ${cashTransactions.type} = ${CASH_CATEGORY_TYPE.income} then ${cashTransactions.amount} else -${cashTransactions.amount} end), 0)::text`;
-
-/**
- * The cash balance the month opens on: every Transaksi Kas dated strictly before `day`, signed and
- * summed.
- *
- * Read inside the caller's transaction when there is one, so that the figure frozen into a
- * publication is the one that was true while the Periode's row lock was held.
- */
-async function openingBalanceOn(writer: DatabaseWriter, day: string): Promise<Rupiah> {
-	const [row] = await writer
-		.select({ total: OPENING_BALANCE_TOTAL })
-		.from(cashTransactions)
-		.where(lt(cashTransactions.occurredOn, day));
-	return rupiah(Number(row?.total ?? '0'));
 }
 
 /** One transaction inside one Kategori Kas, as a resident drilling into a report line reads it. */
@@ -331,7 +252,7 @@ export async function transactionsInCategory(
 	month: string,
 	categoryId: string
 ): Promise<CategoryTransactions> {
-	const range = monthRange(month);
+	const range = monthDayRange(month);
 	const rows = await db
 		.select({
 			id: cashTransactions.id,
@@ -346,7 +267,7 @@ export async function transactionsInCategory(
 			and(
 				eq(cashTransactions.categoryId, categoryId),
 				gte(cashTransactions.occurredOn, range.from),
-				lt(cashTransactions.occurredOn, range.before)
+				lte(cashTransactions.occurredOn, range.to)
 			)
 		)
 		.orderBy(
@@ -392,7 +313,7 @@ function directionTotal(entries: readonly CategoryTransaction[], type: CashCateg
  */
 async function categoryLines(
 	writer: DatabaseWriter,
-	range: MonthRange
+	range: MonthDayRange
 ): Promise<readonly MonthlyReportCategoryLine[]> {
 	const rows = await writer
 		.select({
@@ -406,10 +327,7 @@ async function categoryLines(
 		.from(cashTransactions)
 		.innerJoin(cashCategories, eq(cashTransactions.categoryId, cashCategories.id))
 		.where(
-			and(
-				gte(cashTransactions.occurredOn, range.from),
-				lt(cashTransactions.occurredOn, range.before)
-			)
+			and(gte(cashTransactions.occurredOn, range.from), lte(cashTransactions.occurredOn, range.to))
 		)
 		.groupBy(cashTransactions.categoryId, cashCategories.name, cashTransactions.type)
 		.orderBy(asc(cashCategories.name), asc(cashTransactions.type));
