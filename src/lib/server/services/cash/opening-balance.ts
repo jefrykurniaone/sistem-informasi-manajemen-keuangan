@@ -224,17 +224,17 @@ export async function recordOpeningBalance(
  * The opening balance in force among `lines`, every row of the opening-balance category: the
  * earliest-recorded original row whose chain of Koreksi has even length.
  *
- * "Not reversed" has to read the whole chain, not only whether a Koreksi points at the row. A
- * Koreksi of the Koreksi is how a wrong Koreksi is put right (`./writer.ts` allows it on purpose),
- * and it puts the opening balance's money back in the book. Counting that opening balance as
- * reversed would let a second one be recorded and count the cash twice. So: no Koreksi, in force; a
- * Koreksi, reversed; a Koreksi of that Koreksi, in force again; and so on.
+ * "Not reversed" reads the whole chain, not only whether a Koreksi points at the row. Since #323
+ * `./writer.ts` refuses an ordinary Koreksi of a Koreksi in this category, so a chain is at most one
+ * link long: no Koreksi, in force; a Koreksi, reversed, until a new opening balance replaces it. The
+ * even and odd counting stays for rows written before that rule, where a Koreksi of the Koreksi put
+ * the opening balance's money back in the book, and counting it as reversed would let a second one
+ * be recorded and count the cash twice: a Koreksi of that Koreksi, in force again; and so on.
  *
  * A Koreksi always lands in the category of the line it corrects, so every link of the chain is in
  * `lines`. More than one original can be in force: rows written before this rule, or a Koreksi of a
- * Koreksi written after a replacement was recorded, which `./writer.ts` does not refuse today. Then
- * the earliest-recorded one answers, so the screen is deterministic; recording is refused either
- * way.
+ * Koreksi written before the writer refused it, after a replacement was recorded. Then the
+ * earliest-recorded one answers, so the screen is deterministic; recording is refused either way.
  */
 function inForceAmong(lines: readonly CashTransaction[]): CashTransaction | undefined {
 	const correctionOf = new Map<string, CashTransaction>();
