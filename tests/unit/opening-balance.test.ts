@@ -21,6 +21,7 @@ import { recordCashCorrection } from '#lib/server/services/cash/correction.ts';
 import * as openingBalanceModule from '#lib/server/services/cash/opening-balance.ts';
 import { lockPeriod, PeriodLockedError, unlockPeriod } from '#lib/server/services/cash/period.ts';
 import { recordCashTransaction } from '#lib/server/services/cash/transaction.ts';
+import { CashCorrectionTargetError } from '#lib/server/services/cash/writer.ts';
 import {
 	getOpeningBalance,
 	OPENING_BALANCE_DESCRIPTION,
@@ -417,9 +418,10 @@ describe('recordOpeningBalance', () => {
 		expect(await testDb.db.select().from(cashTransactions)).toHaveLength(3);
 	});
 
-	it('counts an opening balance as in force again once its Koreksi has itself been corrected', async () => {
-		// A Koreksi of the Koreksi is how a wrong Koreksi is put right, and it puts the opening
-		// balance's money back in the book. Recording a second one then would count the cash twice.
+	it('refuses a Koreksi of the Koreksi of an opening balance, which stays out of force', async () => {
+		// A Koreksi of the Koreksi would put the reversed opening balance's money back in the book,
+		// next to any replacement. Since #323 the writer refuses it: a reversed opening balance is
+		// replaced by recording a new one, never by reversing its Koreksi.
 		await clearCashBook();
 		const superuserId = await insertSuperuser('Pengurus Saldo Awal Koreksi Ganda');
 		const opening = await recordOpeningBalance(testDb.db, new FakeClock(START), {
@@ -428,17 +430,18 @@ describe('recordOpeningBalance', () => {
 			occurredOn: STARTED_ON
 		});
 		const reversal = await correct(opening.id);
-		await correct(reversal.id);
+		const before = await testDb.db.select().from(cashTransactions);
 
-		const refusal: unknown = await recordOpeningBalance(testDb.db, new FakeClock(START), {
-			actorId: superuserId,
-			amount: AMOUNT,
-			occurredOn: STARTED_ON
-		}).catch((error: unknown) => error);
+		const refusal: unknown = await correct(reversal.id).catch((error: unknown) => error);
 
-		expect(refusal).toBeInstanceOf(OpeningBalanceAlreadyRecordedError);
-		expect(refusal).toMatchObject({ existingTransactionId: opening.id });
-		expect(await getOpeningBalance(testDb.db, superuserId)).toMatchObject({ id: opening.id });
+		expect(refusal).toBeInstanceOf(CashCorrectionTargetError);
+		expect(refusal).toMatchObject({
+			transactionId: reversal.id,
+			kind: 'correction',
+			reason: 'reversedOpeningBalance'
+		});
+		expect(await testDb.db.select().from(cashTransactions)).toHaveLength(before.length);
+		expect(await getOpeningBalance(testDb.db, superuserId)).toBeUndefined();
 	});
 
 	it('refuses a day after the earliest Transaksi Kas outside its category, naming that day, and takes that day itself', async () => {

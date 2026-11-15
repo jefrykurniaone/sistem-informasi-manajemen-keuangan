@@ -18,6 +18,11 @@
 		readonly isCorrection: boolean;
 		/** True when a Koreksi already reverses this row, which is also why it refuses a second. */
 		readonly isCorrected: boolean;
+		/**
+		 * True when the row is in the system category "Iuran warga". The ordinary Koreksi refuses it,
+		 * so the row offers a note pointing at the Keuangan Unit screen instead of a button.
+		 */
+		readonly isDuesLine: boolean;
 		/** A short-lived signed link to the receipt photo, or null when the row has none. */
 		readonly receiptUrl: string | null;
 		readonly recordedByName: string;
@@ -43,7 +48,9 @@
 	 * A Koreksi is an ordinary row here, marked but never hidden: "koreksi yang tidak terlihat sama
 	 * saja dengan penghapusan" (`docs/spec-kas-laporan-v1.md`). The row it corrects stays in place
 	 * too, marked as corrected, which is also why it no longer offers a correction button — the
-	 * service refuses a second one whether or not the button was drawn.
+	 * service refuses a second one whether or not the button was drawn. A line in "Iuran warga"
+	 * offers a short note instead of the button: it is reversed from the Keuangan Unit screen, and
+	 * the service refuses an ordinary Koreksi of it just the same.
 	 *
 	 * The receipt is a link and nothing more. It is a short-lived signed link minted by the
 	 * `FileStore` port on this admin-guarded page, so the way a receipt stays out of a resident's
@@ -140,7 +147,11 @@
 						{/if}
 					</td>
 					<td class="px-2 py-2">
-						{#if !row.isCorrected}
+						{#if row.isDuesLine}
+							<span class="block max-w-48 text-xs text-muted-foreground">
+								{m.adminCash_duesLineNote()}
+							</span>
+						{:else if !row.isCorrected}
 							<Button
 								type="button"
 								variant="outline"

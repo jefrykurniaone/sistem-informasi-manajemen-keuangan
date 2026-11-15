@@ -25,9 +25,15 @@ import {
 } from '#lib/server/services/cash/opening-balance.ts';
 import { lockPeriod, PeriodLockedError, unlockPeriod } from '#lib/server/services/cash/period.ts';
 import {
+	CASH_WRITE_KIND,
+	CashCorrectionTargetError,
+	writeCashTransaction
+} from '#lib/server/services/cash/writer.ts';
+import {
 	CashRuleError,
 	recordCashTransaction,
-	recordDuesIncome
+	recordDuesIncome,
+	recordDuesRefund
 } from '#lib/server/services/cash/transaction.ts';
 
 /**
@@ -271,9 +277,10 @@ describe('recordCashCorrection', () => {
 
 	it('corrects the Saldo awal, which is what the opening balance screen promises', async () => {
 		// `recordOpeningBalance` offers no edit and no delete on purpose, and its screen tells the
-		// superuser that a wrong figure is put right with a correcting transaction. That promise is
-		// this function's to keep, so the system category a Koreksi lands in is never refused — only
-		// the *manual recording* path refuses one.
+		// superuser that a wrong figure is put right with a correcting transaction, then replaced by
+		// recording a new one. The original opening balance is the line this function reverses, so the
+		// system category it sits in is never refused for a Koreksi of the original — only the
+		// *manual recording* path refuses one. A Koreksi of that Koreksi is refused: see below.
 		const adminId = await insertAdmin('Pengurus Koreksi Saldo Awal');
 		const superuserId = await insertSuperuser('Pengurus Catat Saldo Awal Koreksi');
 		await testDb.db.delete(cashTransactions);
@@ -302,32 +309,133 @@ describe('recordCashCorrection', () => {
 		await testDb.db.delete(cashTransactions);
 	});
 
-	it('still accepts a line in "Iuran warga", because #315 leaves which lines it may reverse alone', async () => {
-		// #315 moved the ordinary Koreksi into the cash book writer and left the rule about which
-		// lines it may point at exactly as it was: any line. Spec #308 decision 2 closes "Iuran warga"
-		// to it, and that is #323, which turns this test into the refusal.
-		const adminId = await insertAdmin('Pengurus Koreksi Baris Iuran');
-		const income = await testDb.db.transaction((transaction) =>
-			recordDuesIncome(transaction, new FakeClock(START), {
-				occurredOn: DAY,
-				amount: AMOUNT,
-				description: 'Iuran warga Blok Q No 1 (pembayaran uji koreksi)',
-				recordedBy: adminId
+	describe('refuses every line in "Iuran warga", and points at the Keuangan Unit screen', () => {
+		/** Asserts the ordinary Koreksi refused `lineId` as a dues line, and wrote nothing. */
+		async function expectDuesLineRefused(adminId: string, lineId: string) {
+			const before = await testDb.db.select().from(cashTransactions);
+
+			const refusal: unknown = await recordCashCorrection(testDb.db, new FakeClock(START), {
+				actorId: adminId,
+				transactionId: lineId,
+				reason: 'Salah catat.'
+			}).catch((error: unknown) => error);
+
+			expect(refusal).toBeInstanceOf(CashCorrectionTargetError);
+			expect(refusal).toMatchObject({
+				transactionId: lineId,
+				kind: 'correction',
+				reason: 'duesLine'
+			});
+			expect(await testDb.db.select().from(cashTransactions)).toHaveLength(before.length);
+			expect(await auditEntriesFor(testDb.db, lineId)).toEqual([]);
+		}
+
+		it('a dues income line', async () => {
+			const adminId = await insertAdmin('Pengurus Koreksi Baris Iuran');
+			const income = await testDb.db.transaction((transaction) =>
+				recordDuesIncome(transaction, new FakeClock(START), {
+					occurredOn: DAY,
+					amount: AMOUNT,
+					description: 'Iuran warga Blok Q No 1 (pembayaran uji koreksi)',
+					recordedBy: adminId
+				})
+			);
+
+			await expectDuesLineRefused(adminId, income.id);
+		});
+
+		it('a Pengembalian line', async () => {
+			const adminId = await insertAdmin('Pengurus Koreksi Baris Pengembalian');
+			const refund = await testDb.db.transaction((transaction) =>
+				recordDuesRefund(transaction, new FakeClock(START), {
+					occurredOn: DAY,
+					amount: AMOUNT,
+					description: 'Pengembalian Saldo Titipan Blok Q No 2 (uji koreksi)',
+					recordedBy: adminId
+				})
+			);
+
+			await expectDuesLineRefused(adminId, refund.id);
+		});
+
+		it('a Koreksi in that category, written by the Pembatalan verifikasi kind', async () => {
+			const adminId = await insertAdmin('Pengurus Koreksi Atas Koreksi Iuran');
+			const income = await testDb.db.transaction((transaction) =>
+				recordDuesIncome(transaction, new FakeClock(START), {
+					occurredOn: DAY,
+					amount: AMOUNT,
+					description: 'Iuran warga Blok Q No 3 (uji koreksi atas koreksi)',
+					recordedBy: adminId
+				})
+			);
+			const reversal = await testDb.db.transaction((transaction) =>
+				writeCashTransaction(transaction, new FakeClock(START), {
+					kind: CASH_WRITE_KIND.unverifyCorrection,
+					recordedBy: adminId,
+					transactionId: income.id,
+					reason: 'Pembayaran tidak sah.'
+				})
+			);
+
+			await expectDuesLineRefused(adminId, reversal.id);
+		});
+	});
+
+	it('still corrects a manual line, and the original opening balance', async () => {
+		const adminId = await insertAdmin('Pengurus Koreksi Baris Biasa');
+		const category = await addCategory('Perbaikan talud');
+		const manual = await recordOne(adminId, category.id);
+
+		await expect(
+			recordCashCorrection(testDb.db, new FakeClock(START), {
+				actorId: adminId,
+				transactionId: manual.id,
+				reason: 'Salah ketik nominal.'
 			})
-		);
+		).resolves.toMatchObject({ correctionOf: manual.id });
+	});
 
-		const correction = await recordCashCorrection(testDb.db, new FakeClock(START), {
+	it('refuses a Koreksi of a Koreksi of the Saldo awal, so one replaced opening balance is never reinstated beside its replacement', async () => {
+		// Saldo awal, its Koreksi, a new Saldo awal, then a Koreksi of the first Koreksi: that last
+		// step would put the first opening balance back in force next to the second and count the
+		// cash twice. A reversed opening balance is replaced by recording a new one (#322), never by
+		// reversing its Koreksi.
+		const adminId = await insertAdmin('Pengurus Koreksi Saldo Awal Ganda');
+		const superuserId = await insertSuperuser('Pengurus Catat Saldo Awal Ganda');
+		await testDb.db.delete(cashTransactions);
+		const first = await recordOpeningBalance(testDb.db, new FakeClock(START), {
+			actorId: superuserId,
+			amount: rupiah(2_750_000),
+			occurredOn: '2026-01-05'
+		});
+		const firstCorrection = await recordCashCorrection(testDb.db, new FakeClock(START), {
 			actorId: adminId,
-			transactionId: income.id,
-			reason: 'Pembayaran tercatat dua kali.'
+			transactionId: first.id,
+			reason: 'Saldo awal keliru.'
 		});
+		const second = await recordOpeningBalance(testDb.db, new FakeClock(START), {
+			actorId: superuserId,
+			amount: rupiah(2_500_000),
+			occurredOn: '2026-01-05'
+		});
+		const before = await testDb.db.select().from(cashTransactions);
 
-		expect(correction).toMatchObject({
-			type: CASH_CATEGORY_TYPE.expense,
-			categoryId: income.categoryId,
-			amount: income.amount,
-			correctionOf: income.id
+		const refusal: unknown = await recordCashCorrection(testDb.db, new FakeClock(START), {
+			actorId: adminId,
+			transactionId: firstCorrection.id,
+			reason: 'Koreksinya keliru.'
+		}).catch((error: unknown) => error);
+
+		expect(refusal).toBeInstanceOf(CashCorrectionTargetError);
+		expect(refusal).toMatchObject({
+			transactionId: firstCorrection.id,
+			kind: 'correction',
+			reason: 'reversedOpeningBalance'
 		});
+		expect(await testDb.db.select().from(cashTransactions)).toHaveLength(before.length);
+		// The replacement is the one in force, alone.
+		expect(await getOpeningBalance(testDb.db, superuserId)).toMatchObject({ id: second.id });
+		await testDb.db.delete(cashTransactions);
 	});
 
 	it('refuses an id no transaction carries', async () => {
