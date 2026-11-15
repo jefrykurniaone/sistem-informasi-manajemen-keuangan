@@ -23,6 +23,9 @@ berada di luar permukaan tiket run itu, dan keduanya merugikan orang yang merawa
    di image produksi tetap berhasil. Yang salah adalah penjelasannya. Pengembang atau agen yang nanti
    mengubah konfigurasi itu akan bernalar dari penjelasan yang keliru. Satu komentar juga melewati batas
    100 kolom.
+
+   > *Catatan penyerahan (2026-11-15):* ketiga komentar sudah ditulis ulang ke mekanisme SvelteKit 3 di #301
+   > (`5914b0d`, merge `37daea4`), dan paragraf shim sudah dirapikan ke 100 kolom.
 2. **Test privasi laporan yang kadang merah tanpa sebab.** Test privasi Laporan Bulanan menanam dua nomor
    rumah sebagai penanda, `4071` dan `9182`. Test lalu memastikan payload laporan yang diserialisasi tidak
    memuat penanda itu. Payload yang sama memuat belasan UUID acak. Kedua nomor hanya terdiri dari digit,
@@ -31,6 +34,9 @@ berada di luar permukaan tiket run itu, dan keduanya merugikan orang yang merawa
    `fe407136-cae0-4e13-a0c2-bcb9fc32e320` memuat `4071`, sehingga keenam kasus nomor rumah merah padahal
    tidak ada kebocoran. Merah palsu menghabiskan waktu pemilik untuk menyelidiki. Lebih buruk lagi, merah
    palsu melatih orang menganggap kegagalan test privasi sebagai hal biasa.
+
+   > *Catatan penyerahan (2026-11-15):* penandanya sekarang `4071K` dan `9182P`, dan sebuah kasus penjaga menolak
+   > penanda yang hanya memuat karakter nilai acak (#302, `c9ae861`, merge `fd1d944`).
 
 ## Solution
 
@@ -111,13 +117,27 @@ Semua keputusan di bawah dikonfirmasi pemilik pada 2026-11-15.
    Executor memeriksa ulang setiap butir terhadap SvelteKit yang terpasang sebelum menulisnya. Kalau ada
    butir yang ternyata salah, yang ditulis adalah yang benar menurut pemeriksaan itu, dan selisihnya
    dilaporkan.
+
+   > *Catatan penyerahan (2026-11-15):* setiap butir terbukti benar untuk `@sveltejs/kit` 3.2.0 yang terpasang.
+   > Satu butir kurang tepat: `compilerOptions.paths` kosong hanya karena repositori ini tidak
+   > mendeklarasikan `alias` kit. Komentar shim sekarang menyebutnya (#301).
 4. **#301 hanya mengubah komentar.** Field `"//"` di tsconfig seeder dihitung sebagai komentar. Nilai
    konfigurasi lain tidak berubah. Baris komentar yang melewati 100 kolom ikut dirapikan.
+
+   > *Catatan penyerahan (2026-11-15):* nilai field `"//"` sekarang berupa array string, satu baris per elemen,
+   > karena string JSON tidak bisa dibungkus ke 100 kolom. `compilerOptions` tidak berubah, dan
+   > seeder serta bundel superuser tetap berhasil (S3).
 5. **Alasan yang gugur ditulis ulang atau dihapus.** Komentar tsconfig seeder sekarang beralasan bahwa path
    ditulis manual karena path warisan `.svelte-kit/tsconfig.json` relatif ke `.svelte-kit/`. Di SvelteKit 3
    tidak ada path yang diwarisi, jadi alasan itu gugur. Executor menulis alasan yang benar setelah
    mengujinya di SvelteKit terpasang, atau menghapus alasan itu kalau memang tidak ada lagi. Kalau file itu
    ternyata bisa disederhanakan, misalnya dengan meng-extend tsconfig induk, temuan itu jadi issue baru.
+
+   > *Catatan penyerahan (2026-11-15):* alasan "re-base" itu sudah dihapus di #301. Penggantinya sudah diuji: path
+   > `$app/server` ditulis manual karena tidak ada yang bisa diwarisi, sebab `paths` di `$app/tsconfig`
+   > kosong. Tsconfig percobaan yang meng-extend `../tsconfig.json` menghasilkan bundel yang
+   > byte-identik. Tidak ada issue penyederhanaan baru, karena file itu sudah hanya memuat satu
+   > pemetaan.
 6. **Penanda nomor rumah memuat huruf di luar hex.** `4071` menjadi `4071K` dan `9182` menjadi `9182P`.
    Huruf `K` dan `P` tidak bisa dihasilkan UUID (hex huruf kecil), angka rupiah, tanggal, atau timestamp
    ISO (yang memuat `T` dan `Z`). Nomor rumah memang bertipe teks dan boleh memuat huruf, seperti `12A`
@@ -170,6 +190,9 @@ Contoh yang sudah ada di repositori: test privasi laporan sendiri dengan tabel k
 - Diff #302 hanya menyentuh file test privasi laporan.
 - Gate empat perintah hijau di ujung branch integrasi, dan keempat check CI hijau di pull request integrasi.
 
+> *Catatan penyerahan (2026-11-15):* S1 hijau pada `fd1d944` (2376 tes), S3 hijau, dan bukti S4 dikutip di #302.
+> Hasil S2 dan merge commit `main` dicatat di #304.
+
 ## Out of scope
 
 - Menyederhanakan atau mengubah nilai konfigurasi tsconfig seeder.
@@ -187,4 +210,7 @@ Contoh yang sudah ada di repositori: test privasi laporan sendiri dengan tabel k
 - #302 adalah cacat yang sudah ada sebelum kit3-v1, bukan akibat run itu.
 - Kalau #301 menemukan bahwa konfigurasi seeder bisa disederhanakan, issue barunya ditautkan di laporan
   tiket.
+
+> *Catatan penyerahan (2026-11-15):* #301 tidak menemukan penyederhanaan, jadi tidak ada issue baru.
+
 
