@@ -1,5 +1,6 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import type { Browser, Page } from '@playwright/test';
 import { Pool } from 'pg';
+import { expect, test } from './fixtures';
 
 /**
  * Self-registration and its approval, through a browser: someone signs themselves up naming a house,
@@ -14,9 +15,11 @@ import { Pool } from 'pg';
  *
  * ## The fixtures this spec writes directly
  *
- * The `superuser` role grant and the unit row are inserted with SQL, for the reason that spec gives:
- * granting the first role has no UI that does not itself require a superuser, and the unit register
- * belongs to another spec's flow.
+ * The superuser is the Data Contoh account, already signed in by the `superuserPage` fixture of
+ * `./fixtures.ts`, which signs it in once per worker so this spec stays off the login limit the whole
+ * suite shares. The unit row is inserted with SQL, for the reason that spec gives: the unit register
+ * belongs to another spec's flow. The registrants are new accounts and sign themselves in: the
+ * sign-in right after their verification is part of what the test walks.
  */
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -139,30 +142,6 @@ async function signIn(page: Page, email: string): Promise<void> {
 	await page.getByRole('button', { name: 'Masuk' }).click();
 }
 
-/** Registers, verifies and signs a superuser in, granting the role by SQL — see the doc comment. */
-async function signedInSuperuser(page: Page): Promise<void> {
-	const email = anAddress('superuser');
-	await fillRegistrationForm(page, {
-		name: 'Pengurus E2E',
-		email,
-		block: aBlock(),
-		number: '1'
-	});
-	await verifyAddress(page, email);
-
-	await pool().query(
-		`insert into user_roles (user_id, role, created_at)
-		 select id, 'superuser', now() from "user" where email = $1
-		 on conflict do nothing`,
-		[email]
-	);
-
-	await signIn(page, email);
-	// Holds `superuser`, granted above by SQL, so the `(app)` layout's admitted-account exemption
-	// applies and this account lands on Beranda rather than `/pending-approval`.
-	await expect(page).toHaveURL(/\/$/);
-}
-
 /** A unit row of this run's own, returning its block and number. */
 async function insertUnit(): Promise<{ block: string; number: string }> {
 	const block = aBlock();
@@ -200,10 +179,9 @@ async function registrantWaiting(
 }
 
 test('a self-registrant waits, is approved onto a house, and becomes a warga of it', async ({
-	page,
+	superuserPage: page,
 	browser
 }) => {
-	await signedInSuperuser(page);
 	const unit = await insertUnit();
 	const registrant = await registrantWaiting(browser, unit);
 
@@ -237,10 +215,9 @@ test('a self-registrant waits, is approved onto a house, and becomes a warga of 
 });
 
 test('a self-registrant who is turned down reads the reason and may apply again', async ({
-	page,
+	superuserPage: page,
 	browser
 }) => {
-	await signedInSuperuser(page);
 	const registrant = await registrantWaiting(browser, { block: aBlock(), number: '404' });
 
 	try {

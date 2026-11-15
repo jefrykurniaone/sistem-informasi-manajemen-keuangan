@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 /**
  * `/` is the Beranda now, and every page in the `(app)` group is guarded by its own session check
@@ -18,18 +19,10 @@ test('the home page redirects an anonymous visitor to the login page', async ({ 
  * `docs/spec-shell-beranda-v1.md` had introduced (`src/lib/components/app-shell/nav-group.svelte`):
  * hovering a group's title must never open it, only a click, a tap, or Enter/Space does.
  *
- * Signs in as the Data Contoh superuser account, the same fixture and password
- * `tests/e2e/dialogs.spec.ts` uses (see `README.md`, "Data Contoh"), which holds every menu group
- * so "Keuangan" and "Warga & Unit" are both on screen at 1920px without registering a throwaway
- * account here.
+ * Stands on the Data Contoh superuser's session, the `superuserPage` fixture of `./fixtures.ts`
+ * (see `README.md`, "Data Contoh"), which holds every menu group so "Keuangan" and "Warga & Unit"
+ * are both on screen at 1920px without registering a throwaway account here.
  */
-
-/** The Data Contoh superuser account (`README.md`, "Data Contoh"). */
-const SUPERUSER_EMAIL = 'superuser@komplek.local';
-const SUPERUSER_PASSWORD = 'kata-sandi-dummy-123';
-
-/** The label on the address field in the sign-in form. */
-const EMAIL_FIELD = 'Alamat email';
 
 /** The accessible name of the sidebar landmark, `appShell_navLabel`. */
 const MAIN_NAV_ID = 'Navigasi utama';
@@ -51,23 +44,14 @@ async function open(page: Page, path: string): Promise<void> {
 	await page.waitForLoadState('networkidle');
 }
 
-/** Signs the Data Contoh superuser in on `page`, and waits for the landing page to be hydrated. */
-async function signInAsSuperuser(page: Page): Promise<void> {
-	await open(page, '/login');
-	await page.getByLabel(EMAIL_FIELD).fill(SUPERUSER_EMAIL);
-	await page.getByLabel('Kata sandi').fill(SUPERUSER_PASSWORD);
-	await page.getByRole('button', { name: 'Masuk' }).click();
-	await expect(page).toHaveURL(/\/$/);
-	await page.waitForLoadState('networkidle');
-}
-
 test.describe('sidebar menu groups open only on click, never on hover', () => {
 	test.use({ viewport: { width: 1920, height: 1080 } });
 
 	test('hovering a group title never opens it; clicking toggles it; opening another group closes it; the active group is open on load', async ({
-		page
+		superuserPage: page
 	}) => {
-		await signInAsSuperuser(page);
+		// The session is already there; the landing page is opened and waited on until it is hydrated.
+		await open(page, '/');
 
 		const nav = page.getByRole('navigation', { name: MAIN_NAV_ID });
 		const financeTitle = nav.getByRole('button', { name: 'Keuangan', exact: true });
