@@ -36,7 +36,10 @@ import {
 	SystemCashCategoryError,
 	SystemCategoryMissingError
 } from '#lib/server/services/cash/category.ts';
-import { OpeningBalanceAlreadyRecordedError } from '#lib/server/services/cash/opening-balance.ts';
+import {
+	OpeningBalanceAfterEarliestCashTransactionError,
+	OpeningBalanceAlreadyRecordedError
+} from '#lib/server/services/cash/opening-balance.ts';
 import { PeriodLockedError, PeriodRuleError } from '#lib/server/services/cash/period.ts';
 import {
 	CashCorrectionTargetError,
@@ -554,10 +557,10 @@ describe('errorCategoryOf', () => {
 
 			[CashCategoryNameTakenError, ERROR_CATEGORY.rule],
 			[SystemCashCategoryError, ERROR_CATEGORY.rule],
+			[OpeningBalanceAfterEarliestCashTransactionError, ERROR_CATEGORY.rule],
 			[OpeningBalanceAlreadyRecordedError, ERROR_CATEGORY.rule],
 			[PeriodLockedError, ERROR_CATEGORY.rule],
 			[PeriodRuleError, ERROR_CATEGORY.rule],
-			[CashCorrectionTargetError, ERROR_CATEGORY.rule],
 			[CashRuleError, ERROR_CATEGORY.rule],
 			[CashTransactionAlreadyCorrectedError, ERROR_CATEGORY.rule],
 			[ComplaintAttachmentRuleError, ERROR_CATEGORY.rule],
@@ -628,6 +631,10 @@ describe('every error class a service exports declares a category', () => {
 		[
 			NoDuesRateError,
 			'a failure of the issuance job, recorded in job_runs and shown on /admin/jobs, never thrown at a route'
+		],
+		[
+			CashCorrectionTargetError,
+			'from the dues-correction module it means the line was found through the wrong Audit Log entry, a defect (cash/writer.ts); a route that refuses an ordinary Koreksi with it names it'
 		]
 	]);
 
@@ -664,8 +671,8 @@ describe('every error class a service exports declares a category', () => {
 		}
 
 		// The walk reached the services at all: the table above holds 59 of their classes, and the
-		// two deliberate exceptions make 61 (a re-export counts again in each module that has it).
-		expect(seen).toBeGreaterThanOrEqual(61);
+		// three deliberate exceptions make 62 (a re-export counts again in each module that has it).
+		expect(seen).toBeGreaterThanOrEqual(62);
 		expect(uncategorised).toEqual([]);
 	});
 
@@ -674,6 +681,22 @@ describe('every error class a service exports declares a category', () => {
 			const prototype = (errorClass as { prototype: object }).prototype;
 			expect(errorCategoryOf(Object.create(prototype))).toBeUndefined();
 		}
+	});
+
+	it('rethrows a defect an action did not name, and answers it on the form only where it is named', () => {
+		// Built without its constructor, as the table above builds every class: only the class matters.
+		const defect: unknown = Object.create(CashCorrectionTargetError.prototype);
+		const unnamed = outcomeOf(() => failOrThrow(defect, FORM));
+
+		expect(unnamed.kind === 'rethrown' && unnamed.thrown).toBe(defect);
+		expect(
+			outcomeOf(() =>
+				failOrThrow(defect, {
+					...FORM,
+					refusals: [refusal(CashCorrectionTargetError, () => NAMED)]
+				})
+			)
+		).toEqual({ kind: 'form', status: 400, data: { message: NAMED } });
 	});
 });
 

@@ -16,10 +16,12 @@ import {
 	CashCategoryNotFoundError,
 	SystemCashCategoryError
 } from '#lib/server/services/cash/category.ts';
-import { OpeningBalanceAlreadyRecordedError } from '#lib/server/services/cash/opening-balance.ts';
+import {
+	OpeningBalanceAfterEarliestCashTransactionError,
+	OpeningBalanceAlreadyRecordedError
+} from '#lib/server/services/cash/opening-balance.ts';
 import { PeriodLockedError, PeriodRuleError } from '#lib/server/services/cash/period.ts';
 import {
-	CashCorrectionTargetError,
 	CashRuleError,
 	CashTransactionAlreadyCorrectedError,
 	CashTransactionNotFoundError
@@ -232,6 +234,11 @@ export type { Refusal };
  * hand (`({ error }) => m.x({ name: error.categoryName })`), and a message without one can still be
  * passed as it is (`m.x`).
  *
+ * The wrapping moves the hole to one name rather than closing it: a Paraglide message whose only
+ * parameter is `{error}` accepts `{ error }` as it stands, so passed directly it type-checks and
+ * prints the error's own text, class name first, on the screen. No message is shaped like that
+ * today. If one ever is, call it by hand with the field it means, never pass it as it is.
+ *
  * @throws {TypeError} when `errorClass` is `Error` itself, which would turn every bug into a form
  *   message, or `PermissionDeniedError` or a subclass of it, which is always a 403.
  */
@@ -284,14 +291,19 @@ const NOT_FOUND_ERRORS: readonly ErrorClass<Error>[] = [
  * The rule violations written before `RuleViolationError` existed, on the same terms as
  * `NOT_FOUND_ERRORS`. `LastSuperuserError` is not here: it lives in `src/lib/errors.ts` and extends
  * `RuleViolationError` itself.
+ *
+ * `CashCorrectionTargetError` is deliberately in neither list. Its own doc in
+ * `#lib/server/services/cash/writer.ts` calls it a defect when the dues-correction module meets it
+ * (the line was found through the wrong Audit Log entry), and a defect must reach the log as a 500,
+ * not a quiet form message. A route that refuses an ordinary Koreksi with it names it with `refusal`.
  */
 const RULE_ERRORS: readonly ErrorClass<Error>[] = [
 	CashCategoryNameTakenError,
 	SystemCashCategoryError,
+	OpeningBalanceAfterEarliestCashTransactionError,
 	OpeningBalanceAlreadyRecordedError,
 	PeriodLockedError,
 	PeriodRuleError,
-	CashCorrectionTargetError,
 	CashRuleError,
 	CashTransactionAlreadyCorrectedError,
 	ComplaintAttachmentRuleError,
@@ -390,6 +402,12 @@ export interface FormFailure {
  *
  * `extra` travels on every `fail(400)` this call returns, beside `message`: a form that refills what
  * was typed passes `{ values }`. It never reaches a 403 or a 404.
+ *
+ * **Always `return` it** (`return failOrThrow(caught, …)`). A rejected form is a value this call
+ * returns, not something it throws, so a call whose result is discarded lets the action fall
+ * through to whatever follows the `catch`: on a route whose success `return` comes after the `try`,
+ * that is the success message for a request that was refused. A `catch` that should only ever throw
+ * (403, 404, or the error itself) calls `throwRouteError` instead.
  */
 export function failOrThrow(caught: unknown, messages: FormMessages): ActionFailure<FormFailure>;
 export function failOrThrow<Extra extends object & { readonly message?: never }>(
