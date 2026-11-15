@@ -1,11 +1,18 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
 import { getLocale } from '#lib/paraglide/runtime.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { formatRupiah, parseRupiah, type Rupiah } from '#lib/money.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import { formatRupiah } from '#lib/money.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readRupiah,
+	readText,
+	refusal,
+	requireUser,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import {
 	getOpeningBalance,
 	OpeningBalanceAfterEarliestCashTransactionError,
@@ -18,53 +25,79 @@ import type { Actions, PageServerLoad } from './$types';
 
 /**
  * The superuser screen for the Saldo awal: the opening balance in force, or the form while there is
- * none, either because none was recorded or because a Koreksi reversed the one that was. Follows the shape `src/routes/(app)/admin/units/+page.server.ts` settled —
- * nobody who is not signed in reaches the service layer, `PermissionDeniedError` becomes
- * `error(403, …)` here, and the service's own refusals come back as rejected forms.
+ * none, either because none was recorded or because a Koreksi reversed the one that was. Follows
+ * the shape `src/lib/server/route-action.ts` settled (#318) — nobody who is not signed in reaches
+ * the service layer, `PermissionDeniedError` becomes `error(403, …)` here, and the service's own
+ * refusals come back as rejected forms. A rule this screen does not name is the invalid-form
+ * sentence rather than a 500.
  *
  * There is deliberately no edit action and no delete action. The cash book is append-only, so a
  * wrong opening balance is corrected with a reversing transaction, not overwritten — see
  * `src/lib/server/services/cash/opening-balance.ts`.
  */
 
-export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+/** The sentences the page says when it refuses a request outright. */
+const PAGE = { forbidden: m.adminOpeningBalance_forbidden } satisfies PageMessages;
 
+/**
+ * What `record` says when the service refuses it, each `fail(400)`. A `TypeError` or `RangeError`
+ * from the service's own money checks reads as the invalid-amount sentence.
+ */
+const RECORD_FORM = {
+	...PAGE,
+	fallback: m.adminOpeningBalance_invalidForm,
+	refusals: [
+		refusal(OpeningBalanceAlreadyRecordedError, m.adminOpeningBalance_alreadyRecorded),
+		refusal(OpeningBalanceAfterEarliestCashTransactionError, ({ error }) =>
+			m.adminOpeningBalance_afterEarliestTransaction({ date: asDay(error.earliestOccurredOn) })
+		),
+		refusal(PeriodLockedError, ({ error }) =>
+			m.adminOpeningBalance_periodLocked({
+				period: formatMonthLabel(error.period, getLocale()),
+				date: asDay(error.occurredOn)
+			})
+		),
+		refusal(TypeError, m.adminOpeningBalance_invalidAmount),
+		refusal(RangeError, m.adminOpeningBalance_invalidAmount)
+	]
+} satisfies FormMessages;
+
+export const load: PageServerLoad = async ({ locals }) => {
+	const user = requireUser(locals);
+
+	const { db } = productionDependencies();
 	try {
-		const recorded = await getOpeningBalance(database(), locals.user.id);
+		const recorded = await getOpeningBalance(db, user.id);
 		return {
 			openingBalance: recorded
 				? { amount: recorded.amount, occurredOn: recorded.occurredOn }
 				: undefined
 		};
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	record: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const rawAmount = String(form.get('amount') ?? '').trim();
-		const occurredOn = String(form.get('occurredOn') ?? '').trim();
+		const rawAmount = readText(form, 'amount');
+		const occurredOn = readText(form, 'occurredOn');
 		if (rawAmount === '' || occurredOn === '') {
 			return fail(400, { message: m.adminOpeningBalance_invalidForm() });
 		}
 
-		const amount = readAmount(rawAmount);
+		const amount = readRupiah(form, 'amount');
 		if (amount === undefined) {
 			return fail(400, { message: m.adminOpeningBalance_invalidAmount() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			const recorded = await recordOpeningBalance(database(), systemClock, {
-				actorId: locals.user.id,
+			const recorded = await recordOpeningBalance(db, clock, {
+				actorId: user.id,
 				amount,
 				occurredOn
 			});
@@ -75,28 +108,7 @@ export const actions: Actions = {
 				})
 			};
 		} catch (caught) {
-			if (caught instanceof OpeningBalanceAlreadyRecordedError) {
-				return fail(400, { message: m.adminOpeningBalance_alreadyRecorded() });
-			}
-			if (caught instanceof OpeningBalanceAfterEarliestCashTransactionError) {
-				return fail(400, {
-					message: m.adminOpeningBalance_afterEarliestTransaction({
-						date: asDay(caught.earliestOccurredOn)
-					})
-				});
-			}
-			if (caught instanceof PeriodLockedError) {
-				return fail(400, {
-					message: m.adminOpeningBalance_periodLocked({
-						period: formatMonthLabel(caught.period, getLocale()),
-						date: asDay(caught.occurredOn)
-					})
-				});
-			}
-			if (caught instanceof TypeError || caught instanceof RangeError) {
-				return fail(400, { message: m.adminOpeningBalance_invalidAmount() });
-			}
-			throwAsRouteError(caught);
+			return failOrThrow(caught, RECORD_FORM);
 		}
 	}
 };
@@ -104,29 +116,4 @@ export const actions: Actions = {
 /** A stored `YYYY-MM-DD` as a day a person reads, the way the page itself shows one. */
 function asDay(day: string): string {
 	return formatDay(new Date(`${day}T00:00:00.000Z`));
-}
-
-/**
- * The typed money value behind what the form posted, or `undefined` when the text is not a
- * whole-rupiah amount. `parseRupiah` rejects fractions rather than rounding them, which is the
- * whole reason the raw text goes through it instead of through `Number()`.
- */
-function readAmount(raw: string): Rupiah | undefined {
-	try {
-		return parseRupiah(raw);
-	} catch {
-		return undefined;
-	}
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- * `never`, so it can end a `catch` block without widening what SvelteKit infers — the same helper
- * the units and invitations screens carry, for the same reason.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminOpeningBalance_forbidden());
-	}
-	throw caught;
 }

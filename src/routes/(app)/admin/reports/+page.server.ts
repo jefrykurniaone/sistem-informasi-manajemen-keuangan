@@ -1,10 +1,16 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
 import { getLocale } from '#lib/paraglide/runtime.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	requireUser,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import { CASH_BOOK_MONTH_PATTERN } from '#lib/server/services/cash/balance.ts';
 import { PERIOD_RULE, PeriodRuleError, type PeriodRule } from '#lib/server/services/cash/period.ts';
 import {
@@ -22,10 +28,10 @@ import type { Actions, PageServerLoad } from './$types';
  * The screen an admin previews a Laporan Bulanan on and publishes it from — user stories 12 and 13,
  * which are one screen because a preview is only useful to whoever may press the button under it.
  *
- * Follows the shape `src/routes/(app)/admin/periods/+page.server.ts` settled: nobody who is not
- * signed in reaches the service layer, `PermissionDeniedError` becomes `error(403, …)` here and
- * never in the service, and every rule the service refuses comes back as `fail(400, …)` with a
- * sentence an admin can read.
+ * Follows the shape `src/lib/server/route-action.ts` settled (#318): nobody who is not signed in
+ * reaches the service layer, `PermissionDeniedError` becomes `error(403, …)` here and never in the
+ * service, and every rule the service refuses comes back as `fail(400, …)` with a sentence an admin
+ * can read. A rule this screen does not name is the invalid-form sentence rather than a 500.
  *
  * This route decides nothing. Which month is previewed, whether it is locked, which revision would
  * be next and whether that revision needs an alasan are all answered by `reportWorkbench`, and the
@@ -47,14 +53,25 @@ const PERIOD_FIELD = 'period';
 /** The form field carrying the alasan revisi, which every warga is shown. */
 const REASON_FIELD = 'revisionReason';
 
-export const load: PageServerLoad = async ({ locals, url }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+/** The sentences the page says when it refuses a request outright. */
+const PAGE = { forbidden: m.adminReports_forbidden } satisfies PageMessages;
 
-	const db = database();
+/** What `publish` says when the publication is refused, each `fail(400)`. */
+const PUBLISH_FORM = {
+	...PAGE,
+	fallback: m.adminReports_invalidForm,
+	refusals: [
+		refusal(ReportRuleError, ({ error }) => reportRuleMessage(error.rule)),
+		refusal(PeriodRuleError, ({ error }) => periodRuleMessage(error.rule))
+	]
+} satisfies FormMessages;
+
+export const load: PageServerLoad = async ({ locals, url }) => {
+	const user = requireUser(locals);
+
+	const { db, clock } = productionDependencies();
 	try {
-		const workbench = await reportWorkbench(db, systemClock, locals.user.id, periodFrom(url));
+		const workbench = await reportWorkbench(db, clock, user.id, periodFrom(url));
 		// Arranged through the same function the published report uses, so that a preview cannot show
 		// a different grouping of the same numbers than the page a warga opens afterwards — including
 		// which line is the iuran category and is therefore never broken down.
@@ -64,26 +81,25 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 		const month = formatMonthLabel(workbench.period, getLocale());
 		return { ...workbench, ...breakdown, month };
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	publish: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const period = String(form.get(PERIOD_FIELD) ?? '').trim();
-		const revisionReason = String(form.get(REASON_FIELD) ?? '').trim();
+		const period = readText(form, PERIOD_FIELD);
+		const revisionReason = readText(form, REASON_FIELD);
 		if (!CASH_BOOK_MONTH_PATTERN.test(period)) {
 			return fail(400, { message: m.adminReports_invalidForm() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			const report = await publishReport(database(), systemClock, {
-				actorId: locals.user.id,
+			const report = await publishReport(db, clock, {
+				actorId: user.id,
 				period,
 				revisionReason
 			});
@@ -91,7 +107,7 @@ export const actions: Actions = {
 				message: m.adminReports_publishSuccess({ period, revision: report.revision })
 			};
 		} catch (caught) {
-			return failAsRejectedForm(caught);
+			return failOrThrow(caught, PUBLISH_FORM);
 		}
 	}
 };
@@ -100,17 +116,6 @@ export const actions: Actions = {
 function periodFrom(url: URL): string | undefined {
 	const period = url.searchParams.get(PERIOD_PARAMETER) ?? '';
 	return CASH_BOOK_MONTH_PATTERN.test(period) ? period : undefined;
-}
-
-/** Turns each refusal the publication names into a rejected form. */
-function failAsRejectedForm(caught: unknown) {
-	if (caught instanceof ReportRuleError) {
-		return fail(400, { message: reportRuleMessage(caught.rule) });
-	}
-	if (caught instanceof PeriodRuleError) {
-		return fail(400, { message: periodRuleMessage(caught.rule) });
-	}
-	throwAsRouteError(caught);
 }
 
 /**
@@ -144,16 +149,4 @@ function periodRuleMessage(rule: PeriodRule): string {
 		[PERIOD_RULE.alreadyLocked]: m.adminReports_periodRule_alreadyLocked
 	};
 	return messages[rule]();
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- * Always throws — the return type is `never` so that this can sit in a `catch` block without
- * widening the type SvelteKit infers, the same helper every other admin screen carries.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminReports_forbidden());
-	}
-	throw caught;
 }
