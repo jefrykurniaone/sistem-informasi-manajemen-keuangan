@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import LanguageSwitcher from '#lib/components/app-shell/language-switcher.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { complexName } from '#lib/complex-name.ts';
@@ -9,6 +10,12 @@
 	/**
 	 * The frame the pages anyone may open without an account sit in: the announcement board
 	 * (`posts/+page.svelte`, `posts/[id]/+page.svelte`) and the unsubscribe confirmation.
+	 *
+	 * **Unless `posts/+layout.svelte` supplies the app shell** (#319): a signed-in viewer who is let in
+	 * opens the board and a Post inside the shell, so this frame renders nothing of its own around
+	 * them. `posts/+layout.server.ts` returns `shell`, read here off `page.data` because a layout
+	 * cannot see its child layout's data through `data`. The unsubscribe confirmation has no such
+	 * layout, so it always gets the light header below, whoever is looking.
 	 *
 	 * **A light header, not the app shell.** A visitor here has no menu to open, so since #170 there
 	 * is no sidebar and no collapse control, only the complex's name on the left and one way onward
@@ -41,41 +48,50 @@
 	 * it absorbs whatever space the other three leave and truncates there.
 	 */
 	let { data, children }: LayoutProps = $props();
+
+	/** Whether `posts/+layout.svelte` has put the app shell around this page. */
+	const inShell = $derived('shell' in page.data && page.data.shell !== null);
 </script>
 
-<header class="border-b border-border">
-	<div class="mx-auto flex h-14 w-full max-w-3xl items-center justify-between gap-3 px-4">
-		<a
-			href={resolve('posts')}
-			class="max-w-[35%] min-w-0 shrink-0 truncate text-sm font-semibold tracking-tight hover:underline sm:max-w-[50%]"
-		>
-			{complexName}
-		</a>
-		{#if data.viewer}
-			<div class="flex min-w-0 items-center gap-3">
-				<span class="min-w-0 truncate text-sm text-muted-foreground">{data.viewer.name}</span>
-				<div class="shrink-0">
-					<LanguageSwitcher hideLabel />
-				</div>
-				<Button href={resolve('')} variant="outline" class="min-h-11 shrink-0 md:min-h-0">
-					{m.appShell_navHome()}
-				</Button>
-			</div>
-		{:else}
-			<div class="flex shrink-0 items-center gap-2">
-				<LanguageSwitcher hideLabel />
-				<Button href={resolve('login')} class="min-h-11 md:min-h-0">{m.appShell_navLogin()}</Button>
-			</div>
-		{/if}
-	</div>
-</header>
-
-<!--
-	A `<div>`, not a `<main>`. Each page of this group renders its own `<main>` around its content,
-	the same per-page convention the `(auth)` pages follow: `posts/+page.svelte`,
-	`posts/[id]/+page.svelte` and `unsubscribe/[token]/+page.svelte` each carry one, so a `<main>`
-	here would nest a second landmark inside the first.
--->
-<div class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10">
+{#if inShell}
 	{@render children()}
-</div>
+{:else}
+	<header class="border-b border-border">
+		<div class="mx-auto flex h-14 w-full max-w-3xl items-center justify-between gap-3 px-4">
+			<a
+				href={resolve('posts')}
+				class="max-w-[35%] min-w-0 shrink-0 truncate text-sm font-semibold tracking-tight hover:underline sm:max-w-[50%]"
+			>
+				{complexName}
+			</a>
+			{#if data.viewer}
+				<div class="flex min-w-0 items-center gap-3">
+					<span class="min-w-0 truncate text-sm text-muted-foreground">{data.viewer.name}</span>
+					<div class="shrink-0">
+						<LanguageSwitcher hideLabel />
+					</div>
+					<Button href={resolve('')} variant="outline" class="min-h-11 shrink-0 md:min-h-0">
+						{m.appShell_navHome()}
+					</Button>
+				</div>
+			{:else}
+				<div class="flex shrink-0 items-center gap-2">
+					<LanguageSwitcher hideLabel />
+					<Button href={resolve('login')} class="min-h-11 md:min-h-0"
+						>{m.appShell_navLogin()}</Button
+					>
+				</div>
+			{/if}
+		</div>
+	</header>
+
+	<!--
+		A `<div>`, not a `<main>`. Each page of this group renders its own `<main>` around its content,
+		the same per-page convention the `(auth)` pages follow: `posts/+page.svelte`,
+		`posts/[id]/+page.svelte` and `unsubscribe/[token]/+page.svelte` each carry one, so a `<main>`
+		here would nest a second landmark inside the first.
+	-->
+	<div class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10">
+		{@render children()}
+	</div>
+{/if}
