@@ -4,8 +4,11 @@
  *
  * ## Why this file has to exist
  *
- * `$app/server` is a *virtual* module. Only SvelteKit's own module loader resolves it, and
- * `.svelte-kit/tsconfig.json` maps `$app/types` and nothing else (`#lib` comes from the `imports` field of package.json) — so a plain
+ * `$app/server` is a *virtual* module. Only SvelteKit's own module loader resolves it, and nothing
+ * on disk stands in for it. `tsconfig.json` extends `$app/tsconfig`, which `svelte-kit sync` writes
+ * to `node_modules/$app/tsconfig.json`: its `compilerOptions.paths` is empty (this repository sets
+ * no kit `alias`), and its `types` only name `$app/types`. `#lib` is not mapped there either: it
+ * resolves through the `imports` field of package.json, which Bun reads on its own. So a plain
  * `bun run` that reaches `src/lib/server/auth.ts` fails outright:
  *
  * ```
