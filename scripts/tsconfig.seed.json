@@ -1,5 +1,19 @@
 {
-	"//": "Module resolution for `bun run --tsconfig-override scripts/tsconfig.seed.json`. It exists because `$app/server` is a SvelteKit virtual module that plain `bun run` cannot resolve, and `scripts/seed-dev.ts` imports `src/lib/server/auth.ts`, which imports it. See scripts/app-server-shim.ts for the whole argument. The paths are written out rather than inherited from ../tsconfig.json: that file extends the generated .svelte-kit/tsconfig.json, whose path entries are relative to .svelte-kit/, and a second level of `extends` would re-base them against this directory instead. `#lib` needs no mapping here: it resolves through the `imports` field of package.json. Every path below is relative to scripts/. This file configures nothing else and is not part of `bun run check`, which type-checks src/ and tests/ through ../tsconfig.json as before.",
+	"//": [
+		"Module resolution for `bun run --tsconfig-override scripts/tsconfig.seed.json`. It exists",
+		"because `$app/server` is a SvelteKit virtual module that plain `bun run` cannot resolve, and",
+		"`scripts/seed-dev.ts` imports `src/lib/server/auth.ts`, which imports it. See",
+		"scripts/app-server-shim.ts for the whole argument.",
+		"The `$app/server` path is written out here and nothing is inherited, because there is",
+		"nothing to inherit: ../tsconfig.json extends `$app/tsconfig` (written to",
+		"node_modules/$app/tsconfig.json by `svelte-kit sync`), whose `compilerOptions.paths` is",
+		"empty. Extending ../tsconfig.json from here gives a byte-identical bundle, so it would be",
+		"harmless but pointless.",
+		"`#lib` needs no mapping here: it resolves through the `imports` field of package.json.",
+		"Every path below is relative to scripts/.",
+		"This file configures nothing else and is not part of `bun run check`, which type-checks",
+		"src/, tests/ and vite.config.ts through ../tsconfig.json."
+	],
 	"compilerOptions": {
 		"paths": {
 			"$app/server": ["./app-server-shim.ts"]
