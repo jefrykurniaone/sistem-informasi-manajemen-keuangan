@@ -1,86 +1,69 @@
-import { error, redirect } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
-import { assertUuidParam } from '#lib/server/services/identifier.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
 import {
-	deactivateUnit,
-	getUnit,
-	reactivateUnit,
-	UnitNotFoundError
-} from '#lib/server/services/unit/index.ts';
+	productionDependencies,
+	requireUser,
+	requireUuidParam,
+	throwRouteError,
+	type PageMessages
+} from '#lib/server/route-action.ts';
+import { deactivateUnit, getUnit, reactivateUnit } from '#lib/server/services/unit/index.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
  * The superuser detail screen for one unit: what it is, who is living in it today and how many of
- * them there are, and the one button that switches it off or back on. Follows the same shape
- * `src/routes/(app)/admin/units/+page.server.ts` and `src/routes/(app)/admin/roles/+page.server.ts`
- * settled — nobody who is not signed in reaches the service layer, and a permission refusal becomes
- * `error(403, …)` here, never in the service.
+ * them there are, and the one button that switches it off or back on. Nobody who is not signed in
+ * reaches the service layer, and a permission refusal becomes `error(403, …)` here, never in the
+ * service. Both go through `#lib/server/route-action.ts` (#318).
  *
  * `UnitNotFoundError` becomes a 404: `params.id` is read straight from the URL, so an id that names
- * no unit is a request the admin screen never produced a link to, not a rejected form.
+ * no unit is a request the admin screen never produced a link to, not a rejected form. That is why
+ * the two actions only ever throw: they have no form sentence to answer with.
  */
 
-export const load: PageServerLoad = async ({ locals, params }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
-	// `units.id` is a `uuid` column — see #111 and `#lib/server/services/identifier.ts`.
-	assertUuidParam(params.id, m.adminUnits_notFound());
+/** The 403 for anyone without `ACTION.manageUnits`, and the 404 for an id that names no unit. */
+const PAGE = {
+	forbidden: m.adminUnits_forbidden,
+	notFound: m.adminUnits_notFound
+} satisfies PageMessages;
 
+export const load: PageServerLoad = async ({ locals, params }) => {
+	const user = requireUser(locals);
+	// `units.id` is a `uuid` column — see #111 and `#lib/server/services/identifier.ts`.
+	const unitId = requireUuidParam(params.id, PAGE);
+
+	const { db, clock } = productionDependencies();
 	try {
-		const unit = await getUnit(database(), locals.user.id, params.id, systemClock);
+		const unit = await getUnit(db, user.id, unitId, clock);
 		return { unit };
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	deactivate: async ({ locals, params }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
-		assertUuidParam(params.id, m.adminUnits_notFound());
+		const user = requireUser(locals);
+		const unitId = requireUuidParam(params.id, PAGE);
 
+		const { db, clock } = productionDependencies();
 		try {
-			await deactivateUnit(database(), systemClock, { actorId: locals.user.id, unitId: params.id });
+			await deactivateUnit(db, clock, { actorId: user.id, unitId });
 		} catch (caught) {
-			throwAsRouteError(caught);
+			throwRouteError(caught, PAGE);
 		}
 		return { message: m.adminUnits_deactivateSuccess() };
 	},
 
 	reactivate: async ({ locals, params }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
-		assertUuidParam(params.id, m.adminUnits_notFound());
+		const user = requireUser(locals);
+		const unitId = requireUuidParam(params.id, PAGE);
 
+		const { db, clock } = productionDependencies();
 		try {
-			await reactivateUnit(database(), systemClock, { actorId: locals.user.id, unitId: params.id });
+			await reactivateUnit(db, clock, { actorId: user.id, unitId });
 		} catch (caught) {
-			throwAsRouteError(caught);
+			throwRouteError(caught, PAGE);
 		}
 		return { message: m.adminUnits_reactivateSuccess() };
 	}
 };
-
-/**
- * Turns a caught permission refusal into a 403, or a caught missing unit into a 404, and throws it —
- * or rethrows whatever else it was. Always throws — the return type is `never` for the same reason
- * the roles and unit-list screens' copies of this helper are: a `catch` block that sometimes
- * *returned* an error instead of throwing it is what breaks SvelteKit's inference of `ActionData`.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminUnits_forbidden());
-	}
-	if (caught instanceof UnitNotFoundError) {
-		throw error(404, m.adminUnits_notFound());
-	}
-	throw caught;
-}

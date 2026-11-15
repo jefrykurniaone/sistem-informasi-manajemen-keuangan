@@ -1,18 +1,23 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
 import { OCCUPANCY_ROLES, type OccupancyRole } from '#lib/server/db/schema/occupancy.ts';
-import { assertUuidParam } from '#lib/server/services/identifier.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	requireUser,
+	requireUuidParam,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import {
 	endOccupancy,
 	listAssignableResidents,
 	listUnitOccupanciesGrouped,
 	OccupancyDateOrderError,
 	OccupancyEndOverlapError,
-	OccupancyNotFoundError,
 	OccupancyOverlapError,
 	PrimaryOccupantAlreadyEndedError,
 	PrimaryOccupantNotStartedError,
@@ -20,7 +25,7 @@ import {
 	ResidentNotFoundError,
 	setPrimaryOccupant
 } from '#lib/server/services/occupancy/index.ts';
-import { getUnit, UnitNotFoundError } from '#lib/server/services/unit/index.ts';
+import { getUnit } from '#lib/server/services/unit/index.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -36,7 +41,10 @@ import type { Actions, PageServerLoad } from './$types';
  * resident who has since been removed, a second Masa Huni that would overlap one the resident already
  * has in this unit, or a last day moved to where it would reach a later Masa Huni of theirs in the same
  * unit — is `fail(400, …)`, because the superuser did nothing outside their rights and only this
- * particular change is refused.
+ * particular change is refused. All of it goes through `#lib/server/route-action.ts` (#318), and
+ * the two 404 sentences are split by what the request names: the page and `record` act on the unit
+ * in the URL (`adminUnits_notFound`), while `end` and `setPrimary` act on the Masa Huni in a hidden
+ * field (`adminOccupancies_notFound`).
  *
  * The load hands the screen the unit's `primaryOccupantNeed` as the Unit service decided it, so the
  * red and yellow warnings are never a date comparison made in the template. `occupancies` is likewise
@@ -48,110 +56,14 @@ import type { Actions, PageServerLoad } from './$types';
 /** A calendar day as an `<input type="date">` posts it. */
 const CALENDAR_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
-export const load: PageServerLoad = async ({ locals, params }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
-	// `units.id` is a `uuid` column — see #111 and `#lib/server/services/identifier.ts`.
-	assertUuidParam(params.id, m.adminUnits_notFound());
-
-	const db = database();
-	try {
-		const [unit, occupancies, residents] = await Promise.all([
-			getUnit(db, locals.user.id, params.id, systemClock),
-			listUnitOccupanciesGrouped(db, systemClock, locals.user.id, params.id),
-			listAssignableResidents(db, locals.user.id)
-		]);
-		return { unit, occupancies, residents, roles: OCCUPANCY_ROLES };
-	} catch (caught) {
-		throwAsRouteError(caught);
-	}
-};
-
-export const actions: Actions = {
-	record: async ({ locals, params, request }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
-		assertUuidParam(params.id, m.adminUnits_notFound());
-
-		const form = await request.formData();
-		const residentId = String(form.get('residentId') ?? '').trim();
-		const role = String(form.get('role') ?? '').trim();
-		const startedOn = String(form.get('startedOn') ?? '').trim();
-		if (residentId === '' || !isOccupancyRole(role) || !CALENDAR_DAY.test(startedOn)) {
-			return fail(400, { message: m.adminOccupancies_invalidForm() });
-		}
-
-		try {
-			await recordOccupancy(database(), systemClock, {
-				actorId: locals.user.id,
-				unitId: params.id,
-				residentId,
-				role,
-				startedOn,
-				isPrimaryOccupant: form.get('isPrimaryOccupant') === 'true'
-			});
-		} catch (caught) {
-			return refusalOrThrow(caught);
-		}
-		return { message: m.adminOccupancies_addSuccess() };
-	},
-
-	end: async ({ locals, request }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
-
-		const form = await request.formData();
-		const occupancyId = String(form.get('occupancyId') ?? '').trim();
-		const endedOn = String(form.get('endedOn') ?? '').trim();
-		if (occupancyId === '' || !CALENDAR_DAY.test(endedOn)) {
-			return fail(400, { message: m.adminOccupancies_invalidEndForm() });
-		}
-
-		try {
-			await endOccupancy(database(), systemClock, {
-				actorId: locals.user.id,
-				occupancyId,
-				endedOn
-			});
-		} catch (caught) {
-			return refusalOrThrow(caught);
-		}
-		return { message: m.adminOccupancies_endSuccess() };
-	},
-
-	setPrimary: async ({ locals, request }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
-
-		const form = await request.formData();
-		const occupancyId = String(form.get('occupancyId') ?? '').trim();
-		if (occupancyId === '') {
-			return fail(400, { message: m.adminOccupancies_invalidEndForm() });
-		}
-
-		try {
-			await setPrimaryOccupant(database(), systemClock, {
-				actorId: locals.user.id,
-				occupancyId
-			});
-		} catch (caught) {
-			return refusalOrThrow(caught);
-		}
-		return { message: m.adminOccupancies_setPrimarySuccess() };
-	}
-};
-
-/** Whether `value` is one of the roles the schema's check constraint allows. */
-function isOccupancyRole(value: string): value is OccupancyRole {
-	return (OCCUPANCY_ROLES as readonly string[]).includes(value);
-}
+/** The 403 for anyone without the right, and the 404 for a unit id that names no unit. */
+const PAGE = {
+	forbidden: m.adminOccupancies_forbidden,
+	notFound: m.adminUnits_notFound
+} satisfies PageMessages;
 
 /**
- * Turns a refused change into `fail(400, …)`, or hands anything else to `throwAsRouteError`.
+ * The changes the complex refuses, each `fail(400, …)`, shared by all three actions.
  *
  * The errors below are all "you may do this, but not this particular one", which is what separates
  * them from a permission refusal — see `src/lib/errors.ts` on `LastSuperuserError` for the same
@@ -161,61 +73,137 @@ function isOccupancyRole(value: string): value is OccupancyRole {
  * things — `mustEndFirst` picks which message names it — never both: the earliest day a new stay may
  * start, or nothing at all when the conflicting stay has no last day yet to count from.
  */
-function refusalOrThrow(caught: unknown) {
-	if (caught instanceof PrimaryOccupantNotStartedError) {
-		return fail(400, {
-			message: m.adminOccupancies_primaryNotStarted({ startedOn: caught.startedOn })
-		});
-	}
-	if (caught instanceof PrimaryOccupantAlreadyEndedError) {
-		return fail(400, {
-			message: m.adminOccupancies_primaryAlreadyEnded({ endedOn: caught.endedOn })
-		});
-	}
-	if (caught instanceof OccupancyDateOrderError) {
-		return fail(400, {
-			message: m.adminOccupancies_dateOrder({
-				startedOn: caught.startedOn,
-				endedOn: caught.endedOn
-			})
-		});
-	}
-	if (caught instanceof ResidentNotFoundError) {
-		return fail(400, { message: m.adminOccupancies_residentNotFound() });
-	}
-	if (caught instanceof OccupancyOverlapError) {
-		return fail(400, {
-			message: caught.mustEndFirst
-				? m.adminOccupancies_overlapMustEnd()
-				: m.adminOccupancies_overlap({ earliestStartedOn: caught.earliestStartedOn ?? '' })
-		});
-	}
-	if (caught instanceof OccupancyEndOverlapError) {
-		return fail(400, {
-			message: m.adminOccupancies_endOverlap({
-				latestEndedOn: caught.latestEndedOn,
-				nextStartedOn: caught.nextStartedOn
-			})
-		});
-	}
-	throwAsRouteError(caught);
-}
+const REFUSALS = [
+	refusal(PrimaryOccupantNotStartedError, ({ error }) =>
+		m.adminOccupancies_primaryNotStarted({ startedOn: error.startedOn })
+	),
+	refusal(PrimaryOccupantAlreadyEndedError, ({ error }) =>
+		m.adminOccupancies_primaryAlreadyEnded({ endedOn: error.endedOn })
+	),
+	refusal(OccupancyDateOrderError, ({ error }) =>
+		m.adminOccupancies_dateOrder({ startedOn: error.startedOn, endedOn: error.endedOn })
+	),
+	refusal(ResidentNotFoundError, m.adminOccupancies_residentNotFound),
+	refusal(OccupancyOverlapError, ({ error }) =>
+		error.mustEndFirst
+			? m.adminOccupancies_overlapMustEnd()
+			: m.adminOccupancies_overlap({ earliestStartedOn: error.earliestStartedOn ?? '' })
+	),
+	refusal(OccupancyEndOverlapError, ({ error }) =>
+		m.adminOccupancies_endOverlap({
+			latestEndedOn: error.latestEndedOn,
+			nextStartedOn: error.nextStartedOn
+		})
+	)
+];
 
-/**
- * Turns a permission refusal into a 403 and a missing row into a 404, and throws it — or rethrows
- * whatever else it was. Always throws, for the reason the other admin screens' copies of this helper
- * record: a `catch` block that sometimes *returned* an error is what breaks SvelteKit's inference of
- * `ActionData`.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminOccupancies_forbidden());
+/** `record`: it acts on the unit in the URL, so a missing row reads as the missing unit. */
+const RECORD_FORM = {
+	...PAGE,
+	fallback: m.adminOccupancies_invalidForm,
+	refusals: REFUSALS
+} satisfies FormMessages;
+
+/** `end` and `setPrimary`: they act on one Masa Huni, so a missing row reads as that Masa Huni. */
+const OCCUPANCY_FORM = {
+	...PAGE,
+	notFound: m.adminOccupancies_notFound,
+	fallback: m.adminOccupancies_invalidEndForm,
+	refusals: REFUSALS
+} satisfies FormMessages;
+
+export const load: PageServerLoad = async ({ locals, params }) => {
+	const user = requireUser(locals);
+	// `units.id` is a `uuid` column — see #111 and `#lib/server/services/identifier.ts`.
+	const unitId = requireUuidParam(params.id, PAGE);
+
+	const { db, clock } = productionDependencies();
+	try {
+		const [unit, occupancies, residents] = await Promise.all([
+			getUnit(db, user.id, unitId, clock),
+			listUnitOccupanciesGrouped(db, clock, user.id, unitId),
+			listAssignableResidents(db, user.id)
+		]);
+		return { unit, occupancies, residents, roles: OCCUPANCY_ROLES };
+	} catch (caught) {
+		throwRouteError(caught, PAGE);
 	}
-	if (caught instanceof UnitNotFoundError) {
-		throw error(404, m.adminUnits_notFound());
+};
+
+export const actions: Actions = {
+	record: async ({ locals, params, request }) => {
+		const user = requireUser(locals);
+		const unitId = requireUuidParam(params.id, PAGE);
+
+		const form = await request.formData();
+		const residentId = readText(form, 'residentId');
+		const role = readText(form, 'role');
+		const startedOn = readText(form, 'startedOn');
+		if (residentId === '' || !isOccupancyRole(role) || !CALENDAR_DAY.test(startedOn)) {
+			return fail(400, { message: m.adminOccupancies_invalidForm() });
+		}
+
+		const { db, clock } = productionDependencies();
+		try {
+			await recordOccupancy(db, clock, {
+				actorId: user.id,
+				unitId,
+				residentId,
+				role,
+				startedOn,
+				isPrimaryOccupant: form.get('isPrimaryOccupant') === 'true'
+			});
+		} catch (caught) {
+			return failOrThrow(caught, RECORD_FORM);
+		}
+		return { message: m.adminOccupancies_addSuccess() };
+	},
+
+	end: async ({ locals, request }) => {
+		const user = requireUser(locals);
+
+		const form = await request.formData();
+		const occupancyId = readText(form, 'occupancyId');
+		const endedOn = readText(form, 'endedOn');
+		if (occupancyId === '' || !CALENDAR_DAY.test(endedOn)) {
+			return fail(400, { message: m.adminOccupancies_invalidEndForm() });
+		}
+
+		const { db, clock } = productionDependencies();
+		try {
+			await endOccupancy(db, clock, {
+				actorId: user.id,
+				occupancyId,
+				endedOn
+			});
+		} catch (caught) {
+			return failOrThrow(caught, OCCUPANCY_FORM);
+		}
+		return { message: m.adminOccupancies_endSuccess() };
+	},
+
+	setPrimary: async ({ locals, request }) => {
+		const user = requireUser(locals);
+
+		const occupancyId = readText(await request.formData(), 'occupancyId');
+		if (occupancyId === '') {
+			return fail(400, { message: m.adminOccupancies_invalidEndForm() });
+		}
+
+		const { db, clock } = productionDependencies();
+		try {
+			await setPrimaryOccupant(db, clock, {
+				actorId: user.id,
+				occupancyId
+			});
+		} catch (caught) {
+			return failOrThrow(caught, OCCUPANCY_FORM);
+		}
+		return { message: m.adminOccupancies_setPrimarySuccess() };
 	}
-	if (caught instanceof OccupancyNotFoundError) {
-		throw error(404, m.adminOccupancies_notFound());
-	}
-	throw caught;
+};
+
+/** Whether `value` is one of the roles the schema's check constraint allows. */
+function isOccupancyRole(value: string): value is OccupancyRole {
+	return (OCCUPANCY_ROLES as readonly string[]).includes(value);
 }
