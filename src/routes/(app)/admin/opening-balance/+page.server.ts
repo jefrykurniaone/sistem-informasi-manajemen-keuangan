@@ -1,5 +1,6 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
+import { getLocale } from '#lib/paraglide/runtime.js';
 import { PermissionDeniedError } from '#lib/errors.ts';
 import { formatRupiah, parseRupiah, type Rupiah } from '#lib/money.ts';
 import { AUTH_PATHS } from '#lib/server/auth.ts';
@@ -7,14 +8,17 @@ import { database } from '#lib/server/db/index.ts';
 import { systemClock } from '#lib/server/ports/clock.ts';
 import {
 	getOpeningBalance,
+	OpeningBalanceAfterEarliestCashTransactionError,
 	OpeningBalanceAlreadyRecordedError,
 	recordOpeningBalance
 } from '#lib/server/services/cash/opening-balance.ts';
+import { PeriodLockedError } from '#lib/server/services/cash/period.ts';
+import { formatDay, formatMonthLabel } from '#lib/time.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
- * The superuser screen for the Saldo awal: the form while none has been recorded, the one row it
- * became once it has. Follows the shape `src/routes/(app)/admin/units/+page.server.ts` settled —
+ * The superuser screen for the Saldo awal: the opening balance in force, or the form while there is
+ * none, either because none was recorded or because a Koreksi reversed the one that was. Follows the shape `src/routes/(app)/admin/units/+page.server.ts` settled —
  * nobody who is not signed in reaches the service layer, `PermissionDeniedError` becomes
  * `error(403, …)` here, and the service's own refusals come back as rejected forms.
  *
@@ -74,6 +78,21 @@ export const actions: Actions = {
 			if (caught instanceof OpeningBalanceAlreadyRecordedError) {
 				return fail(400, { message: m.adminOpeningBalance_alreadyRecorded() });
 			}
+			if (caught instanceof OpeningBalanceAfterEarliestCashTransactionError) {
+				return fail(400, {
+					message: m.adminOpeningBalance_afterEarliestTransaction({
+						date: asDay(caught.earliestOccurredOn)
+					})
+				});
+			}
+			if (caught instanceof PeriodLockedError) {
+				return fail(400, {
+					message: m.adminOpeningBalance_periodLocked({
+						period: formatMonthLabel(caught.period, getLocale()),
+						date: asDay(caught.occurredOn)
+					})
+				});
+			}
 			if (caught instanceof TypeError || caught instanceof RangeError) {
 				return fail(400, { message: m.adminOpeningBalance_invalidAmount() });
 			}
@@ -81,6 +100,11 @@ export const actions: Actions = {
 		}
 	}
 };
+
+/** A stored `YYYY-MM-DD` as a day a person reads, the way the page itself shows one. */
+function asDay(day: string): string {
+	return formatDay(new Date(`${day}T00:00:00.000Z`));
+}
 
 /**
  * The typed money value behind what the form posted, or `undefined` when the text is not a
