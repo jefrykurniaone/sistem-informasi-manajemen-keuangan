@@ -4,7 +4,6 @@ import { ACTION, requirePermission, type DatabaseWriter, type Transaction } from
 import { recordAuditEntry } from '../../audit';
 import type { Database } from '../../db';
 import {
-	CASH_CATEGORY_TYPE,
 	cashCategories,
 	SYSTEM_CATEGORY_KEY,
 	type CashCategory
@@ -12,6 +11,7 @@ import {
 import { cashTransactions, type CashTransaction } from '../../db/schema/cash-transaction';
 import type { Clock } from '../../ports/clock';
 import { SystemCategoryMissingError } from './category';
+import { CASH_WRITE_KIND, writeCashTransaction } from './writer';
 
 /**
  * The Saldo awal: how much cash existed on the day the complex started using this application.
@@ -34,10 +34,15 @@ import { SystemCategoryMissingError } from './category';
  * - **No way to change it and no way to remove it.** This module exports one write, and the cash
  *   book is append-only, so a wrong opening balance is corrected the way every other wrong row is:
  *   with a Koreksi (#34). Offering an edit here would be the one hole in an append-only book.
- * - **The Periode is not consulted.** Whether a period exists for the date, and whether it is
- *   locked, is #34's and #35's rule; this module never reads or writes `periods`. The opening
- *   balance is by definition dated before the application was in use, so there is no report it
- *   could contradict.
+ * - **The row is written by the cash book writer, and so answers to the Periode.** Until #315 this
+ *   module inserted its own row and skipped the Periode, on the assumption that an opening balance
+ *   is always dated before the application was in use. Nothing held that assumption: a superuser
+ *   could record one inside a month whose Laporan Bulanan was already published, and the frozen
+ *   report stopped matching the book. `writeCashTransaction` in `./writer.ts` now writes the row,
+ *   as its `openingBalance` kind, and refuses a day inside a locked Periode like every other row.
+ *   The "once" rule and its lock stay here: the writer holds the rules true of every row, and this
+ *   module holds the one true of the opening balance alone. The lock order is the category first,
+ *   then the Periode, which the writer takes last.
  * - **The description is a constant, not a form field.** The acceptance criteria gives the
  *   superuser two things to fill in, a nominal and a tanggal, while `cash_transactions.description`
  *   is `not null` because a cash book line with no story is unauditable. The text is Indonesian and
@@ -118,6 +123,8 @@ export interface RecordOpeningBalanceRequest {
  *   day written as `YYYY-MM-DD`.
  * @throws {SystemCategoryMissingError} when the migration's seed row is not there.
  * @throws {OpeningBalanceAlreadyRecordedError} when one has already been recorded.
+ * @throws {PeriodLockedError} when `occurredOn` falls inside a Periode that is locked. Nothing is
+ *   written; a superuser reopens the month first.
  */
 export async function recordOpeningBalance(
 	db: Database,
@@ -135,18 +142,13 @@ export async function recordOpeningBalance(
 			throw new OpeningBalanceAlreadyRecordedError(existing.id);
 		}
 
-		const [row] = await transaction
-			.insert(cashTransactions)
-			.values({
-				occurredOn: request.occurredOn,
-				type: CASH_CATEGORY_TYPE.income,
-				categoryId: category.id,
-				amount: request.amount,
-				description: OPENING_BALANCE_DESCRIPTION,
-				recordedBy: request.actorId,
-				createdAt: clock.now()
-			})
-			.returning();
+		const row = await writeCashTransaction(transaction, clock, {
+			kind: CASH_WRITE_KIND.openingBalance,
+			recordedBy: request.actorId,
+			occurredOn: request.occurredOn,
+			amount: request.amount,
+			description: OPENING_BALANCE_DESCRIPTION
+		});
 
 		await recordAuditEntry(transaction, clock, {
 			actorId: request.actorId,

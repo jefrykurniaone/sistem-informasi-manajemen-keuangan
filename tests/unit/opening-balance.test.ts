@@ -17,6 +17,7 @@ import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
 import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import { FakeClock } from '#lib/server/ports/fakes.ts';
 import * as openingBalanceModule from '#lib/server/services/cash/opening-balance.ts';
+import { lockPeriod, PeriodLockedError, unlockPeriod } from '#lib/server/services/cash/period.ts';
 import {
 	getOpeningBalance,
 	OPENING_BALANCE_DESCRIPTION,
@@ -232,6 +233,49 @@ describe('recordOpeningBalance', () => {
 		).rejects.toThrow(TypeError);
 
 		expect(await testDb.db.select().from(cashTransactions)).toHaveLength(0);
+	});
+
+	it('refuses a day inside a locked Periode, and takes the same day once a superuser reopens the month', async () => {
+		// #315: the opening balance used to skip the Periode on the assumption that its day always
+		// comes before the application was in use. Nothing held that assumption, so a superuser could
+		// record one inside a month whose Laporan Bulanan had already been published, and the frozen
+		// figures stopped matching the cash book. It now answers to the Periode like every other row.
+		// December 2025, the last day of a manual book, a month no other test in this file locks.
+		await clearCashBook();
+		const superuserId = await insertSuperuser('Pengurus Saldo Awal Periode Terkunci');
+		const lastManualDay = '2025-12-31';
+		await testDb.db.transaction((transaction) =>
+			lockPeriod(transaction, new FakeClock(START), {
+				actorId: superuserId,
+				year: 2025,
+				month: 12,
+				reason: 'Laporan Bulanan Desember terbit.'
+			})
+		);
+
+		const refusal: unknown = await recordOpeningBalance(testDb.db, new FakeClock(START), {
+			actorId: superuserId,
+			amount: AMOUNT,
+			occurredOn: lastManualDay
+		}).catch((error: unknown) => error);
+
+		expect(refusal).toBeInstanceOf(PeriodLockedError);
+		expect(refusal).toMatchObject({ occurredOn: lastManualDay, period: '2025-12' });
+		expect(await testDb.db.select().from(cashTransactions)).toHaveLength(0);
+
+		await unlockPeriod(testDb.db, new FakeClock(START), {
+			actorId: superuserId,
+			year: 2025,
+			month: 12,
+			reason: 'Saldo awal dicatat pada hari terakhir buku manual.'
+		});
+		const recorded = await recordOpeningBalance(testDb.db, new FakeClock(START), {
+			actorId: superuserId,
+			amount: AMOUNT,
+			occurredOn: lastManualDay
+		});
+
+		expect(recorded).toMatchObject({ occurredOn: lastManualDay, amount: AMOUNT });
 	});
 
 	it('blocks a concurrent recording behind its lock, rather than letting it act on a stale read', async () => {
