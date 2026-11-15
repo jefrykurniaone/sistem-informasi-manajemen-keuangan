@@ -168,6 +168,51 @@ describe('residentViewFor', () => {
 		expect(unitsOccupiedToday(view).map((unit) => unit.unitId)).toEqual([newer.id]);
 	});
 
+	it.each([
+		['a stay that has not started yet', '2026-09-01', null],
+		['an ended stay that started later', '2026-05-01', '2026-05-31']
+	])(
+		'places a house lived in today by its most recent running stay, not by %s',
+		async (_description, otherStartedOn, otherEndedOn) => {
+			// Two houses lived in today: `first` since January, `second` since March. `first` also has
+			// another stay starting after March. Ordered by its most recent stay of any kind, `first`
+			// would jump ahead of `second`; ordered by its most recent running stay, as the payment
+			// picker always did, `second` stays first.
+			const first = await insertUnitRow();
+			const second = await insertUnitRow();
+			const { userId, residentId } = await insertResident('Warga Dua Rumah');
+			await insertOccupancyRow(first.id, residentId, '2026-01-01', null);
+			await insertOccupancyRow(second.id, residentId, '2026-03-01', null);
+			await insertOccupancyRow(first.id, residentId, otherStartedOn, otherEndedOn);
+
+			const view = await residentViewFor(testDb.db, IN_JULY, userId);
+
+			expect(unitsOccupiedToday(view).map((unit) => unit.unitId)).toEqual([second.id, first.id]);
+			expect(view.units.map((unit) => unit.unitId)).toEqual([second.id, first.id]);
+		}
+	);
+
+	it('places the houses not lived in today after the others, most recent move-in first', async () => {
+		const endedEarly = await insertUnitRow();
+		const endedLate = await insertUnitRow();
+		const upcoming = await insertUnitRow();
+		const home = await insertUnitRow();
+		const { userId, residentId } = await insertResident('Warga Banyak Rumah');
+		await insertOccupancyRow(endedEarly.id, residentId, '2025-01-01', '2025-06-30');
+		await insertOccupancyRow(home.id, residentId, '2025-07-01', null);
+		await insertOccupancyRow(endedLate.id, residentId, '2026-01-01', '2026-03-31');
+		await insertOccupancyRow(upcoming.id, residentId, '2026-09-01', null);
+
+		const view = await residentViewFor(testDb.db, IN_JULY, userId);
+
+		expect(view.units.map((unit) => unit.unitId)).toEqual([
+			home.id,
+			upcoming.id,
+			endedLate.id,
+			endedEarly.id
+		]);
+	});
+
 	it('counts no stay of somebody else', async () => {
 		const unit = await insertUnitRow();
 		const neighbour = await insertResident('Warga Tetangga');

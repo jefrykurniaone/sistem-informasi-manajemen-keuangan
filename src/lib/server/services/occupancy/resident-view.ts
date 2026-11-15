@@ -30,9 +30,10 @@ import {
  * ## This module reads no role, on purpose
  *
  * `unitVisibilityFor` in `./visibility.ts` answers "the whole history" to whoever holds
- * `ACTION.manageOccupancies`. That is right for an admin screen and wrong for a personal one: it
- * made a superuser who lives in a house see the previous occupant's unpaid months as their own debt
- * on "Tagihan saya", on the Beranda and in the payment form. Nothing here imports `rolesOf`,
+ * `ACTION.manageOccupancies`. Its only callers before #313 were two personal screens, "Tagihan
+ * saya" and the payment picker, and there that answer made a superuser who lives in a house see the
+ * previous occupant's unpaid months as their own debt (on the Beranda too, which reads "Tagihan
+ * saya"). It has no production caller since. Nothing here imports `rolesOf`,
  * `isAllowed` or `ACTION`; the one import from `../../authz` is the `DatabaseWriter` type, which is
  * erased at compile time. A `ResidentView` has no "all" case to forget about, so a personal screen
  * built on it cannot be widened by a role.
@@ -40,7 +41,9 @@ import {
  * Every personal screen goes through here: "Tagihan saya" (`invoicesForUser` in
  * `../dues/queries.ts`), the payment picker and the payment guard (`../dues/payment.ts`), the
  * payment list route, and the Warga card on the Beranda (`../dashboard/index.ts`). The admin
- * screens keep their own reads, which show a Unit's whole history.
+ * screens (`invoiceHistoryForUnit` in `../dues/queries.ts`, `unitFinanceFor` in
+ * `../dues/corrections-history.ts`) keep their own reads, guarded by permission and never filtered
+ * by Masa Huni, which show a Unit's whole history.
  *
  * ## Why a loaded view rather than one query per question
  *
@@ -74,9 +77,16 @@ export interface ResidentUnit {
 /** Everything a personal screen needs to know about one person's houses. */
 export interface ResidentView {
 	/**
-	 * Every Unit with at least one Masa Huni of this person, ended, running or not yet started. Most
-	 * recent move-in first, the order `occupiedUnitsForUser` lists stays in. Empty for an account with
-	 * no `residents` row or no Masa Huni at all, which is an expected state rather than an error.
+	 * Every Unit with at least one Masa Huni of this person, ended, running or not yet started. Empty
+	 * for an account with no `residents` row or no Masa Huni at all, which is an expected state rather
+	 * than an error.
+	 *
+	 * **Order.** The Units lived in today come first, each placed by its most recent *running* stay,
+	 * newest move-in first; the rest follow, each placed by its most recent stay of any kind. The
+	 * first half is exactly the order the payment picker offered houses in before #313 (it walked
+	 * `occupiedUnitsForUser`'s stays, newest first, and kept a house at its first running stay), and
+	 * the picker preselects its first house, so `unitsOccupiedToday` keeps that order rather than
+	 * letting a not-yet-started stay in another house move it.
 	 */
 	readonly units: readonly ResidentUnit[];
 }
@@ -108,8 +118,9 @@ export async function residentViewFor(
 		.innerJoin(residents, eq(residents.id, occupancies.residentId))
 		.innerJoin(units, eq(units.id, occupancies.unitId))
 		.where(eq(residents.userId, userId))
-		// The same order `occupiedUnitsForUser` reads stays in, so a Unit's place in the view is
-		// where its most recent move-in put it, and the screens keep the order they had.
+		// The order `occupiedUnitsForUser` reads stays in, newest move-in first. `id` only breaks a
+		// tie that query left to the database, so two stays started and recorded in the same instant
+		// keep one order between reads.
 		.orderBy(desc(occupancies.startedOn), desc(occupancies.createdAt), asc(occupancies.id));
 
 	if (stays.length === 0) {
@@ -117,36 +128,64 @@ export async function residentViewFor(
 	}
 
 	const today = currentDay(clock);
-	const byUnit = new Map<
-		string,
-		{ block: string; number: string; ranges: DateRange[]; occupiedToday: boolean }
-	>();
-	for (const stay of stays) {
+	const byUnit = new Map<string, UnitInProgress>();
+	for (const [position, stay] of stays.entries()) {
 		const range = { from: stay.startedOn, to: stay.endedOn };
-		const runningToday = isStillRunningOn(stay, today);
+		const runningPosition = isStillRunningOn(stay, today) ? position : null;
 		const existing = byUnit.get(stay.unitId);
 		if (existing) {
 			existing.ranges.push(range);
-			existing.occupiedToday ||= runningToday;
+			existing.firstRunningPosition ??= runningPosition;
 			continue;
 		}
 		byUnit.set(stay.unitId, {
 			block: stay.block,
 			number: stay.number,
 			ranges: [range],
-			occupiedToday: runningToday
+			firstPosition: position,
+			firstRunningPosition: runningPosition
 		});
 	}
 
 	return {
-		units: [...byUnit].map(([unitId, unit]) => ({
-			unitId,
-			block: unit.block,
-			number: unit.number,
-			ranges: mergeDateRanges(unit.ranges),
-			occupiedToday: unit.occupiedToday
-		}))
+		units: [...byUnit]
+			.sort(([, left], [, right]) => compareUnitOrder(left, right))
+			.map(([unitId, unit]) => ({
+				unitId,
+				block: unit.block,
+				number: unit.number,
+				ranges: mergeDateRanges(unit.ranges),
+				occupiedToday: unit.firstRunningPosition !== null
+			}))
 	};
+}
+
+/** One Unit while `residentViewFor` folds its stays, with where its stays sat in read order. */
+interface UnitInProgress {
+	readonly block: string;
+	readonly number: string;
+	readonly ranges: DateRange[];
+	/** The read position of this Unit's first stay of any kind. */
+	readonly firstPosition: number;
+	/** The read position of its first stay running today, or `null` when none is. */
+	firstRunningPosition: number | null;
+}
+
+/**
+ * The order `ResidentView.units` documents: Units lived in today first, by their first running stay
+ * in read order, then the rest by their first stay in read order.
+ */
+function compareUnitOrder(left: UnitInProgress, right: UnitInProgress): number {
+	if (left.firstRunningPosition !== null && right.firstRunningPosition !== null) {
+		return left.firstRunningPosition - right.firstRunningPosition;
+	}
+	if (left.firstRunningPosition !== null) {
+		return -1;
+	}
+	if (right.firstRunningPosition !== null) {
+		return 1;
+	}
+	return left.firstPosition - right.firstPosition;
 }
 
 /** The Units of `view` this person is living in today, in the view's order. */

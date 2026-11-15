@@ -452,6 +452,23 @@ describe('payableUnitsForUser', () => {
 		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).toEqual([june?.id]);
 	});
 
+	it('orders two houses by their most recent running stay, so a stay starting later moves neither', async () => {
+		// The form preselects the first house it is given. `first` has been lived in since 2025 and
+		// `second` since December; `first` also has a stay starting in March that has not begun. The
+		// picker has always put the house with the newest *running* stay first, which is `second`.
+		const userId = await insertUser('Warga Dua Rumah Bayar');
+		const residentId = await insertResident(userId);
+		const first = await insertUnit('I', '6');
+		const second = await insertUnit('I', '7');
+		await insertOccupancy(first, residentId, null, '2025-01-01');
+		await insertOccupancy(second, residentId, null, '2025-12-01');
+		await insertOccupancy(first, residentId, null, '2026-03-01');
+
+		const offered = await payableUnitsForUser(testDb.db, new FakeClock(START), userId);
+
+		expect(offered.map((house) => house.unitId)).toEqual([second, first]);
+	});
+
 	it('offers nothing to somebody whose stay is over', async () => {
 		const userId = await insertUser('Warga Pilih Setelah Pindah');
 		const residentId = await insertResident(userId);
