@@ -1,17 +1,24 @@
-import { error, fail, redirect } from '@sveltejs/kit';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
+import { fail } from '@sveltejs/kit';
 import { ROLES, type Role } from '#lib/server/db/schema/authz.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	requireUser,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import { grantRole, listUsersWithRoles, revokeRole } from '#lib/server/services/user/roles.ts';
-import { LastSuperuserError, PermissionDeniedError } from '#lib/errors.ts';
+import { LastSuperuserError } from '#lib/errors.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
  * The superuser screen for granting and revoking roles.
  *
- * **Nobody who is not signed in ever reaches the service layer.** `locals.user` is checked first,
- * and a missing one redirects to `/login` before `listUsersWithRoles` is ever called — there is no
+ * **Nobody who is not signed in ever reaches the service layer.** `requireUser` checks `locals.user`
+ * first, and a missing one redirects to `/login` before `listUsersWithRoles` is ever called — there is no
  * caller to hand it, so calling it would not be "naming who is calling", it would be lying about
  * it.
  *
@@ -20,64 +27,78 @@ import type { Actions, PageServerLoad } from './$types';
  * is caught in every export below and turned into `error(403, …)`, the translation
  * `spec-fondasi-v1.md`'s "Peran" section asks the route to do. `LastSuperuserError` is different:
  * the actor is allowed to manage roles, only this one change is refused, so it becomes a rejected
- * form submission (`fail(400, …)`) rather than a 403.
+ * form submission (`fail(400, …)`) rather than a 403. Both go through
+ * `#lib/server/route-action.ts` (#318).
+ *
+ * This screen's sentences are still written here rather than in the Paraglide catalogue; moving them
+ * is not part of the route-action migration, so each is wrapped as the `Message` the module takes.
  */
 
+/** The complaint for a grant/revoke form that names no known user or role. */
+const INVALID_FORM_MESSAGE = 'Permintaan tidak valid: pengguna atau peran tidak dikenali.';
+
+/** The 403 for anyone without the right to manage roles. There is no 404 page. */
+const PAGE = {
+	forbidden: () => 'Anda tidak berhak mengelola peran pengguna.'
+} satisfies PageMessages;
+
+/** What `revoke` says when the service refuses the change. */
+const REVOKE_FORM = {
+	...PAGE,
+	fallback: () => INVALID_FORM_MESSAGE,
+	refusals: [
+		refusal(LastSuperuserError, () => 'Tidak bisa mencabut peran superuser terakhir yang tersisa.')
+	]
+} satisfies FormMessages;
+
 export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+	const user = requireUser(locals);
 
 	try {
-		const users = await listUsersWithRoles(database(), locals.user.id);
+		const users = await listUsersWithRoles(productionDependencies().db, user.id);
 		return { users, roles: ROLES };
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	grant: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 		const form = await readRoleChangeForm(request);
 		if (!form.ok) {
 			return fail(400, { message: form.complaint });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			await grantRole(database(), systemClock, {
-				actorId: locals.user.id,
+			await grantRole(db, clock, {
+				actorId: user.id,
 				targetUserId: form.targetUserId,
 				role: form.role
 			});
 		} catch (caught) {
-			throwAsRouteError(caught);
+			throwRouteError(caught, PAGE);
 		}
 		return { message: `Peran ${form.role} berhasil ditambahkan.` };
 	},
 
 	revoke: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 		const form = await readRoleChangeForm(request);
 		if (!form.ok) {
 			return fail(400, { message: form.complaint });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			await revokeRole(database(), systemClock, {
-				actorId: locals.user.id,
+			await revokeRole(db, clock, {
+				actorId: user.id,
 				targetUserId: form.targetUserId,
 				role: form.role
 			});
 		} catch (caught) {
-			if (caught instanceof LastSuperuserError) {
-				return fail(400, { message: 'Tidak bisa mencabut peran superuser terakhir yang tersisa.' });
-			}
-			throwAsRouteError(caught);
+			return failOrThrow(caught, REVOKE_FORM);
 		}
 		return { message: `Peran ${form.role} berhasil dicabut.` };
 	}
@@ -91,32 +112,15 @@ type RoleChangeForm =
 /** Reads and validates a grant/revoke form, without yet knowing whether the change is allowed. */
 async function readRoleChangeForm(request: Request): Promise<RoleChangeForm> {
 	const form = await request.formData();
-	const targetUserId = String(form.get('targetUserId') ?? '').trim();
-	const role = String(form.get('role') ?? '').trim();
+	const targetUserId = readText(form, 'targetUserId');
+	const role = readText(form, 'role');
 
 	if (targetUserId === '' || !isRole(role)) {
-		return { ok: false, complaint: 'Permintaan tidak valid: pengguna atau peran tidak dikenali.' };
+		return { ok: false, complaint: INVALID_FORM_MESSAGE };
 	}
 	return { ok: true, targetUserId, role };
 }
 
 function isRole(value: string): value is Role {
 	return (ROLES as readonly string[]).includes(value);
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- *
- * Always throws — the return type is `never` so that this can sit in a `catch` block without
- * widening the type SvelteKit infers for what an action or a load function returns. A helper that
- * sometimes *returned* `error(403, …)` instead of throwing it, or whose return type was inferred
- * from `fail`'s generic signature rather than a literal, is what made `svelte-check` lose track of
- * `ActionData` the first time this file was written — every response a route sends back has to be
- * a literal `return`/`throw` at the call site, not laundered through a generically typed helper.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, 'Anda tidak berhak mengelola peran pengguna.');
-	}
-	throw caught;
 }

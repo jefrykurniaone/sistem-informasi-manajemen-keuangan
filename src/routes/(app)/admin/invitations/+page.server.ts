@@ -1,9 +1,16 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { AUTH_PATHS, readOrigin } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import { readOrigin } from '#lib/server/auth.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	requireUser,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import {
 	InvitationEmailAlreadyRegisteredError,
 	InvitationNotFoundError,
@@ -18,9 +25,9 @@ import type { Actions, PageServerLoad } from './$types';
 /**
  * The superuser screen for Undangan: one form to invite one address to one unit, one form that
  * walks the whole unit list, and the history of every link ever sent with a resend button on the
- * ones that are still unused. Follows the guard shape `../units/+page.server.ts` settled — nobody
- * who is not signed in reaches the service layer, `PermissionDeniedError` becomes `error(403, …)`
- * here, and every rule violation comes back as a rejected form.
+ * ones that are still unused. Nobody who is not signed in reaches the service layer,
+ * `PermissionDeniedError` becomes `error(403, …)` here, and every rule violation comes back as a
+ * rejected form. All three go through `#lib/server/route-action.ts` (#318).
  *
  * The links are built on `readOrigin()`, never on a request header a client could bend.
  */
@@ -32,17 +39,48 @@ import type { Actions, PageServerLoad } from './$types';
  */
 const UNIT_PICKER_PAGE_SIZE = 500;
 
+/** The page's own refusal: the 403 for anyone without the right. There is no 404 page. */
+const PAGE = { forbidden: m.adminInvitations_forbidden } satisfies PageMessages;
+
+/**
+ * The refusals the invitation service names, answered as rejected forms. Shared by the three actions
+ * because they can all be refused for the same reasons. A `TypeError` is the service refusing an
+ * address it cannot use, which this screen has always answered with its invalid-form sentence.
+ */
+const REFUSALS = [
+	refusal(InvitationEmailAlreadyRegisteredError, ({ error }) =>
+		m.adminInvitations_alreadyRegistered({ email: error.email })
+	),
+	refusal(UnitNotFoundError, m.adminInvitations_unitNotFound),
+	refusal(TypeError, m.adminInvitations_invalidForm)
+];
+
+/** `send` and `sendMany`. */
+const FORM = {
+	...PAGE,
+	fallback: m.adminInvitations_invalidForm,
+	refusals: REFUSALS
+} satisfies FormMessages;
+
+/** `resend`, which answers a missing or already used invitation with its own sentences first. */
+const RESEND_FORM = {
+	...FORM,
+	refusals: [
+		refusal(InvitationNotFoundError, m.adminInvitations_resendNotFound),
+		refusal(InvitationUsedError, m.adminInvitations_resendUsed),
+		...REFUSALS
+	]
+} satisfies FormMessages;
+
 export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+	const user = requireUser(locals);
 
 	try {
-		const db = database();
+		const { db, clock } = productionDependencies();
 		const [invitationEntries, unitPage] = await Promise.all([
-			listInvitations(db, systemClock, locals.user.id),
-			listUnits(db, systemClock, {
-				actorId: locals.user.id,
+			listInvitations(db, clock, user.id),
+			listUnits(db, clock, {
+				actorId: user.id,
 				pageSize: UNIT_PICKER_PAGE_SIZE
 			})
 		]);
@@ -55,39 +93,36 @@ export const load: PageServerLoad = async ({ locals }) => {
 			}))
 		};
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	send: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const email = String(form.get('email') ?? '').trim();
-		const unitId = String(form.get('unitId') ?? '').trim();
+		const email = readText(form, 'email');
+		const unitId = readText(form, 'unitId');
 		if (email === '' || unitId === '') {
 			return fail(400, { message: m.adminInvitations_invalidForm() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			await sendInvitations(database(), systemClock, {
-				actorId: locals.user.id,
+			await sendInvitations(db, clock, {
+				actorId: user.id,
 				origin: readOrigin(),
 				recipients: [{ email, unitId }]
 			});
 			return { message: m.adminInvitations_sendSuccess({ email }) };
 		} catch (caught) {
-			return failAsRejectedForm(caught);
+			return failOrThrow(caught, FORM);
 		}
 	},
 
 	sendMany: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
 		const recipients = pairedRecipients(form.getAll('unitId'), form.getAll('email'));
@@ -95,44 +130,38 @@ export const actions: Actions = {
 			return fail(400, { message: m.adminInvitations_bulkEmpty() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			const sent = await sendInvitations(database(), systemClock, {
-				actorId: locals.user.id,
+			const sent = await sendInvitations(db, clock, {
+				actorId: user.id,
 				origin: readOrigin(),
 				recipients
 			});
 			return { message: m.adminInvitations_bulkSuccess({ count: sent.length }) };
 		} catch (caught) {
-			return failAsRejectedForm(caught);
+			return failOrThrow(caught, FORM);
 		}
 	},
 
 	resend: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const invitationId = String(form.get('invitationId') ?? '').trim();
+		const invitationId = readText(form, 'invitationId');
 		if (invitationId === '') {
 			return fail(400, { message: m.adminInvitations_invalidForm() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			const sent = await resendInvitation(database(), systemClock, {
-				actorId: locals.user.id,
+			const sent = await resendInvitation(db, clock, {
+				actorId: user.id,
 				invitationId,
 				origin: readOrigin()
 			});
 			return { message: m.adminInvitations_resendSuccess({ email: sent.email }) };
 		} catch (caught) {
-			if (caught instanceof InvitationNotFoundError) {
-				return fail(400, { message: m.adminInvitations_resendNotFound() });
-			}
-			if (caught instanceof InvitationUsedError) {
-				return fail(400, { message: m.adminInvitations_resendUsed() });
-			}
-			return failAsRejectedForm(caught);
+			return failOrThrow(caught, RESEND_FORM);
 		}
 	}
 };
@@ -154,33 +183,4 @@ function pairedRecipients(
 		}
 	}
 	return recipients;
-}
-
-/**
- * Turns the refusals the invitation service names into rejected forms, and everything else into a
- * route error. Shared by the three actions because they can all be refused for the same reasons.
- */
-function failAsRejectedForm(caught: unknown) {
-	if (caught instanceof InvitationEmailAlreadyRegisteredError) {
-		return fail(400, { message: m.adminInvitations_alreadyRegistered({ email: caught.email }) });
-	}
-	if (caught instanceof UnitNotFoundError) {
-		return fail(400, { message: m.adminInvitations_unitNotFound() });
-	}
-	if (caught instanceof TypeError) {
-		return fail(400, { message: m.adminInvitations_invalidForm() });
-	}
-	throwAsRouteError(caught);
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- * `never`, so it can end a `catch` block without widening what SvelteKit infers — the same helper
- * the units screen carries, for the same reason.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminInvitations_forbidden());
-	}
-	throw caught;
 }
