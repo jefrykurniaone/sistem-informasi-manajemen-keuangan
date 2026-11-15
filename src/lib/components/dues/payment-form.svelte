@@ -24,11 +24,19 @@
 		receivedOn: ''
 	};
 
-	/** One Tagihan the picker offers. Carries no paid-or-unpaid figure; that is #27's screen. */
+	/**
+	 * One Tagihan the picker offers. The route only hands over Tagihan that are not paid in full, so
+	 * `remainingAmount` is always above zero and never more than `amount`; it equals `amount` for one
+	 * nothing has been allocated to. The figure comes from `invoice-standing.ts` on the server and is
+	 * not worked out here.
+	 */
 	export interface PaymentFormInvoice {
 		readonly invoiceId: string;
 		readonly period: string;
+		/** What was issued. */
 		readonly amount: Rupiah;
+		/** What is still owed. Ticking the Tagihan adds this to the nominal. */
+		readonly remainingAmount: Rupiah;
 		readonly dueDate: string;
 	}
 
@@ -58,12 +66,14 @@
 	 * ## The Tagihan picker fills the amount in and is not posted
 	 *
 	 * Ticking months is how a resident says "these are the ones I paid", and what it does is add
-	 * their amounts up into the nominal field, which stays editable. It is **not** submitted, because
-	 * there is nowhere for it to be recorded: the only table that maps a Pembayaran to a Tagihan is
-	 * `allocations`, and writing one before anybody has checked that the money arrived is exactly
-	 * what the spec's "sampai diverifikasi, belum ada uang yang masuk ke kas mana pun" forbids. The
-	 * pengurus decides the allocation at verification, oldest Tagihan first, and the hint under the
-	 * picker says so rather than letting the resident believe they have chosen it.
+	 * what each of them still owes up into the nominal field, which stays editable: the whole amount
+	 * for a Tagihan nothing has been paid on, only the remainder for a part-paid one. A Tagihan paid in
+	 * full is not offered at all. The ticking is **not** submitted, because there is nowhere for it to
+	 * be recorded: the only table that maps a Pembayaran to a Tagihan is `allocations`, and writing one
+	 * before anybody has checked that the money arrived is exactly what the spec's "sampai
+	 * diverifikasi, belum ada uang yang masuk ke kas mana pun" forbids. The pengurus decides the
+	 * allocation at verification, oldest Tagihan first, and the hint under the picker says so rather
+	 * than letting the resident believe they have chosen it.
 	 *
 	 * ## The nominal field needs JavaScript
 	 *
@@ -122,12 +132,12 @@
 		}
 	}
 
-	/** What the ticked Tagihan of the chosen house come to, in whole rupiah. */
+	/** What the ticked Tagihan of the chosen house still owe, in whole rupiah. */
 	function tickedTotal(): number {
 		const offered = selectedUnit?.invoices ?? [];
 		return offered
 			.filter((invoice) => ticked.includes(invoice.invoiceId))
-			.reduce((total, invoice) => total + invoice.amount, 0);
+			.reduce((total, invoice) => total + invoice.remainingAmount, 0);
 	}
 
 	/** Changing house clears a selection that belonged to the other one's Tagihan. */
@@ -135,8 +145,19 @@
 		ticked = [];
 	}
 
-	/** One Tagihan as the checkbox beside it reads. */
+	/**
+	 * One Tagihan as the checkbox beside it reads. A part-paid one names what is left and what it was
+	 * issued for; one nothing has been paid on keeps the plain reading.
+	 */
 	function invoiceLabel(invoice: PaymentFormInvoice): string {
+		if (invoice.remainingAmount < invoice.amount) {
+			return m.payments_form_invoiceOptionPartial({
+				period: invoice.period,
+				remaining: formatRupiah(invoice.remainingAmount),
+				amount: formatRupiah(invoice.amount),
+				dueDate: invoice.dueDate
+			});
+		}
 		return m.payments_form_invoiceOption({
 			period: invoice.period,
 			amount: formatRupiah(invoice.amount),

@@ -18,13 +18,13 @@ import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
 import type { FileStore } from '../../ports/file-store';
 import {
-	isInvoiceVisible,
 	occupiesToday,
 	residentViewFor,
 	unitsOccupiedToday,
 	type ResidentView
 } from '../occupancy/resident-view';
 import { currentDay } from '../occupancy/visibility';
+import { INVOICE_STATUS, invoiceStandings } from './invoice-standing';
 
 /**
  * A Warga telling the pengurus that they have transferred money: the amount, the day it left their
@@ -44,8 +44,9 @@ import { currentDay } from '../occupancy/visibility';
  *   grounds that a pengurus had closed the month's books — a refusal aimed at the wrong person.
  * - **No row is written into `allocations`.** Which Tagihan the money answers is decided by the
  *   verification transaction, not by the person paying.
- * - **The "Iuran warga" cash category is never touched.** `src/lib/server/services/cash/transaction.ts`
- *   refuses a manual entry into it precisely so that verification stays the only door.
+ * - **The "Iuran warga" cash category is never touched.** `requireRecordableCategory` in
+ *   `src/lib/server/services/cash/writer.ts` refuses a manual entry into it (every system category
+ *   is refused, by its `systemKey`) precisely so that verification stays the only door.
  *
  * ## The payload handed to #29 — the contract, stated exactly
  *
@@ -324,9 +325,10 @@ export interface PayableUnit {
 	readonly block: string;
 	readonly number: string;
 	/**
-	 * Its Tagihan that have not been cancelled **and that were issued inside the viewer's own Masa
-	 * Huni**, oldest period first. See `payableInvoicesOf` for why the second half is a privacy rule
-	 * rather than a convenience.
+	 * Its Tagihan that have not been cancelled, **that were issued inside the viewer's own Masa Huni**
+	 * and that are not paid in full, oldest period first. See `payableInvoicesOf` for why the second
+	 * condition is a privacy rule rather than a convenience. A house whose every Tagihan is paid is
+	 * still offered, with an empty list: it is a house the resident may pay in advance for.
 	 */
 	readonly invoices: readonly PayableInvoice[];
 }
@@ -334,15 +336,23 @@ export interface PayableUnit {
 /**
  * One Tagihan the payment form offers.
  *
- * There is no "lunas", "sebagian" or "menunggak" on it, and there must not be: working out what a
- * Tagihan still owes is #27's job, and a second counter living here would be a second answer to a
- * question `docs/spec-iuran-v1.md` says has exactly one ("status tagihan dihitung, bukan disimpan").
+ * There is no status on it, and there must not be: `docs/spec-iuran-v1.md` says a Tagihan's status is
+ * computed and not stored, and it is computed in one place, `./invoice-standing.ts`. What the picker
+ * carries is the one answer from that module it needs, the amount still owed, and the Tagihan it
+ * offers are exactly the ones that module does not call paid.
  */
 export interface PayableInvoice {
 	readonly invoiceId: string;
 	/** The calendar month it is for, as `YYYY-MM`. */
 	readonly period: string;
+	/** What was issued, frozen. Equal to `remainingAmount` until something is allocated to it. */
 	readonly amount: Rupiah;
+	/**
+	 * What is still owed on it, from `invoiceStandings`: `amount` less everything allocated to it.
+	 * Strictly positive, because a Tagihan with nothing owed is not offered. Ticking the Tagihan on
+	 * the form adds this, not `amount`.
+	 */
+	readonly remainingAmount: Rupiah;
 	/** The day it falls due, as `YYYY-MM-DD`. */
 	readonly dueDate: string;
 }
@@ -406,7 +416,7 @@ export async function payableUnitsForUser(
 		return [];
 	}
 
-	const invoicesByUnit = await payableInvoicesOf(db, view, houses);
+	const invoicesByUnit = await payableInvoicesOf(db, clock, view, houses);
 
 	return houses.map((house) => ({
 		unitId: house.unitId,
@@ -652,8 +662,8 @@ async function residentIdOf(
 }
 
 /**
- * Every Tagihan of `houses` that the person `view` describes may see and could still pay, oldest
- * period first.
+ * Every Tagihan of `houses` that the person `view` describes may see and could still pay (not
+ * cancelled, not paid in full), oldest period first, each with what it still owes.
  *
  * ## The occupancy range is a privacy rule, and this screen obeys it from the shared module
  *
@@ -664,9 +674,18 @@ async function residentIdOf(
  * `../occupancy/resident-view.ts` says so, the same call "Tagihan saya" makes, so the two screens
  * cannot come to different conclusions about one row. That module reads no role, so holding
  * `ACTION.manageOccupancies` does not widen this list.
+ *
+ * ## Paid is not offered, and the rule is not restated here
+ *
+ * The rows go through `invoiceStandings` with `visibleTo: view`, which applies that visibility rule
+ * itself and answers the allocated amount, the remainder and the status of what is left. A Tagihan
+ * whose status is `INVOICE_STATUS.paid` is dropped; every other one is offered with its
+ * `remainingAmount`. Before this a paid Tagihan looked like an unpaid one in the picker, and ticking
+ * it filled in the whole amount for a debt the resident no longer had.
  */
 async function payableInvoicesOf(
 	db: DatabaseWriter,
+	clock: Clock,
 	view: ResidentView,
 	houses: readonly { readonly unitId: string }[]
 ): Promise<ReadonlyMap<string, readonly PayableInvoice[]>> {
@@ -682,24 +701,33 @@ async function payableInvoicesOf(
 			invoiceId: invoices.id,
 			period: invoices.period,
 			amount: invoices.amount,
-			dueDate: invoices.dueDate
+			dueDate: invoices.dueDate,
+			voidedAt: invoices.voidedAt
 		})
 		.from(invoices)
-		// A cancelled Tagihan is not an obligation any more, so it is not something to pay. This is
-		// not a paid-or-unpaid calculation — that one is #27's, and there is none here.
+		// A cancelled Tagihan is not an obligation any more, so it is not something to pay. Leaving it
+		// out here, rather than reading `void` back from `invoiceStandings`, keeps it out of the sum.
 		.where(and(inArray(invoices.unitId, unitIds), isNull(invoices.voidedAt)))
 		.orderBy(asc(invoices.period));
 
-	for (const { unitId, ...invoice } of rows) {
-		if (!isInvoiceVisible(view, { unitId, period: invoice.period })) {
+	const standings = await invoiceStandings(db, clock, rows, { visibleTo: view });
+	for (const standing of standings) {
+		if (standing.status === INVOICE_STATUS.paid) {
 			continue;
 		}
-		const existing = byUnit.get(unitId);
+		const invoice: PayableInvoice = {
+			invoiceId: standing.invoiceId,
+			period: standing.period,
+			amount: standing.amount,
+			remainingAmount: standing.remainingAmount,
+			dueDate: standing.dueDate
+		};
+		const existing = byUnit.get(standing.unitId);
 		if (existing) {
 			existing.push(invoice);
 			continue;
 		}
-		byUnit.set(unitId, [invoice]);
+		byUnit.set(standing.unitId, [invoice]);
 	}
 	return byUnit;
 }
@@ -727,11 +755,11 @@ function assertPositiveAmount(amount: Rupiah): void {
  * back as a driver error nobody named. The same check `recordCashTransaction` makes, copied rather
  * than shared because that module's exported surface is pinned by a test.
  *
- * **Tomorrow is allowed, today is not the bound.** `currentDay` reads the clock as a *UTC* day and
- * says why; the complex is at UTC+7, so between midnight and 07:00 local the UTC day is still
- * yesterday. Refusing anything after the UTC day would tell a resident transferring money at one in
- * the morning that the day they were standing in had not happened. One day of slack costs nothing —
- * the far side of this rule is a typo like `2126-03-04`, not a payment dated a few hours early.
+ * **Tomorrow is allowed, today is not the bound.** `currentDay` reads the clock as a WIB day
+ * (`Asia/Jakarta`, through `civilDayOf` in `src/lib/time.ts`); it used to read a UTC day, which was
+ * still yesterday between midnight and 07:00 local. The one day of slack stays regardless: it costs
+ * nothing, because the far side of this rule is a typo like `2126-03-04`, not a payment dated a few
+ * hours early, and it keeps a transfer made just after local midnight from being refused.
  */
 function assertReceiptDay(day: string, clock: Clock): void {
 	const parsed = new Date(`${day}T00:00:00.000Z`);
