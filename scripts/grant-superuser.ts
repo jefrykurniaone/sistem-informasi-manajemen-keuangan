@@ -46,9 +46,10 @@ import {
  * `bun run`.
  *
  * The real work lives in `bootstrap.ts` rather than here on purpose, and not only for testing:
- * `scripts/` is outside the `include` list of the generated `.svelte-kit/tsconfig.json`, so
- * `bun run check` does not type-check this file. Keeping it to argument handling and printing
- * leaves every decision in a file the gate does check.
+ * `scripts/` is outside the explicit `include` list of `tsconfig.json` (`src`, `tests` and
+ * `vite.config.ts`: the `$app/tsconfig` it extends carries no `include` of its own), and no test
+ * imports this file, so `bun run check` does not type-check it. Keeping it to argument handling
+ * and printing leaves every decision in a file the gate does check.
  */
 
 const USAGE = 'Usage: bun run superuser:grant <email>';
