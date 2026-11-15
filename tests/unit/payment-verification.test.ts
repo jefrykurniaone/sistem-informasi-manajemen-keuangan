@@ -12,6 +12,7 @@ import { cashCategories, SYSTEM_CATEGORY_KEY } from '#lib/server/db/schema/cash-
 import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
 import { emailQueue } from '#lib/server/db/schema/email.ts';
 import { invoices } from '#lib/server/db/schema/invoice.ts';
+import { OCCUPANCY_ROLE } from '#lib/server/db/schema/occupancy.ts';
 import { PAYMENT_METHOD, PAYMENT_STATUS, payments } from '#lib/server/db/schema/payment.ts';
 import { residents } from '#lib/server/db/schema/resident.ts';
 import { units } from '#lib/server/db/schema/unit.ts';
@@ -35,6 +36,7 @@ import {
 	verifyPayment
 } from '#lib/server/services/dues/verification.ts';
 import { PAYMENT_RECORDED_ACTION } from '#lib/server/services/dues/payment.ts';
+import { ensureOccupancy } from '#lib/server/services/occupancy/index.ts';
 
 /**
  * Verifikasi Pembayaran: the one transaction that flips the status, writes the cash row into
@@ -186,6 +188,22 @@ async function insertPayer(name: string): Promise<{ residentId: string; unitId: 
 	const residentId = await insertResident(userId);
 	const unitId = await insertUnit();
 	return { residentId, unitId };
+}
+
+/**
+ * A Masa Huni of `unitId` for `residentId` from `startedOn`, with no end date, through the module's
+ * own door. The email to a payment's recorder names only the Tagihan inside such a stay (#335).
+ */
+async function insertStay(unitId: string, residentId: string, startedOn: string): Promise<void> {
+	await testDb.db.transaction((transaction) =>
+		ensureOccupancy(transaction, {
+			unitId,
+			residentId,
+			role: OCCUPANCY_ROLE.owner,
+			startedOn,
+			createdAt: new Date(START)
+		})
+	);
 }
 
 /** A Tagihan written straight into `invoices`, the way the issuance fixtures do. */
@@ -893,6 +911,7 @@ describe('the payment-verified email', () => {
 	it('queues one email to the payment recorder, naming the amount and the invoices it settled', async () => {
 		const admin = await insertAdmin('Pengurus Verifikasi Email');
 		const payer = await insertPayer('Warga Terima Email Verifikasi');
+		await insertStay(payer.unitId, payer.residentId, '2026-01-01');
 		await insertInvoice(payer.unitId, '2026-01');
 		const paymentId = await insertPendingPayment(payer.unitId, payer.residentId, rupiah(150_000));
 
@@ -906,6 +925,7 @@ describe('the payment-verified email', () => {
 			payload: {
 				amount: 150_000,
 				settlements: [{ period: '2026-01', amount: 100_000 }],
+				outsideTenureAmount: 0,
 				locale: 'id'
 			}
 		});
