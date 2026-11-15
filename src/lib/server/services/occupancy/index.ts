@@ -19,7 +19,20 @@ import { currentDay, isStillRunningOn, stillRunningOn, type OccupancyDays } from
  * write below is, today, a superuser-only write — a fact about the permission table, not something
  * re-decided here. `occupiedUnitsForUser` is the exception and is guarded the other way, by row
  * ownership, exactly as `src/lib/server/services/resident/profile.ts` settled: a resident reading
- * their own house is not a right some residents have and others do not.
+ * their own house is not a right some residents have and others do not. `ensureOccupancy` is the
+ * other exception, and checks no permission at all: it is a step inside an Undangan, a Pendaftaran
+ * or an Impor, whose own service has already decided who may take it — see that function.
+ *
+ * ## Only this module writes a Masa Huni
+ *
+ * Every write of an `occupancies` row goes through a function exported here, and every one of them
+ * takes the Unit's row lock — `select … from units where id = … for update`, in `lockUnit` — before
+ * it reads anything its decision depends on. The lock and the overlap check are not exported, so a
+ * caller cannot take one without the other, or forget both: the rule used to be the caller's
+ * discipline, and it was broken twice that way (#246, #258). The exported surface is pinned by
+ * `tests/unit/occupancy-service.test.ts`, so adding a writer, or exporting the lock again, fails the
+ * gate rather than this comment going stale. The one writer outside that surface is the one-off data
+ * fix in `./duplicate-fix.ts`, which locks every unit first, in `id` order.
  *
  * ## The Penanggung Jawab moves
  *
@@ -53,13 +66,13 @@ import { currentDay, isStillRunningOn, stillRunningOn, type OccupancyDays } from
  *
  * 1. **The flag is set.** Only `movePrimaryOccupantMarker` below does that in this module, and it is
  *    reached from `setPrimaryOccupant` and from `recordOccupancy` asked to mark the new stay. Both
- *    take the unit's row lock — `select … from units where id = … for update`, in `lockUnit` — before
- *    they read anything the move depends on. The move then takes the flag off every row of the unit
- *    in *S* and puts it on the target, in the same transaction. The one other writer of the flag,
- *    `fixDuplicateOccupancies` in `./duplicate-fix.ts`, locks every unit first, in `id` order.
- * 2. **A flagged row is inserted.** Nothing does that: `recordOccupancy` inserts unflagged and then
- *    moves, and every other path that creates a Masa Huni — the resident import, invitations,
- *    registrations — writes `isPrimaryOccupant: false`.
+ *    take the unit's row lock before they read anything the move depends on. The move then takes the
+ *    flag off every row of the unit in *S* and puts it on the target, in the same transaction. The
+ *    one other writer of the flag, `fixDuplicateOccupancies` in `./duplicate-fix.ts`, locks every
+ *    unit first, in `id` order.
+ * 2. **A flagged row is inserted.** Nothing does that: the two functions here that insert a row,
+ *    `recordOccupancy` and `ensureOccupancy`, both write `isPrimaryOccupant: false`, and
+ *    `recordOccupancy` then moves the flag through case 1.
  * 3. **A flagged row's last day moves from passed to not passed.** `endOccupancy` can correct the
  *    last day of a stay that is already over. It takes the stale flag off in the same statement,
  *    so a correction never brings a row back into *S* with its flag on — see that function.
@@ -85,26 +98,27 @@ import { currentDay, isStillRunningOn, stillRunningOn, type OccupancyDays } from
  *
  * `docs/spec-penghuni-v1.md` decision 6: the same resident cannot hold two Masa Huni in the same unit
  * whose days intersect, both ends inclusive — starting exactly on a conflicting stay's last day counts
- * as intersecting too. `recordOccupancy` always inserts a stay with no end date (see its own doc
- * comment), so a new stay's range is always `[startedOn, ∞)`, and asking whether an existing stay
- * intersects that reduces to asking whether it has already ended before `startedOn` — `notPassedOn`,
- * the same predicate the invariant above uses, asked here of one resident's rows in one unit instead of
- * one unit's flagged rows. `findOverlappingOccupancy` below is that question.
+ * as intersecting too. `recordOccupancy` and `ensureOccupancy` always insert a stay with no end date
+ * (see their own doc comments), so a new stay's range is always `[startedOn, ∞)`, and asking whether
+ * an existing stay intersects that reduces to asking whether it has already ended before `startedOn`
+ * — `notPassedOn`, the same predicate the invariant above uses, asked here of one resident's rows in
+ * one unit instead of one unit's flagged rows. `findOverlappingOccupancy` below is that question.
  *
- * `recordOccupancy`, and `ensureOccupancy` in `../invitation` and `../registration`, are the three
- * places that can insert a Masa Huni row outside the one-off data-fix script. Each takes `lockUnit`
- * before calling `findOverlappingOccupancy`, for the reason the flag's move takes it: two concurrent
- * insertions for the same resident and unit must not both read "no conflict" before either has
- * inserted. The two service functions ask it from today rather than from a caller-chosen start date,
- * because they have none — they silently skip instead of refusing, the idempotent behaviour
+ * Both functions that insert a row take `lockUnit` before calling `findOverlappingOccupancy`, for the
+ * reason the flag's move takes it: two concurrent insertions for the same resident and unit must not
+ * both read "no conflict" before either has inserted. They differ only in what a conflict does.
+ * `recordOccupancy` refuses with `OccupancyOverlapError`, because a superuser chose that start day and
+ * has to be told. `ensureOccupancy` skips silently, because its callers — Undangan, Pendaftaran and
+ * Impor — have no day to choose and must stay safe to repeat: the idempotent behaviour
  * `docs/spec-penghuni-v1.md` decision 6 keeps from before this rule existed.
  *
- * The fourth path, the resident import, never asks this question at all: the same person appearing
- * twice for the same unit in one file is one request, not two racing ones, and is already refused by
- * `duplicateUnitInFile`/`duplicateEmailInFile` in `src/lib/server/services/import/validation.ts` before
- * any Masa Huni is written — locked by `tests/unit/import-validation.test.ts` rather than checked here.
+ * The Impor goes through `ensureOccupancy` too, and never meets a conflict there: every row of a file
+ * makes a new Unit and a new Warga in the same transaction, so the lock is on a row nobody else can
+ * see yet and never waits, and the overlap check finds nothing. The same person appearing twice for
+ * the same unit in one file is refused earlier still, by `duplicateUnitInFile`/`duplicateEmailInFile`
+ * in `src/lib/server/services/import/validation.ts`, before any Masa Huni is written.
  *
- * The fifth path, `endOccupancy` moving a stay's last day, was left out until #258: nothing compared
+ * `endOccupancy` moving a stay's last day was the path left out until #258: nothing compared
  * the day being written with the same resident's other stays in the same unit, so moving a last day
  * forward past the start of a later stay could make the pair intersect exactly as a fresh insertion
  * would have been refused for. `findNextOccupancy` below asks the narrower question that path needs —
@@ -253,8 +267,8 @@ export class OccupancyOverlapError extends Error {
 /**
  * Thrown when moving an occupancy's last day would make it intersect a later Masa Huni the same
  * resident already holds in the same unit — decision 6 of `docs/spec-penghuni-v1.md`, extended to this
- * fifth path by #258. Both ends inclusive, so a last day landing exactly on the later stay's first day
- * is refused too, the same boundary `OccupancyOverlapError` draws for the four paths that insert a row.
+ * path that moves a last day by #258. Both ends inclusive, so a last day landing exactly on the later
+ * stay's first day is refused too, the same boundary `OccupancyOverlapError` draws for an insertion.
  *
  * Carries `latestEndedOn`, one day before the later stay's `startedOn` — the latest last day the
  * superuser reading the refusal could retry with — and `nextStartedOn`, that later stay's own start
@@ -399,6 +413,74 @@ export async function recordOccupancy(
 	});
 }
 
+/** Which Warga to attach to which Unit, in which role, from which day. */
+export interface EnsureOccupancyRequest {
+	readonly unitId: string;
+	readonly residentId: string;
+	readonly role: OccupancyRole;
+	/** The first day of the stay, as `YYYY-MM-DD`. Every caller today passes its own `currentDay`. */
+	readonly startedOn: string;
+	/**
+	 * The instant the row is stamped as recorded. The caller's own `clock.now()`, read once for its
+	 * whole transaction, so the stay carries the same instant as the account and the `residents` row
+	 * written beside it — and every row of one Impor the same instant, as before this door existed.
+	 */
+	readonly createdAt: Date;
+}
+
+/**
+ * Attaches a Warga to a Unit from `startedOn`, with no end date and without the Penanggung Jawab
+ * flag — unless that Warga already has a Masa Huni in that Unit whose last day has not passed on
+ * `startedOn` or has not been written, in which case it writes nothing. Answers `true` when it wrote
+ * the row and `false` when it skipped.
+ *
+ * **The skip is silent on purpose.** It is what an Undangan and a Pendaftaran did before this door
+ * existed, kept so that their step stays safe to repeat: a stay that already covers the day — running,
+ * starting later, or ending on that very day — is the stay they promised. The question is
+ * `findOverlappingOccupancy`'s, decision 6 of `docs/spec-penghuni-v1.md`, asked behind the Unit's row
+ * lock that this function takes itself; this module's doc comment is the argument for both.
+ *
+ * **It checks no permission.** It is one step inside a caller's own transaction — accepting an
+ * Undangan, approving a Pendaftaran, confirming an Impor — and that caller's service has already
+ * decided who may take that step, under a different action than `manageOccupancies` (the Warga
+ * accepting an Undangan holds none at all). For the same reason it writes no audit row: each caller
+ * records its own, naming `createdOccupancy`.
+ *
+ * The lock is held until the caller's transaction ends, so the caller must not read anything about
+ * this Unit's Masa Huni that it means to act on before calling this.
+ *
+ * @throws {TypeError} when `startedOn` is not a `YYYY-MM-DD` day.
+ * @throws {UnitNotFoundError} when `unitId` names no unit.
+ */
+export async function ensureOccupancy(
+	transaction: Transaction,
+	request: EnsureOccupancyRequest
+): Promise<boolean> {
+	assertCalendarDay(request.startedOn, 'startedOn');
+
+	await lockUnit(transaction, request.unitId);
+	const conflict = await findOverlappingOccupancy(
+		transaction,
+		request.residentId,
+		request.unitId,
+		request.startedOn
+	);
+	if (conflict) {
+		return false;
+	}
+
+	await transaction.insert(occupancies).values({
+		unitId: request.unitId,
+		residentId: request.residentId,
+		role: request.role,
+		startedOn: request.startedOn,
+		endedOn: null,
+		isPrimaryOccupant: false,
+		createdAt: request.createdAt
+	});
+	return true;
+}
+
 /** Who is asking, which stay they are ending, and on which day. */
 export interface EndOccupancyRequest {
 	/** The user making the change. Checked against `ACTION.manageOccupancies` before anything else. */
@@ -419,8 +501,7 @@ export interface EndOccupancyRequest {
  *
  * **The last day is compared against the resident's own later stay in this unit.** Decision 6 of
  * `docs/spec-penghuni-v1.md` bars two Masa Huni of the same resident in the same unit from
- * intersecting; #258 extended it to this fifth path, the one the other four could not reach through
- * insertion. Moving `endedOn` — forward or back — is refused with `OccupancyEndOverlapError` when the
+ * intersecting; #258 extended it to this path, the one an insertion's check could not reach. Moving `endedOn` — forward or back — is refused with `OccupancyEndOverlapError` when the
  * resident already has a later Masa Huni in this unit whose start date is no later than the new
  * `endedOn`, both ends inclusive; `findNextOccupancy` asks that question of the same resident's rows in
  * this unit that start after this stay's own `startedOn`. Shortening a stay needs no rule of its own —
@@ -841,12 +922,12 @@ const OCCUPANCY_RECORD_COLUMNS = {
  * module's doc comment for why both invariants rest on it. Also proves the unit exists, which is why
  * nothing else looks it up first.
  *
- * Exported so that `../invitation` and `../registration` can take the same lock before asking
- * `findOverlappingOccupancy` the same question `recordOccupancy` asks under it.
+ * Not exported: every writer in this module takes it itself, and a caller outside could take it
+ * without the check it exists for, or forget it — see "Only this module writes a Masa Huni" above.
  *
  * @throws {UnitNotFoundError} when `unitId` names no unit.
  */
-export async function lockUnit(transaction: Transaction, unitId: string): Promise<void> {
+async function lockUnit(transaction: Transaction, unitId: string): Promise<void> {
 	const [row] = await transaction
 		.select({ id: units.id })
 		.from(units)
@@ -1022,10 +1103,10 @@ function hasPassedOn(endedOn: string | null, today: string): boolean {
  * wait past.
  *
  * Only correct while `unitId`'s row lock is held — the same argument as `movePrimaryOccupantMarker`,
- * in this module's doc comment. Exported so that `../invitation` and `../registration` can ask the
- * same question after taking `lockUnit` themselves.
+ * in this module's doc comment. Not exported for that reason: `recordOccupancy` and
+ * `ensureOccupancy` ask it right after taking `lockUnit`, and nothing outside can ask it alone.
  */
-export async function findOverlappingOccupancy(
+async function findOverlappingOccupancy(
 	transaction: Transaction,
 	residentId: string,
 	unitId: string,
@@ -1056,8 +1137,8 @@ export async function findOverlappingOccupancy(
 /**
  * The Masa Huni among `residentId`'s stays in `unitId` that starts after `afterStartedOn`, earliest
  * start first, or `undefined` when there is none. `endOccupancy` asks this — see its own doc comment
- * for the rule — to guard the fifth path decision 6 was extended to by #258: moving a stay's last day
- * must not reach a later stay the same resident already holds in the same unit.
+ * for the rule — to guard the path decision 6 was extended to by #258: moving a stay's last day must
+ * not reach a later stay the same resident already holds in the same unit.
  *
  * Only a stay starting strictly *after* `afterStartedOn` — the stay being ended's own `startedOn` — is
  * considered. A stay starting on the same day or earlier is not a later stay to reach; pairs like that
@@ -1066,9 +1147,9 @@ export async function findOverlappingOccupancy(
  * already passed out of its own comparison.
  *
  * Only correct while `unitId`'s row lock is held — `endOccupancy` takes it via `lockUnitOfOccupancy`,
- * the same row `lockUnit` takes for `recordOccupancy` and for `ensureOccupancy` in `../invitation` and
- * `../registration`. So a call ending a stay and a call recording or inviting the same resident into
- * the same unit can never both read past this check before the other has written its row — the same
+ * the same row `lockUnit` takes for `recordOccupancy` and for `ensureOccupancy`. So a call ending a
+ * stay and a call recording, inviting or approving the same resident into the same unit can never
+ * both read past this check before the other has written its row — the same
  * argument `movePrimaryOccupantMarker`'s doc comment makes for the flag's move.
  */
 async function findNextOccupancy(
