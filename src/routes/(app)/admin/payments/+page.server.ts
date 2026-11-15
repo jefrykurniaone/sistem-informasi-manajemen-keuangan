@@ -1,11 +1,17 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
 import { formatRupiah } from '#lib/money.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
 import type { FileStore } from '#lib/server/ports/file-store.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	requireUser,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import { PeriodLockedError } from '#lib/server/services/cash/period.ts';
 import {
 	PaymentNotFoundError,
@@ -17,22 +23,22 @@ import {
 	type PendingPayment,
 	type VerificationRule
 } from '#lib/server/services/dues/verification.ts';
-import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
  * The verification queue — `docs/spec-iuran-v1.md` user stories 14 through 16. Follows the shape
- * `(app)/admin/cash/+page.server.ts` settled: nobody who is not signed in reaches the service
+ * `src/lib/server/route-action.ts` settled (#318): nobody who is not signed in reaches the service
  * layer, `PermissionDeniedError` becomes `error(403, …)` here and never in the service, and every
- * rule the service refuses comes back as a rejected form.
+ * rule the service refuses comes back as a rejected form. A rule this screen does not name is the
+ * invalid-form sentence rather than a 500.
  *
  * The proof links are short-lived signed links minted in this `load`, which is refused with a 403
  * to anyone not holding `ACTION.verifyPayments` — the same "the permission check is where the link
  * is rendered" rule every other proof- and receipt-showing screen records.
  *
- * `PeriodLockedError` is caught here by name, as this ticket's own screens must (#97 owns the two
- * cash screens' copies of the same catch): a verification of money received in a locked month is a
- * legitimate request the book refuses, and the admin reads which month and why rather than a 500.
+ * `PeriodLockedError` is named here: a verification of money received in a locked month is a
+ * legitimate request the book refuses, and the admin reads which month and why rather than the
+ * screen's general sentence.
  */
 
 /** The form field naming which payment is being decided. */
@@ -44,28 +50,41 @@ const INVOICE_IDS_FIELD = 'invoiceIds';
 /** The form field carrying a rejection's reason. */
 const REASON_FIELD = 'reason';
 
-export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+/** The sentences the page says when it refuses a request outright. */
+const PAGE = { forbidden: m.adminPayments_forbidden } satisfies PageMessages;
 
+/** What both decisions say when the service refuses them, each `fail(400)`. */
+const DECISION_FORM = {
+	...PAGE,
+	fallback: m.adminPayments_invalidForm,
+	refusals: [
+		refusal(VerificationRuleError, ({ error }) => ruleMessage(error.rule)),
+		refusal(PaymentNotFoundError, m.adminPayments_notFound),
+		refusal(PeriodLockedError, ({ error }) =>
+			m.adminPayments_periodLocked({ period: error.period, date: error.occurredOn })
+		)
+	]
+} satisfies FormMessages;
+
+export const load: PageServerLoad = async ({ locals }) => {
+	const user = requireUser(locals);
+
+	const dependencies = productionDependencies();
 	try {
-		const pending = await listPendingPayments(database(), locals.user.id);
-		const fileStore = localFileStoreFromEnvironment(systemClock);
+		const pending = await listPendingPayments(dependencies.db, user.id);
+		const fileStore = dependencies.fileStore;
 		return { payments: await Promise.all(pending.map((payment) => toRow(payment, fileStore))) };
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	verify: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const paymentId = String(form.get(PAYMENT_ID_FIELD) ?? '').trim();
+		const paymentId = readText(form, PAYMENT_ID_FIELD);
 		const invoiceIds = form
 			.getAll(INVOICE_IDS_FIELD)
 			.map((value) => String(value).trim())
@@ -74,9 +93,10 @@ export const actions: Actions = {
 			return fail(400, { message: m.adminPayments_invalidForm() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			const outcome = await verifyPayment(database(), systemClock, {
-				actorId: locals.user.id,
+			const outcome = await verifyPayment(db, clock, {
+				actorId: user.id,
 				paymentId,
 				invoiceIds
 			});
@@ -87,31 +107,30 @@ export const actions: Actions = {
 				})
 			};
 		} catch (caught) {
-			return failAsRejectedForm(caught);
+			return failOrThrow(caught, DECISION_FORM);
 		}
 	},
 
 	reject: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const paymentId = String(form.get(PAYMENT_ID_FIELD) ?? '').trim();
-		const reason = String(form.get(REASON_FIELD) ?? '').trim();
+		const paymentId = readText(form, PAYMENT_ID_FIELD);
+		const reason = readText(form, REASON_FIELD);
 		if (paymentId === '') {
 			return fail(400, { message: m.adminPayments_invalidForm() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			await rejectPayment(database(), systemClock, {
-				actorId: locals.user.id,
+			await rejectPayment(db, clock, {
+				actorId: user.id,
 				paymentId,
 				reason
 			});
 			return { message: m.adminPayments_rejectSuccess() };
 		} catch (caught) {
-			return failAsRejectedForm(caught);
+			return failOrThrow(caught, DECISION_FORM);
 		}
 	}
 };
@@ -145,31 +164,4 @@ function ruleMessage(rule: VerificationRule): string {
 		[VERIFICATION_RULE.receivedInTheFuture]: m.adminPayments_rule_receivedInTheFuture
 	};
 	return messages[rule]();
-}
-
-/** Turns each refusal the verification service names into a rejected form. */
-function failAsRejectedForm(caught: unknown) {
-	if (caught instanceof VerificationRuleError) {
-		return fail(400, { message: ruleMessage(caught.rule) });
-	}
-	if (caught instanceof PaymentNotFoundError) {
-		return fail(400, { message: m.adminPayments_notFound() });
-	}
-	if (caught instanceof PeriodLockedError) {
-		return fail(400, {
-			message: m.adminPayments_periodLocked({ period: caught.period, date: caught.occurredOn })
-		});
-	}
-	throwAsRouteError(caught);
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- * Always throws — the return type is `never` for the same reason the cash screens' copies are.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminPayments_forbidden());
-	}
-	throw caught;
 }

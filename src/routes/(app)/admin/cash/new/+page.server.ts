@@ -1,10 +1,17 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { formatRupiah, parseRupiah, type Rupiah } from '#lib/money.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import { formatRupiah } from '#lib/money.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readRupiah,
+	readText,
+	refusal,
+	requireUser,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import {
 	CashCategoryNotFoundError,
 	listActiveCashCategories
@@ -19,7 +26,6 @@ import {
 	type CashRule
 } from '#lib/server/services/cash/transaction.ts';
 import { PeriodLockedError } from '#lib/server/services/cash/period.ts';
-import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -27,9 +33,10 @@ import type { Actions, PageServerLoad } from './$types';
  * with the date kept and the rest of the fields cleared, because a pengurus works through a stack
  * of receipts in one sitting; the cash book is one link away.
  *
- * Follows the shape `(app)/admin/posts/new/+page.server.ts` settled: nobody who is not signed in
+ * Follows the shape `src/lib/server/route-action.ts` settled (#318): nobody who is not signed in
  * reaches the service layer, `PermissionDeniedError` becomes `error(403, …)` here and never in the
- * service, and a named rule refusal becomes `fail(400, …)` with the fields still filled in.
+ * service, and a named rule refusal becomes `fail(400, …)` with the fields still filled in. A rule
+ * this screen does not name is the invalid-form sentence rather than a 500.
  *
  * There is no direction field, and the form offers no system category. The first is because a
  * transaction's direction is its category's type — a rule
@@ -49,19 +56,31 @@ const DESCRIPTION_FIELD = 'description';
 /** The form field carrying the optional receipt photo. */
 const RECEIPT_FIELD = 'receipt';
 
-export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+/** The sentences the page says when it refuses a request outright. */
+const PAGE = { forbidden: m.adminCash_forbidden } satisfies PageMessages;
 
-	const db = database();
+/** What `create` says when the service refuses it, each `fail(400)` with the fields refilled. */
+const CREATE_FORM = {
+	...PAGE,
+	fallback: m.adminCash_invalidForm,
+	refusals: [
+		refusal(CashRuleError, ({ error }) => ruleMessage(error.rule)),
+		refusal(CashCategoryNotFoundError, m.adminCash_categoryNotFound),
+		refusal(PeriodLockedError, ({ error }) => m.adminCash_periodLocked({ period: error.period }))
+	]
+} satisfies FormMessages;
+
+export const load: PageServerLoad = async ({ locals }) => {
+	const user = requireUser(locals);
+
+	const { db } = productionDependencies();
 	// The category list takes no caller — it is the same read every recording form makes — so the
 	// permission check is made on its own. Without it a resident would be shown a form and only
 	// refused once they had filled it in.
 	try {
-		await assertMayRecordCashTransactions(db, locals.user.id);
+		await assertMayRecordCashTransactions(db, user.id);
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 
 	const categories = await listActiveCashCategories(db);
@@ -75,9 +94,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 export const actions: Actions = {
 	create: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
 		const values = readFormValues(form);
@@ -90,18 +107,19 @@ export const actions: Actions = {
 			return fail(400, { message: m.adminCash_invalidForm(), values });
 		}
 
-		const amount = readAmount(values.amount);
+		const amount = readRupiah(form, AMOUNT_FIELD);
 		if (amount === undefined) {
 			return fail(400, { message: m.adminCash_invalidAmount(), values });
 		}
 
+		const dependencies = productionDependencies();
 		try {
 			const recorded = await recordCashTransaction(
-				database(),
-				systemClock,
-				localFileStoreFromEnvironment(systemClock),
+				dependencies.db,
+				dependencies.clock,
+				dependencies.fileStore,
 				{
-					actorId: locals.user.id,
+					actorId: user.id,
 					occurredOn: values.occurredOn,
 					categoryId: values.categoryId,
 					amount,
@@ -119,19 +137,7 @@ export const actions: Actions = {
 				values: { occurredOn: recorded.occurredOn, categoryId: '', amount: '', description: '' }
 			};
 		} catch (caught) {
-			if (caught instanceof CashRuleError) {
-				return fail(400, { message: ruleMessage(caught.rule), values });
-			}
-			if (caught instanceof CashCategoryNotFoundError) {
-				return fail(400, { message: m.adminCash_categoryNotFound(), values });
-			}
-			if (caught instanceof PeriodLockedError) {
-				return fail(400, {
-					message: m.adminCash_periodLocked({ period: caught.period }),
-					values
-				});
-			}
-			throwAsRouteError(caught);
+			return failOrThrow(caught, CREATE_FORM, { values });
 		}
 	}
 };
@@ -139,24 +145,11 @@ export const actions: Actions = {
 /** What the recording form carries, trimmed, as strings. */
 function readFormValues(form: FormData) {
 	return {
-		occurredOn: String(form.get(DATE_FIELD) ?? '').trim(),
-		categoryId: String(form.get(CATEGORY_FIELD) ?? '').trim(),
-		amount: String(form.get(AMOUNT_FIELD) ?? '').trim(),
-		description: String(form.get(DESCRIPTION_FIELD) ?? '').trim()
+		occurredOn: readText(form, DATE_FIELD),
+		categoryId: readText(form, CATEGORY_FIELD),
+		amount: readText(form, AMOUNT_FIELD),
+		description: readText(form, DESCRIPTION_FIELD)
 	};
-}
-
-/**
- * The typed money value behind what the form posted, or `undefined` when the text is not a
- * whole-rupiah amount. `parseRupiah` rejects fractions rather than rounding them, which is the
- * whole reason the raw text goes through it instead of through `Number()`.
- */
-function readAmount(raw: string): Rupiah | undefined {
-	try {
-		return parseRupiah(raw);
-	} catch {
-		return undefined;
-	}
 }
 
 /**
@@ -186,16 +179,4 @@ function ruleMessage(rule: CashRule): string {
 		[CASH_RULE.receiptNotAnImage]: m.adminCash_rule_receiptNotAnImage
 	};
 	return messages[rule]();
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- * Always throws — the return type is `never` for the same reason the unit screens' copies of this
- * helper are.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminCash_forbidden());
-	}
-	throw caught;
 }
