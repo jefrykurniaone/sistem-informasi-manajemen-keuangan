@@ -6,6 +6,7 @@ import { rupiah, type Rupiah } from '#lib/money.ts';
 import { auditEntriesFor } from '#lib/server/audit.ts';
 import { allocations } from '#lib/server/db/schema/allocation.ts';
 import { user } from '#lib/server/db/schema/auth.ts';
+import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
 import { cashTransactions } from '#lib/server/db/schema/cash-transaction.ts';
 import { invoices } from '#lib/server/db/schema/invoice.ts';
 import {
@@ -391,49 +392,6 @@ describe('payableUnitsForUser', () => {
 		]);
 	});
 
-	it('leaves out a Tagihan issued before the payer moved in, and keeps the one inside their stay', async () => {
-		// `docs/spec-iuran-v1.md`: "Warga hanya melihat tagihan yang terbit dalam rentang masa
-		// huninya". A Tagihan from before this resident moved in is the *previous* occupant's
-		// obligation, and offering it in the picker discloses its period and its amount. The two
-		// invoices below differ only in whether their period falls inside the stay, so this test fails
-		// if the occupancy filter is ever dropped — it would then find both.
-		const userId = await insertUser('Warga Tagihan Penghuni Lama');
-		const residentId = await insertResident(userId);
-		const unitId = await insertUnit('I', '4');
-		await insertOccupancy(unitId, residentId, null, '2025-12-01');
-
-		const [previousOccupants, theirOwn] = await testDb.db
-			.insert(invoices)
-			.values([
-				{
-					unitId,
-					period: '2025-10',
-					amount: rupiah(150_000),
-					dueDate: '2025-10-05',
-					issuedAt: new Date(START)
-				},
-				{
-					unitId,
-					period: '2025-12',
-					amount: rupiah(150_000),
-					dueDate: '2025-12-05',
-					issuedAt: new Date(START)
-				}
-			])
-			.returning();
-
-		const offered = await payableUnitsForUser(testDb.db, new FakeClock(START), userId);
-
-		expect(offered).toHaveLength(1);
-		// `firstDayOfPeriod('2025-10')` is 2025-10-01, which is outside the stay that starts on
-		// 2025-12-01; `firstDayOfPeriod('2025-12')` is 2025-12-01, its first day.
-		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).toEqual([theirOwn.id]);
-		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).not.toContain(
-			previousOccupants.id
-		);
-		expect(offered[0].invoices.map((invoice) => invoice.period)).not.toContain('2025-10');
-	});
-
 	it('offers one entry per house even when the payer holds two running stays in it', async () => {
 		// `occupancies` has no unique pair on unit and resident, so a superuser can record the same
 		// person twice for one house — an owner row beside a tenant row, or a plain duplicate. Two
@@ -452,6 +410,46 @@ describe('payableUnitsForUser', () => {
 
 		expect(offered).toHaveLength(1);
 		expect(offered[0].invoices).toHaveLength(1);
+	});
+
+	it('offers a superuser who lives in a house only the Tagihan of their own Masa Huni', async () => {
+		// The picker is a personal screen. A superuser who moved in on 1 June must not be offered the
+		// three months the previous occupant left unpaid, whatever their role lets them see on the
+		// admin screens. The cases of the rule itself, the `89948c3` regression among them, are in
+		// `tests/unit/resident-view.test.ts`; this test only proves the picker reads that module.
+		const unitId = await insertUnit('I', '5');
+		const previousUserId = await insertUser('Penghuni Sebelumnya');
+		const previousResidentId = await insertResident(previousUserId);
+		await insertOccupancy(unitId, previousResidentId, '2026-05-31', '2026-01-01');
+		const superuserId = await insertUser('Rina Superuser Menghuni');
+		const superuserResidentId = await insertResident(superuserId);
+		await testDb.db
+			.insert(userRoles)
+			.values({ userId: superuserId, role: ROLE.superuser, createdAt: new Date(START) });
+		await insertOccupancy(unitId, superuserResidentId, null, '2026-06-01');
+
+		const rows = await testDb.db
+			.insert(invoices)
+			.values(
+				['2026-01', '2026-02', '2026-03', '2026-06'].map((period) => ({
+					unitId,
+					period,
+					amount: rupiah(150_000),
+					dueDate: `${period}-05`,
+					issuedAt: new Date(`${period}-01T00:00:00.000Z`)
+				}))
+			)
+			.returning();
+		const june = rows.find((row) => row.period === '2026-06');
+
+		const offered = await payableUnitsForUser(
+			testDb.db,
+			new FakeClock('2026-07-10T03:00:00.000Z'),
+			superuserId
+		);
+
+		expect(offered).toHaveLength(1);
+		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).toEqual([june?.id]);
 	});
 
 	it('offers nothing to somebody whose stay is over', async () => {

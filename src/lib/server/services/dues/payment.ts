@@ -17,14 +17,14 @@ import { residents } from '../../db/schema/resident';
 import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
 import type { FileStore } from '../../ports/file-store';
-import { occupiedUnitsForUser } from '../occupancy';
 import {
-	currentDay,
-	isVisibleOn,
-	unitVisibilityFor,
-	type UnitVisibility
-} from '../occupancy/visibility';
-import { firstDayOfPeriod } from './invoice';
+	isInvoiceVisible,
+	occupiesToday,
+	residentViewFor,
+	unitsOccupiedToday,
+	type ResidentView
+} from '../occupancy/resident-view';
+import { currentDay } from '../occupancy/visibility';
 
 /**
  * A Warga telling the pengurus that they have transferred money: the amount, the day it left their
@@ -380,45 +380,39 @@ export interface CancelPaymentRequest {
  * Every house `actorUserId` is living in today, each with the Tagihan a payment could be meant for
  * — the whole load of the "catat pembayaran" screen.
  *
- * **Which Tagihan those are is a privacy decision, not a convenience one.** Only the ones issued
- * inside this viewer's own Masa Huni are offered: a Tagihan from before they moved in is the
- * previous occupant's obligation, and listing it would disclose its period and its amount. The rule
- * and the reason are in `payableInvoicesOf` below.
+ * **Which Tagihan those are is a privacy decision, not a convenience one.** Only the ones inside
+ * this viewer's own Masa Huni are offered: a Tagihan from before they moved in is the previous
+ * occupant's obligation, and listing it would disclose its period and its amount. The rule is
+ * `isInvoiceVisible` in `../occupancy/resident-view.ts`, which reads no role, so a superuser who
+ * lives in a house is offered what any other Warga of that house would be. See `payableInvoicesOf`.
  *
- * "Living in today" is `isStillRunningOn`'s definition and is not re-derived here: this reads
- * `occupiedUnitsForUser` and keeps the stays it reports as running. An account with no `residents`
- * row, or one whose stays have all ended, gets an empty list rather than an error — the screen says
- * so, which is a different thing from refusing them.
+ * "Living in today" is `unitsOccupiedToday` from the same module, which is `isStillRunningOn`'s
+ * definition. An account with no `residents` row, or one whose stays have all ended, gets an empty
+ * list rather than an error — the screen says so, which is a different thing from refusing them.
  *
- * **One entry per house, not per stay.** `occupiedUnitsForUser` answers with occupancies, and
- * `src/lib/server/db/schema/occupancy.ts` deliberately has no unique pair on unit and resident:
- * the same person can hold two running stays in one house, an owner row beside a tenant row or a
- * plain duplicate a superuser recorded. Two rows for one house would put a duplicate key into the
- * form's `{#each}` and list every Tagihan of that house twice, so the stays are folded by `unitId`
- * here rather than left for each screen to notice.
+ * **One entry per house, not per stay.** `src/lib/server/db/schema/occupancy.ts` deliberately has
+ * no unique pair on unit and resident, so the same person can hold two running stays in one house.
+ * `residentViewFor` already folds a person's stays into one entry per Unit, which is what keeps a
+ * duplicate key out of the form's `{#each}`.
  */
 export async function payableUnitsForUser(
 	db: DatabaseWriter,
 	clock: Clock,
 	actorUserId: string
 ): Promise<readonly PayableUnit[]> {
-	const houses = new Map<string, { readonly block: string; readonly number: string }>();
-	for (const stay of await occupiedUnitsForUser(db, clock, actorUserId)) {
-		if (stay.isRunning) {
-			houses.set(stay.unitId, { block: stay.block, number: stay.number });
-		}
-	}
-	if (houses.size === 0) {
+	const view = await residentViewFor(db, clock, actorUserId);
+	const houses = unitsOccupiedToday(view);
+	if (houses.length === 0) {
 		return [];
 	}
 
-	const invoicesByUnit = await payableInvoicesOf(db, actorUserId, [...houses.keys()]);
+	const invoicesByUnit = await payableInvoicesOf(db, view, houses);
 
-	return [...houses].map(([unitId, house]) => ({
-		unitId,
+	return houses.map((house) => ({
+		unitId: house.unitId,
 		block: house.block,
 		number: house.number,
-		invoices: invoicesByUnit.get(unitId) ?? []
+		invoices: invoicesByUnit.get(house.unitId) ?? []
 	}));
 }
 
@@ -622,6 +616,10 @@ export async function cancelOwnPayment(
 /**
  * The `residents.id` behind `actorUserId`, having proved they are living in `unitId` today.
  *
+ * "Living in today" is `occupiesToday` in `../occupancy/resident-view.ts`. That view carries the
+ * person's own houses and nothing about who else lives there: this guard needs a yes or a no, not
+ * the "Rumah saya" screen with its household names.
+ *
  * @throws {PermissionDeniedError} when the account has no `residents` row, or no running stay in
  *   that house. Both are the same answer on purpose: "that is not your house" is all either one
  *   entitles the caller to know.
@@ -633,9 +631,8 @@ async function requireOccupyingResident(
 	unitId: string
 ): Promise<string> {
 	const residentId = await residentIdOf(transaction, actorUserId);
-	const stays = await occupiedUnitsForUser(transaction, clock, actorUserId);
-	const occupies = stays.some((stay) => stay.isRunning && stay.unitId === unitId);
-	if (!residentId || !occupies) {
+	const view = await residentViewFor(transaction, clock, actorUserId);
+	if (!residentId || !occupiesToday(view, unitId)) {
 		throw new PermissionDeniedError(actorUserId, RECORD_FOR_OCCUPIED_UNIT);
 	}
 	return residentId;
@@ -655,43 +652,28 @@ async function residentIdOf(
 }
 
 /**
- * Every Tagihan of these units that `viewerUserId` may see and could still pay, oldest period first.
+ * Every Tagihan of `houses` that the person `view` describes may see and could still pay, oldest
+ * period first.
  *
- * ## The occupancy range is a privacy rule, and this is the second screen that has to obey it
+ * ## The occupancy range is a privacy rule, and this screen obeys it from the shared module
  *
  * `docs/spec-iuran-v1.md` says "Warga hanya melihat tagihan yang terbit dalam rentang masa huninya",
  * and a Tagihan carries the period and the amount a *previous* occupant owed. Filtering only on
  * `unitId` would hand the payment form that row and disclose all three facts about somebody else's
- * debt, so this screen applies the same rule the Tagihan list applies, from the same contract rather
- * than from a second derivation of it:
- *
- * - `unitVisibilityFor` in `src/lib/server/services/occupancy/visibility.ts` answers what days this
- *   viewer may see of one house, and `isVisibleOn` decides one day against that answer. Its two
- *   cases are the whole vocabulary: `{ kind: 'all' }` for a caller holding `ACTION.manageOccupancies`
- *   and otherwise the days their own stays cover — where an **empty `ranges` means "sees nothing"**
- *   and never "no restriction". `isVisibleOn` answers `false` for every day of an empty `ranges`, so
- *   the safe reading is the one that falls out of the contract; a unit with no visibility answer at
- *   all is skipped for the same reason.
- * - `firstDayOfPeriod` in `./invoice.ts` is the day a Tagihan is issued on, and it is a pure function
- *   of the period. The Tagihan list compares the same day against the same ranges, so the two screens
- *   cannot come to different conclusions about one row.
- *
- * The visibility question is asked once per house rather than once per Tagihan, and there is one
- * house in the ordinary case.
+ * debt (the leak `89948c3` closed). Each row is kept only when `isInvoiceVisible` in
+ * `../occupancy/resident-view.ts` says so, the same call "Tagihan saya" makes, so the two screens
+ * cannot come to different conclusions about one row. That module reads no role, so holding
+ * `ACTION.manageOccupancies` does not widen this list.
  */
 async function payableInvoicesOf(
 	db: DatabaseWriter,
-	viewerUserId: string,
-	unitIds: readonly string[]
+	view: ResidentView,
+	houses: readonly { readonly unitId: string }[]
 ): Promise<ReadonlyMap<string, readonly PayableInvoice[]>> {
 	const byUnit = new Map<string, PayableInvoice[]>();
+	const unitIds = houses.map((house) => house.unitId);
 	if (unitIds.length === 0) {
 		return byUnit;
-	}
-
-	const visibilities = new Map<string, UnitVisibility>();
-	for (const unitId of unitIds) {
-		visibilities.set(unitId, await unitVisibilityFor(db, { viewerUserId, unitId }));
 	}
 
 	const rows = await db
@@ -709,8 +691,7 @@ async function payableInvoicesOf(
 		.orderBy(asc(invoices.period));
 
 	for (const { unitId, ...invoice } of rows) {
-		const visibility = visibilities.get(unitId);
-		if (!visibility || !isVisibleOn(visibility, firstDayOfPeriod(invoice.period))) {
+		if (!isInvoiceVisible(view, { unitId, period: invoice.period })) {
 			continue;
 		}
 		const existing = byUnit.get(unitId);

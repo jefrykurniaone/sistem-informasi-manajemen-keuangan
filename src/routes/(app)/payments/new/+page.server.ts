@@ -29,6 +29,8 @@ import type { Actions, PageServerLoad } from './$types';
  * **The houses the form offers are a courtesy, not the guarantee.** `payableUnitsForUser` lists the
  * ones the resident is living in today, and a `unitId` that arrives by hand is refused again by
  * `recordPayment` with the same rule — which is what `tests/unit/payment-service.test.ts` proves.
+ * Both read `src/lib/server/services/occupancy/resident-view.ts`, which reads no role: a superuser
+ * or an admin who lives in a house is offered that house's Tagihan from their own Masa Huni only.
  *
  * **A successful save redirects to the list rather than staying here.** Recording a transfer is a
  * thing a resident does once and then wants to see the state of; the cash book's "stay and clear the

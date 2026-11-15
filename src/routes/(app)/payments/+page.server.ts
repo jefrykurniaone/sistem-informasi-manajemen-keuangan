@@ -15,7 +15,10 @@ import {
 	type OwnPayment,
 	type PaymentRule
 } from '#lib/server/services/dues/payment.ts';
-import { occupiedUnitsForUser } from '#lib/server/services/occupancy/index.ts';
+import {
+	residentViewFor,
+	unitsOccupiedToday
+} from '#lib/server/services/occupancy/resident-view.ts';
 import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -55,16 +58,17 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 
 	const db = database();
 	const fileStore = localFileStoreFromEnvironment(systemClock);
-	const [recorded, stays] = await Promise.all([
+	const [recorded, view] = await Promise.all([
 		ownPayments(db, locals.user.id),
-		occupiedUnitsForUser(db, systemClock, locals.user.id)
+		residentViewFor(db, systemClock, locals.user.id)
 	]);
 
 	return {
 		payments: await Promise.all(recorded.map((payment) => toRow(payment, fileStore))),
 		// Whether the "catat pembayaran" link is worth offering. A resident who lives nowhere today
-		// has no house to record a payment for, and the service would refuse them anyway.
-		canRecord: stays.some((stay) => stay.isRunning),
+		// has no house to record a payment for, and the service would refuse them anyway. "Lives
+		// there today" is the shared resident view's, the same answer the payment guard reads.
+		canRecord: unitsOccupiedToday(view).length > 0,
 		justRecorded: url.searchParams.get(RECORDED_PARAMETER) === '1'
 	};
 };

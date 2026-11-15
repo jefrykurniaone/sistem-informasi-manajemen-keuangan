@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { and, eq } from 'drizzle-orm';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { user } from '#lib/server/db/schema/auth.ts';
 import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
@@ -476,4 +480,69 @@ describe('a tenant turnover', () => {
 			.orderBy(occupancies.startedOn);
 		return rows.map((row) => row.startedOn);
 	}
+});
+
+describe('the personal screens', () => {
+	// #313: `unitVisibilityFor` answers the whole history to a superuser, which is an admin screen's
+	// answer. Every personal screen reads `src/lib/server/services/occupancy/resident-view.ts`
+	// instead, which reads no role. This holds the boundary: no route outside `admin/`, and none of
+	// the services those routes load a Warga's houses and Tagihan through, imports `unitVisibilityFor`
+	// or the whole visibility module as a namespace.
+	const root = fileURLToPath(new URL('../..', import.meta.url));
+	const appRoutes = join(root, 'src', 'routes', '(app)');
+	const personalServices = [
+		'src/lib/server/services/dues/queries.ts',
+		'src/lib/server/services/dues/payment.ts',
+		'src/lib/server/services/dashboard/index.ts',
+		'src/lib/server/services/occupancy/resident-view.ts'
+	].map((path) => join(root, path));
+
+	/** Every `.ts` file under `directory`, leaving out the `admin` subtree at the top. */
+	function personalRouteFiles(directory: string): string[] {
+		const found: string[] = [];
+		for (const entry of readdirSync(directory, { withFileTypes: true })) {
+			const path = join(directory, entry.name);
+			if (entry.isDirectory()) {
+				if (path !== join(appRoutes, 'admin')) {
+					found.push(...personalRouteFiles(path));
+				}
+			} else if (entry.name.endsWith('.ts')) {
+				found.push(path);
+			}
+		}
+		return found;
+	}
+
+	/** Whether `path` imports `unitVisibilityFor`, or the visibility module as a namespace. */
+	function importsUnitVisibility(path: string): boolean {
+		const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest);
+		return source.statements.some((statement) => {
+			if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
+				return false;
+			}
+			if (!/occupancy\/visibility(\.ts)?$/.test(statement.moduleSpecifier.text)) {
+				return false;
+			}
+			const bindings = statement.importClause?.namedBindings;
+			if (bindings && ts.isNamespaceImport(bindings)) {
+				return true;
+			}
+			return (
+				bindings !== undefined &&
+				ts.isNamedImports(bindings) &&
+				bindings.elements.some(
+					(element) => (element.propertyName ?? element.name).text === 'unitVisibilityFor'
+				)
+			);
+		});
+	}
+
+	it('never import unitVisibilityFor', () => {
+		const files = [...personalRouteFiles(appRoutes), ...personalServices];
+		expect(files.length).toBeGreaterThan(personalServices.length);
+
+		const offenders = files.filter(importsUnitVisibility).map((path) => relative(root, path));
+
+		expect(offenders).toEqual([]);
+	});
 });

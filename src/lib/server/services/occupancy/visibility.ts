@@ -15,6 +15,14 @@ import type { Clock } from '../../ports/clock';
  * keuangan". The iuran spec and the kas-laporan spec both filter rows by date against this module;
  * neither reads `occupancies` for itself, and neither decides on its own what a resident may see.
  *
+ * ## Personal screens do not call `unitVisibilityFor`
+ *
+ * Its `{ kind: 'all' }` answer is a pengurus right, and a pengurus who also lives in a house is a
+ * Warga on their own screens. Since #313 every personal screen ("Tagihan saya", the payment form and
+ * its guard, the payment list, the Warga card on the Beranda) asks `./resident-view.ts` instead,
+ * which reads no role and builds its answer from `mergeDateRanges` and `isVisibleOn` below.
+ * `unitVisibilityFor` stays for a screen that shows a Unit's history to whoever administers it.
+ *
  * ## The shape, and why it is this one
  *
  * `unitVisibilityFor` answers with a `UnitVisibility`, which has exactly **two** cases:
@@ -89,7 +97,8 @@ export interface UnitVisibilityRequest {
 }
 
 /**
- * What `viewerUserId` may see of `unitId`'s history.
+ * What `viewerUserId` may see of `unitId`'s history, **for an admin history screen only**. A
+ * personal screen asks `./resident-view.ts`, which reads no role: see this module's doc comment.
  *
  * `{ kind: 'all' }` for a caller holding `ACTION.manageOccupancies`; otherwise the days their own
  * occupancies of that unit cover, merged and sorted. An account with no `residents` row — an
@@ -115,8 +124,8 @@ export async function unitVisibilityFor(
 
 /**
  * Every stretch of days `viewerUserId` occupied `unitId` for, merged and sorted — the raw material
- * `unitVisibilityFor` builds its `ranges` case from, exported for a caller that has already decided
- * the viewer is a plain resident.
+ * `unitVisibilityFor` builds its `ranges` case from. A personal screen reads the same ranges for
+ * every house at once through `residentViewFor` in `./resident-view.ts`.
  */
 export async function occupiedRangesOfUnit(
 	db: DatabaseWriter,
