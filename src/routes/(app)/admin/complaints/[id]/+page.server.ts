@@ -1,19 +1,24 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
 import { ACTION, requirePermission } from '#lib/server/authz.ts';
-import { database } from '#lib/server/db/index.ts';
 import { COMPLAINT_STATUSES, type ComplaintStatus } from '#lib/server/db/schema/complaint.ts';
-import { assertUuidParam } from '#lib/server/services/identifier.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	requireUser,
+	requireUuidParam,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import { formatDateTime } from '#lib/time.ts';
 import {
 	addComplaintReply,
 	changeComplaintStatus,
 	COMPLAINT_REPLY_RULE,
 	COMPLAINT_RULE,
-	ComplaintNotFoundError,
 	ComplaintReplyRuleError,
 	ComplaintRuleError,
 	getComplaint,
@@ -34,28 +39,51 @@ import type { Actions, PageServerLoad } from './$types';
  * reply thread, a form to add to it (stories 6/17), and the one dialog that moves its status
  * (stories 15, 16, 18).
  *
- * Follows the shape `(app)/admin/posts/[id]/+page.server.ts` settled: `PermissionDeniedError`
+ * Follows the shape `src/lib/server/route-action.ts` settled (#318): `PermissionDeniedError`
  * becomes `error(403, …)`, `ComplaintNotFoundError` becomes `error(404, …)`, both here rather than
- * in the service, and a named rule refusal or a refused transition is a rejected form —
+ * in the service, and a rule refusal or a refused transition is a rejected form —
  * `fail(400, …)` — because the actor was inside their rights and the specific request is what was
  * wrong.
  */
 
+/** The 403 for anyone who may not handle Keluhan, and the 404 for an id that names none. */
+const PAGE = {
+	forbidden: m.adminComplaintDetail_forbidden,
+	notFound: m.adminComplaintDetail_notFound
+} satisfies PageMessages;
+
+/** `changeStatus`: a named Keluhan rule, or a move the state machine does not allow the handler. */
+const CHANGE_STATUS_FORM = {
+	...PAGE,
+	fallback: m.adminComplaintDetail_invalidForm,
+	refusals: [
+		refusal(ComplaintRuleError, ({ error }) => complaintRuleMessage(error.rule)),
+		refusal(ComplaintTransitionError, ({ error }) =>
+			m.adminComplaintDetail_transitionRefused({ from: error.from, to: error.to })
+		)
+	]
+} satisfies FormMessages;
+
+/** `reply`: a named Tanggapan rule. */
+const REPLY_FORM = {
+	...PAGE,
+	fallback: m.adminComplaintDetail_invalidForm,
+	refusals: [refusal(ComplaintReplyRuleError, ({ error }) => replyRuleMessage(error.rule))]
+} satisfies FormMessages;
+
 export const load: PageServerLoad = async ({ locals, params }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+	const user = requireUser(locals);
 	// `complaints.id` is a `uuid` column — see #111 and `#lib/server/services/identifier.ts`.
-	assertUuidParam(params.id, m.adminComplaintDetail_notFound());
+	const complaintId = requireUuidParam(params.id, PAGE);
 
+	const { db, clock } = productionDependencies();
 	try {
-		const db = database();
-		await requirePermission(db, locals.user.id, ACTION.readAllComplaints);
+		await requirePermission(db, user.id, ACTION.readAllComplaints);
 
-		const complaint = await getComplaint(db, systemClock, locals.user.id, params.id);
+		const complaint = await getComplaint(db, clock, user.id, complaintId);
 		const [history, replies] = await Promise.all([
-			complaintStatusHistory(db, locals.user.id, params.id),
-			listComplaintReplies(db, locals.user.id, params.id)
+			complaintStatusHistory(db, user.id, complaintId),
+			listComplaintReplies(db, user.id, complaintId)
 		]);
 
 		return {
@@ -89,69 +117,57 @@ export const load: PageServerLoad = async ({ locals, params }) => {
 			allowedTransitions: allowedHandlerTransitionsFrom(complaint.status)
 		};
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	changeStatus: async ({ request, locals, params }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
-		assertUuidParam(params.id, m.adminComplaintDetail_notFound());
+		const user = requireUser(locals);
+		const complaintId = requireUuidParam(params.id, PAGE);
 
 		const form = await request.formData();
-		const to = String(form.get('to') ?? '').trim();
-		const note = String(form.get('note') ?? '').trim();
-		const rejectionReason = String(form.get('rejectionReason') ?? '').trim();
+		const to = readText(form, 'to');
+		const note = readText(form, 'note');
+		const rejectionReason = readText(form, 'rejectionReason');
 
 		if (!isComplaintStatus(to)) {
 			return fail(400, { message: m.adminComplaintDetail_invalidForm() });
 		}
 
+		const { db, clock } = productionDependencies();
 		try {
-			await changeComplaintStatus(database(), systemClock, {
-				actorId: locals.user.id,
-				complaintId: params.id,
+			await changeComplaintStatus(db, clock, {
+				actorId: user.id,
+				complaintId,
 				to,
 				note: note || null,
 				rejectionReason: rejectionReason || null
 			});
 		} catch (caught) {
-			if (caught instanceof ComplaintRuleError) {
-				return fail(400, { message: complaintRuleMessage(caught.rule) });
-			}
-			if (caught instanceof ComplaintTransitionError) {
-				return fail(400, {
-					message: m.adminComplaintDetail_transitionRefused({ from: caught.from, to: caught.to })
-				});
-			}
-			throwAsRouteError(caught);
+			return failOrThrow(caught, CHANGE_STATUS_FORM);
 		}
 
 		return { message: m.adminComplaintDetail_statusChangedMessage() };
 	},
 
 	reply: async ({ request, locals, params }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
-		assertUuidParam(params.id, m.adminComplaintDetail_notFound());
+		const user = requireUser(locals);
+		const complaintId = requireUuidParam(params.id, PAGE);
 
 		const form = await request.formData();
+		// Not trimmed here: what counts as an empty Tanggapan is `addComplaintReply`'s rule.
 		const content = String(form.get('content') ?? '');
 
+		const { db, clock } = productionDependencies();
 		try {
-			await addComplaintReply(database(), systemClock, {
-				actorId: locals.user.id,
-				complaintId: params.id,
+			await addComplaintReply(db, clock, {
+				actorId: user.id,
+				complaintId,
 				content
 			});
 		} catch (caught) {
-			if (caught instanceof ComplaintReplyRuleError) {
-				return fail(400, { message: replyRuleMessage(caught.rule) });
-			}
-			throwAsRouteError(caught);
+			return failOrThrow(caught, REPLY_FORM);
 		}
 
 		return { message: m.adminComplaintDetail_replyAddedMessage() };
@@ -197,19 +213,4 @@ function replyRuleMessage(rule: ComplaintReplyRule): string {
 		[COMPLAINT_REPLY_RULE.actorNotRegistered]: m.adminComplaintDetail_rule_actorNotRegistered
 	};
 	return messages[rule]();
-}
-
-/**
- * Turns a caught permission refusal into a 403, or a caught missing complaint into a 404, and
- * throws it — or rethrows whatever else it was. Always throws, for the reason the posts screens'
- * copies of this helper are declared `never`.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminComplaintDetail_forbidden());
-	}
-	if (caught instanceof ComplaintNotFoundError) {
-		throw error(404, m.adminComplaintDetail_notFound());
-	}
-	throw caught;
 }

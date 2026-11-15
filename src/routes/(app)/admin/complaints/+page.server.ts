@@ -1,11 +1,12 @@
-import { error, redirect } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
 import { ACTION, requirePermission } from '#lib/server/authz.ts';
-import { database } from '#lib/server/db/index.ts';
 import type { ComplaintStatus } from '#lib/server/db/schema/complaint.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import {
+	productionDependencies,
+	requireUser,
+	throwRouteError,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import { complaintWorklistSummary, listComplaints } from '#lib/server/services/complaint/index.ts';
 import { OPEN_COMPLAINT_STATUSES } from '#lib/server/services/complaint/state-machine.ts';
 import type { PageServerLoad } from './$types';
@@ -14,7 +15,7 @@ import type { PageServerLoad } from './$types';
  * The admin work queue for Keluhan: everything still open, longest wait first, filterable by
  * status and category, with the current month's summary above it. Story 12, 13, 14 and 20.
  *
- * Follows the shape `(app)/admin/posts/+page.server.ts` settled: nobody who is not signed in
+ * Follows the shape `src/lib/server/route-action.ts` settled (#318): nobody who is not signed in
  * reaches the service layer, and `PermissionDeniedError` becomes `error(403, …)` here.
  *
  * **This route calls `requirePermission` itself, before calling `listComplaints`.** `listComplaints`
@@ -23,26 +24,27 @@ import type { PageServerLoad } from './$types';
  * ("peran warga tidak dapat membuka daftar kerja ini") has to live here, not in the shared service.
  */
 
+/** The 403 for anyone who may not read every Keluhan. The work queue has no 404 of its own. */
+const PAGE = { forbidden: m.adminComplaints_forbidden } satisfies PageMessages;
+
 export const load: PageServerLoad = async ({ locals, url }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+	const user = requireUser(locals);
 
 	const status = parseStatus(url.searchParams.get('status'));
 	const category = parseCategory(url.searchParams.get('category'));
 
+	const { db, clock } = productionDependencies();
 	try {
-		const db = database();
-		await requirePermission(db, locals.user.id, ACTION.readAllComplaints);
+		await requirePermission(db, user.id, ACTION.readAllComplaints);
 
 		const [items, summary] = await Promise.all([
-			listComplaints(db, systemClock, {
-				viewerUserId: locals.user.id,
+			listComplaints(db, clock, {
+				viewerUserId: user.id,
 				status,
 				category,
 				onlyOpen: true
 			}),
-			complaintWorklistSummary(db, systemClock, locals.user.id)
+			complaintWorklistSummary(db, clock, user.id)
 		]);
 
 		return {
@@ -60,7 +62,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			statuses: OPEN_COMPLAINT_STATUSES
 		};
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
@@ -79,17 +81,4 @@ function parseStatus(value: string | null): ComplaintStatus | undefined {
 function parseCategory(value: string | null): string | undefined {
 	const trimmed = value?.trim();
 	return trimmed ? trimmed : undefined;
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- * Always throws — the return type is `never` so this can sit in a `catch` block without widening
- * what SvelteKit infers a load function returns, exactly as the posts and registrations screens'
- * copies of this helper explain.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminComplaints_forbidden());
-	}
-	throw caught;
 }
