@@ -4,7 +4,7 @@ import type { DatabaseWriter, Transaction } from '../../authz';
 import { allocations, type Allocation } from '../../db/schema/allocation';
 import { invoices } from '../../db/schema/invoice';
 import type { Clock } from '../../ports/clock';
-import { lockUnallocatedVerifiedPayments } from './credit-balance';
+import { lockUnallocatedVerifiedPayments, type PaymentRemainder } from './credit-balance';
 import { allocatedAmountsOf } from './invoice-standing';
 
 /**
@@ -19,11 +19,11 @@ import { allocatedAmountsOf } from './invoice-standing';
  * transaction … where the rows are locked and the arithmetic is done". They are held here, one by
  * arithmetic and one by locks:
  *
- * - **A payment is never over-spent.** `planAllocations` is the only arithmetic that decides
- *   amounts, and it allocates out of a fixed budget: the sum of what it plans can never exceed the
- *   money it was given. Every caller hands it either one payment's full amount (verification) or
- *   the locked remainders of a Unit's verified payments (issuance), so nothing upstream can hand it
- *   more money than exists.
+ * - **A payment is never over-spent.** Two planners decide every amount, and each plans out of a
+ *   fixed budget: `planAllocations` never plans more than the one payment's full amount
+ *   verification hands it, and `planCreditSpend` never takes more from a payment than the remainder
+ *   `lockUnallocatedVerifiedPayments` read for it under that payment's lock (issuance, and the
+ *   Pengembalian). Nothing upstream can hand either more money than exists.
  * - **An invoice is never over-allocated.** Each target carries its *remaining* amount and the
  *   planner never allocates past it — and the remaining amounts are read under locks, so two
  *   concurrent writers cannot both see the same headroom. Verification locks the Unit's open
@@ -42,11 +42,19 @@ import { allocatedAmountsOf } from './invoice-standing';
  * `lockUnallocatedVerifiedPayments`) and touches no existing invoice at all. One order means no
  * pair of writers can wait on each other in a cycle.
  *
+ * ## Spending the Saldo Titipan, oldest money first
+ *
+ * Two things spend a Unit's Saldo Titipan: issuance's credit application below, onto a Tagihan it
+ * just issued, and the Pengembalian (`refundCredit` in `./dues-correction.ts`), out of the kas. Both
+ * lock the Unit's verified payments through `lockUnallocatedVerifiedPayments` and then walk the
+ * per-payment remainders it hands back with `planCreditSpend`, the one walk of those remainders in
+ * this codebase, so the two can never disagree about which payment's money goes first.
+ *
  * ## What deliberately is not here
  *
- * - **No release.** Deleting an allocation is user story 22, superuser's, and #30's ticket. When it
- *   arrives it must take the same payment row lock every writer here takes, or its read of "what
- *   this payment still covers" races the writers above.
+ * - **No release.** Deleting an allocation is `releaseAllocation` in `./dues-correction.ts`. It
+ *   takes the same payment row lock every writer here takes, because otherwise its read of "what
+ *   this payment still covers" would race the writers above.
  * - **No permission checks and no audit rows.** Every function takes a `Transaction` and runs
  *   inside a caller that already checked its own action and writes its own single audit row — the
  *   same shape `lockPeriod` and `recordDuesIncome` have, for the same reasons.
@@ -99,6 +107,50 @@ export function planAllocations(
 		served.add(target.invoiceId);
 		const amount = Math.min(left, target.remaining);
 		planned.push({ invoiceId: target.invoiceId, amount: rupiah(amount) });
+		left -= amount;
+	}
+
+	return planned;
+}
+
+/** One planned draw on the Saldo Titipan: this much of this Pembayaran's remainder is spent. */
+export interface PlannedSpend {
+	readonly paymentId: string;
+	/** Strictly positive, and never more than the payment's remainder. */
+	readonly amount: Rupiah;
+}
+
+/**
+ * Decides which Pembayaran's remainders pay for `wanted`, walking `remainders` **in the order
+ * given** and taking from each, up to its remainder, until `wanted` is covered or the money runs
+ * out. Pure, so `tests/unit/allocation.test.ts` walks it without a database.
+ *
+ * The one walk of a Unit's per-payment remainders, shared by both spenders of the Saldo Titipan:
+ * `applyCreditToInvoice` below and `refundCredit` in `./dues-correction.ts`. Each hands it the
+ * rows `lockUnallocatedVerifiedPayments` returned, already locked and already oldest money first,
+ * so "oldest first" is that read's order and is not re-decided here, the same division
+ * `planAllocations` keeps with its targets. A remainder of zero is passed over.
+ *
+ * The answer never totals more than `wanted` nor more than the remainders hold. When the money runs
+ * out first it totals less: issuance leaves the Tagihan partly paid, and a Pengembalian refuses an
+ * amount above the balance before it asks.
+ */
+export function planCreditSpend(
+	remainders: readonly Pick<PaymentRemainder, 'paymentId' | 'remainder'>[],
+	wanted: Rupiah
+): readonly PlannedSpend[] {
+	const planned: PlannedSpend[] = [];
+	let left: number = wanted;
+
+	for (const payment of remainders) {
+		if (left <= 0) {
+			break;
+		}
+		if (payment.remainder <= 0) {
+			continue;
+		}
+		const amount = Math.min(left, payment.remainder);
+		planned.push({ paymentId: payment.paymentId, amount: rupiah(amount) });
 		left -= amount;
 	}
 
@@ -221,11 +273,11 @@ export interface CreditableInvoice {
  * acceptance criterion "saat tagihan baru terbit, saldo titipan unit dipakai otomatis untuk
  * melunasinya", run by `./issuance.ts` inside the same per-Unit transaction that inserted the row.
  *
- * The Unit's verified payments are locked through `lockUnallocatedVerifiedPayments`, and each
- * payment's remainder is drained in turn until the Tagihan is covered or the balance runs out; a
- * partial balance leaves a partial allocation, which `invoiceStandings` in `./invoice-standing.ts`
- * reads as `partial`. One allocation row per payment drained, because a row maps one payment to one
- * invoice.
+ * The Unit's verified payments are locked through `lockUnallocatedVerifiedPayments`, and
+ * `planCreditSpend` drains each payment's remainder in turn until the Tagihan is covered or the
+ * balance runs out; a partial balance leaves a partial allocation, which `invoiceStandings` in
+ * `./invoice-standing.ts` reads as `partial`. One allocation row per payment drained, written in
+ * the order planned, because a row maps one payment to one invoice.
  *
  * **No cash transaction is written and no Periode is consulted.** The money being spent here
  * entered the cash book when its payment was verified, dated on its own `receivedOn`; consuming it
@@ -241,20 +293,13 @@ export async function applyCreditToInvoice(
 	invoice: CreditableInvoice
 ): Promise<Rupiah> {
 	const remainders = await lockUnallocatedVerifiedPayments(transaction, invoice.unitId);
+	const planned = planCreditSpend(remainders, invoice.amount);
 
-	let stillOwed: number = invoice.amount;
-	let applied = 0;
-	for (const payment of remainders) {
-		if (stillOwed <= 0 || payment.remainder <= 0) {
-			continue;
-		}
-		const amount = Math.min(stillOwed, payment.remainder);
-		await allocatePaymentToInvoices(transaction, clock, payment.paymentId, [
-			{ invoiceId: invoice.id, amount: rupiah(amount) }
+	for (const spend of planned) {
+		await allocatePaymentToInvoices(transaction, clock, spend.paymentId, [
+			{ invoiceId: invoice.id, amount: spend.amount }
 		]);
-		stillOwed -= amount;
-		applied += amount;
 	}
 
-	return rupiah(applied);
+	return rupiah(planned.reduce((total, spend) => total + spend.amount, 0));
 }

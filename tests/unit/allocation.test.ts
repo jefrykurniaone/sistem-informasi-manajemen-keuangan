@@ -14,16 +14,17 @@ import {
 	applyCreditToInvoice,
 	openInvoicesOfUnit,
 	planAllocations,
+	planCreditSpend,
 	type AllocationTarget
 } from '#lib/server/services/dues/allocation.ts';
 
 /**
  * Alokasi: the pure arithmetic that decides how money lands on Tagihan, and the two database reads
  * and writes around it. The two money invariants — a payment never over-spent, an invoice never
- * over-allocated — are arithmetic facts of `planAllocations` plus lock facts of its callers;
- * this file proves the arithmetic exhaustively and the reads and writes against real rows, while
- * `tests/unit/payment-verification.test.ts` and `tests/unit/invoice-issuance.test.ts` prove the
- * callers.
+ * over-allocated — are arithmetic facts of `planAllocations` and `planCreditSpend` plus lock facts
+ * of their callers; this file proves the arithmetic exhaustively and the reads and writes against
+ * real rows, while `tests/unit/payment-verification.test.ts`, `tests/unit/invoice-issuance.test.ts`
+ * and `tests/unit/credit-refund.test.ts` prove the callers.
  */
 
 const testDb = testDatabase();
@@ -85,6 +86,59 @@ describe('planAllocations — the arithmetic, without a database', () => {
 	it('plans nothing for no targets, and nothing for no money', () => {
 		expect(planAllocations(rupiah(100_000), [])).toEqual([]);
 		expect(planAllocations(rupiah(0), [target('a', 100_000)])).toEqual([]);
+	});
+});
+
+/** One payment's remainder with just the two fields the walk reads, for building cases tersely. */
+function remainder(paymentId: string, left: number) {
+	return { paymentId, remainder: rupiah(left) };
+}
+
+describe('planCreditSpend — the one oldest-first walk of the Saldo Titipan, without a database', () => {
+	// The walk both spenders of a Unit's balance share (#324): issuance's credit application and the
+	// Pengembalian. Before #324 each held its own copy of this loop.
+
+	it('takes from the payments in the order given until the wanted amount is covered', () => {
+		const plan = planCreditSpend(
+			[remainder('oldest', 100_000), remainder('middle', 100_000), remainder('newest', 100_000)],
+			rupiah(150_000)
+		);
+
+		expect(plan).toEqual([
+			{ paymentId: 'oldest', amount: 100_000 },
+			{ paymentId: 'middle', amount: 50_000 }
+		]);
+	});
+
+	it('never takes more from a payment than its remainder, and passes over an empty one', () => {
+		const plan = planCreditSpend(
+			[remainder('spent', 0), remainder('dented', 30_000), remainder('whole', 100_000)],
+			rupiah(50_000)
+		);
+
+		expect(plan).toEqual([
+			{ paymentId: 'dented', amount: 30_000 },
+			{ paymentId: 'whole', amount: 20_000 }
+		]);
+	});
+
+	it('never takes more, in total, than was wanted nor than the remainders hold', () => {
+		// Walked over a spread of amounts against one set of remainders: under the balance, at it, and
+		// above it, where issuance leaves the Tagihan partly paid.
+		const remainders = [remainder('a', 70_000), remainder('b', 0), remainder('c', 30_000)];
+		for (const wanted of [1, 50_000, 70_000, 99_999, 100_000, 400_000]) {
+			const plan = planCreditSpend(remainders, rupiah(wanted));
+			const total = plan.reduce((sum, spend) => sum + spend.amount, 0);
+			expect(total).toBe(Math.min(wanted, 100_000));
+			for (const spend of plan) {
+				expect(spend.amount).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	it('plans nothing for no remainders, and nothing when nothing is wanted', () => {
+		expect(planCreditSpend([], rupiah(100_000))).toEqual([]);
+		expect(planCreditSpend([remainder('a', 100_000)], rupiah(0))).toEqual([]);
 	});
 });
 
