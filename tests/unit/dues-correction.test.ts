@@ -32,6 +32,7 @@ import {
 	CREDIT_REFUNDED_ACTION,
 	DUES_CORRECTION_ACTIONS,
 	INVOICE_VOIDED_ACTION,
+	PAYMENT_UNVERIFIED_ACTION,
 	REFUND_REVERSED_ACTION,
 	REFUND_RULE,
 	RELEASE_RULE,
@@ -39,6 +40,8 @@ import {
 	RefundRuleError,
 	ReleaseRuleError,
 	ReverseRefundRuleError,
+	UNVERIFY_RULE,
+	UnverifyRuleError,
 	VOID_RULE,
 	VoidRuleError,
 	duesCorrectionSummary,
@@ -46,16 +49,19 @@ import {
 	refundCredit,
 	releaseAllocation,
 	reverseRefund,
+	unverifyPayment,
 	voidInvoice,
 	type DuesCorrectionRecord,
 	type StoredDuesCorrectionRow
 } from '#lib/server/services/dues/dues-correction.ts';
 import { INVOICE_STATUS } from '#lib/server/services/dues/invoice-standing.ts';
 import * as invoiceVoidPath from '#lib/server/services/dues/invoice-void.ts';
+import { verifyPayment } from '#lib/server/services/dues/verification.ts';
 
 /**
  * The dues-correction module (#324, spec #308 decision 4): Pembatalan Tagihan, Pelepasan Alokasi,
- * Pengembalian and, since #329, Pembatalan Pengembalian behind one module, sharing one right, one
+ * Pengembalian, since #329 Pembatalan Pengembalian and since #331 Pembatalan verifikasi behind one
+ * module, sharing one right, one
  * reason rule and one typed Audit Log record per action, and the corrections history reading those
  * records through the same types.
  *
@@ -63,8 +69,8 @@ import * as invoiceVoidPath from '#lib/server/services/dues/invoice-void.ts';
  * a field renamed in a record type is a compile error in the writer, in the record's check and in
  * its history summary, and a writer and reader that disagreed at run time would fail the first test
  * below. Each action's own refusals stay in its own file (`invoice-void.test.ts`,
- * `allocation-release.test.ts`, `credit-refund.test.ts`, `refund-reverse.test.ts`); this file holds
- * what they share.
+ * `allocation-release.test.ts`, `credit-refund.test.ts`, `refund-reverse.test.ts`,
+ * `payment-unverify.test.ts`); this file holds what they share.
  */
 
 const testDb = testDatabase();
@@ -82,6 +88,7 @@ const VOID_REASON = 'Tagihan terbit untuk rumah yang sedang dibebaskan.';
 const RELEASE_REASON = 'Uangnya untuk bulan lain; peruntukannya salah pilih.';
 const REFUND_REASON = 'Masa huninya berakhir dan saldo titipannya dikembalikan.';
 const REVERSE_REASON = 'Pengembalian salah catat: uangnya tidak jadi diserahkan.';
+const UNVERIFY_REASON = 'Uangnya ternyata tidak pernah masuk ke rekening komplek.';
 
 /** The display name of the superuser who makes every correction in this file. */
 const ACTOR_NAME = 'Pengurus Koreksi Iuran';
@@ -166,6 +173,39 @@ async function insertVerifiedPayment(unitId: string, amount: Rupiah): Promise<st
 	return row.id;
 }
 
+/**
+ * One Pembayaran of `amount` verified through the real `verifyPayment`, so it carries the
+ * `payment_verified` record a Pembatalan verifikasi finds its cash line through. The verification
+ * allocates it over the Unit's open Tagihan, oldest first. Returns its id and its Alokasi.
+ */
+async function verifyThroughService(unitId: string, amount: Rupiah, clock: FakeClock) {
+	const adminId = await insertUserWithRole('Pengurus Harian Verifikasi', ROLE.admin);
+	await testDb.db.insert(residents).values({ userId: adminId, createdAt: new Date(START) });
+	const payerUserId = await insertUser('Warga Koreksi Iuran Terverifikasi');
+	const [payer] = await testDb.db
+		.insert(residents)
+		.values({ userId: payerUserId, createdAt: new Date(START) })
+		.returning();
+	const [pending] = await testDb.db
+		.insert(payments)
+		.values({
+			unitId,
+			recordedBy: payer.id,
+			amount,
+			receivedOn: '2026-03-03',
+			method: PAYMENT_METHOD.transfer,
+			proofFileKey: null,
+			status: PAYMENT_STATUS.pending,
+			createdAt: new Date(START)
+		})
+		.returning();
+	const outcome = await verifyPayment(testDb.db, clock, {
+		actorId: adminId,
+		paymentId: pending.id
+	});
+	return { paymentId: pending.id, allocations: outcome.allocations };
+}
+
 /** One Alokasi, written directly as domain set-up. Returns its id. */
 async function insertAllocation(
 	paymentId: string,
@@ -220,20 +260,19 @@ async function insertRefundRows(paymentId: string, amount: Rupiah): Promise<stri
 }
 
 /**
- * One house that goes through all four corrections, a minute apart, every reason padded with
- * spaces: a Rp120.000 Tagihan for February cancelled, a Rp150.000 Alokasi of a Rp200.000
- * Pembayaran released, Rp80.000 of the Saldo Titipan that leaves returned, and that Pengembalian
- * reversed. The first three amounts differ, so the history can only show each one by reading it
- * from the right record and field; the reversal's is the refund's by definition, and its own
- * record type and reason tell it apart.
+ * One house that goes through all five corrections, a minute apart, every reason padded with
+ * spaces: a Rp120.000 Tagihan for February cancelled, the Rp150.000 Alokasi a Rp200.000
+ * Pembayaran's verification then made released, Rp80.000 of the Saldo Titipan that leaves returned,
+ * that Pengembalian reversed, and the Pembayaran's verification undone. The amounts of the void, the
+ * release, the refund and the undo differ, so the history can only show each one by reading it from
+ * the right record and field; the reversal's is the refund's by definition, and its own record type
+ * and reason tell it apart.
  */
 async function correctOneHouse() {
 	const actorId = await insertRegisteredSuperuser(ACTOR_NAME);
 	const unitId = await insertUnit();
 	const voidedInvoiceId = await insertInvoice(unitId, '2026-02', rupiah(120_000));
 	const paidInvoiceId = await insertInvoice(unitId, '2026-03', rupiah(150_000));
-	const paymentId = await insertVerifiedPayment(unitId, rupiah(200_000));
-	const allocationId = await insertAllocation(paymentId, paidInvoiceId, rupiah(150_000));
 	const clock = new FakeClock(START);
 
 	await voidInvoice(testDb.db, clock, {
@@ -241,6 +280,13 @@ async function correctOneHouse() {
 		invoiceId: voidedInvoiceId,
 		reason: `  ${VOID_REASON}  `
 	});
+	// Verified after the void, so its money goes to March alone: the release below names it.
+	const verified = await verifyThroughService(unitId, rupiah(200_000), clock);
+	const paymentId = verified.paymentId;
+	expect(verified.allocations.map((row) => [row.invoiceId, row.amount])).toEqual([
+		[paidInvoiceId, 150_000]
+	]);
+	const allocationId = verified.allocations[0].id;
 	clock.advance(MINUTE);
 	await releaseAllocation(testDb.db, clock, {
 		actorId,
@@ -261,6 +307,12 @@ async function correctOneHouse() {
 		refundId: refund.portions[0].refund.id,
 		reason: `  ${REVERSE_REASON}  `
 	});
+	clock.advance(MINUTE);
+	const unverified = await unverifyPayment(testDb.db, clock, {
+		actorId,
+		paymentId,
+		reason: `  ${UNVERIFY_REASON}  `
+	});
 
 	return {
 		actorId,
@@ -271,19 +323,22 @@ async function correctOneHouse() {
 		allocationId,
 		refundId: refund.portions[0].refund.id,
 		refundCashTransactionId: refund.portions[0].cashTransaction.id,
-		reversalCorrectionId: reversal.correction.id
+		reversalCorrectionId: reversal.correction.id,
+		unverifyCorrectionId: unverified.correction.id
 	};
 }
 
-/** The one audit row filed against `targetId`. */
-async function onlyAuditRowOf(targetId: string) {
-	const entries = await auditEntriesFor(testDb.db, targetId);
+/** The one audit row filed against `targetId`, of `action` when one is named. */
+async function onlyAuditRowOf(targetId: string, action?: string) {
+	const entries = (await auditEntriesFor(testDb.db, targetId)).filter(
+		(entry) => action === undefined || entry.action === action
+	);
 	expect(entries).toHaveLength(1);
 	return entries[0];
 }
 
 describe('the corrections history', () => {
-	it('reads the records the four actions really wrote, newest first, one Unit only', async () => {
+	it('reads the records the five actions really wrote, newest first, one Unit only', async () => {
 		const house = await correctOneHouse();
 		// A correction on another house, which must not reach this house's history.
 		const otherActorId = await insertRegisteredSuperuser('Pengurus Rumah Lain');
@@ -306,6 +361,14 @@ describe('the corrections history', () => {
 				period: entry.period
 			}))
 		).toEqual([
+			{
+				action: PAYMENT_UNVERIFIED_ACTION,
+				occurredAt: '2026-03-10T09:04:00.000Z',
+				actorName: ACTOR_NAME,
+				reason: UNVERIFY_REASON,
+				amount: 200_000,
+				period: null
+			},
 			{
 				action: REFUND_REVERSED_ACTION,
 				occurredAt: '2026-03-10T09:03:00.000Z',
@@ -343,6 +406,7 @@ describe('the corrections history', () => {
 
 		// Each entry is keyed by the audit row it was read from.
 		expect(history.map((entry) => entry.id)).toEqual([
+			(await onlyAuditRowOf(house.paymentId, PAYMENT_UNVERIFIED_ACTION)).id,
 			(await onlyAuditRowOf(house.refundId)).id,
 			(await onlyAuditRowOf(house.unitId)).id,
 			(await onlyAuditRowOf(house.allocationId)).id,
@@ -357,6 +421,9 @@ describe('the corrections history', () => {
 		const released = readDuesCorrectionRecord(await onlyAuditRowOf(house.allocationId));
 		const refunded = readDuesCorrectionRecord(await onlyAuditRowOf(house.unitId));
 		const reversed = readDuesCorrectionRecord(await onlyAuditRowOf(house.refundId));
+		const unverified = readDuesCorrectionRecord(
+			await onlyAuditRowOf(house.paymentId, PAYMENT_UNVERIFIED_ACTION)
+		);
 
 		expect(voided).toEqual({
 			action: INVOICE_VOIDED_ACTION,
@@ -412,6 +479,26 @@ describe('the corrections history', () => {
 				occurredOn: REFUND_DAY
 			}
 		} satisfies DuesCorrectionRecord);
+		expect(unverified).toEqual({
+			action: PAYMENT_UNVERIFIED_ACTION,
+			targetId: house.paymentId,
+			before: {
+				status: PAYMENT_STATUS.verified,
+				verifiedBy: expect.any(String) as string,
+				verifiedAt: START
+			},
+			after: {
+				unitId: house.unitId,
+				reason: UNVERIFY_REASON,
+				status: PAYMENT_STATUS.rejected,
+				amount: rupiah(200_000),
+				receivedOn: '2026-03-03',
+				cashTransactionId: expect.any(String) as string,
+				correctionId: house.unverifyCorrectionId,
+				// The one Alokasi was already released a step earlier: nothing left to release.
+				allocations: []
+			}
+		} satisfies DuesCorrectionRecord);
 	});
 
 	it('still lists a row that is not its action record, with the blank fields the old reader showed', async () => {
@@ -449,12 +536,13 @@ describe('the corrections history', () => {
 		});
 	});
 
-	it('asks for exactly the four actions this module writes', () => {
+	it('asks for exactly the five actions this module writes', () => {
 		expect([...DUES_CORRECTION_ACTIONS].sort()).toEqual(
 			[
 				ALLOCATION_RELEASED_ACTION,
 				CREDIT_REFUNDED_ACTION,
 				INVOICE_VOIDED_ACTION,
+				PAYMENT_UNVERIFIED_ACTION,
 				REFUND_REVERSED_ACTION
 			].sort()
 		);
@@ -703,6 +791,33 @@ const CASES: readonly CorrectionCase[] = [
 					reverseRefund(testDb.db, new FakeClock(START), {
 						actorId,
 						refundId: randomUUID(),
+						reason
+					})
+			};
+		}
+	},
+	{
+		name: 'Pembatalan verifikasi',
+		reasonError: UnverifyRuleError,
+		rule: UNVERIFY_RULE.reasonMissing,
+		arrange: async () => {
+			const unitId = await insertUnit();
+			// Verified through the real service, whose record is not a dues correction, so the Unit's
+			// history starts empty and holds only the undo.
+			const { paymentId } = await verifyThroughService(
+				unitId,
+				rupiah(100_000),
+				new FakeClock(START)
+			);
+			return {
+				unitId,
+				run: (actorId, reason) =>
+					unverifyPayment(testDb.db, new FakeClock(START), { actorId, paymentId, reason }),
+				// A Pembayaran that does not exist.
+				runBrokenTwice: (actorId, reason) =>
+					unverifyPayment(testDb.db, new FakeClock(START), {
+						actorId,
+						paymentId: randomUUID(),
 						reason
 					})
 			};

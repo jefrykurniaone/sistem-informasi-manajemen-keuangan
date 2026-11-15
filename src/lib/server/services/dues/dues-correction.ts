@@ -1,37 +1,48 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { NotFoundError, RuleViolationError } from '#lib/errors.ts';
 import type { Rupiah } from '#lib/money.ts';
-import { recordAuditEntry } from '../../audit';
+import { auditEntriesFor, recordAuditEntry } from '../../audit';
 import { ACTION, requirePermission, type Transaction } from '../../authz';
 import type { Database } from '../../db';
 import { allocations, type Allocation } from '../../db/schema/allocation';
 import { cashTransactions, type CashTransaction } from '../../db/schema/cash-transaction';
 import { invoices, type Invoice } from '../../db/schema/invoice';
-import { payments } from '../../db/schema/payment';
+import { PAYMENT_STATUS, payments, type Payment } from '../../db/schema/payment';
 import { refunds, type Refund } from '../../db/schema/refund';
 import { residents } from '../../db/schema/resident';
 import { units } from '../../db/schema/unit';
+import { announceAfterCommit } from '../../email/announce';
+import { PAYMENT_REJECTED_KIND } from '../../email/templates/payment-rejected';
 import type { Clock } from '../../ports/clock';
 import { recordDuesRefund } from '../cash/transaction';
 import { CASH_WRITE_KIND, writeCashTransaction } from '../cash/writer';
+import { isUuid } from '../identifier';
 import { currentDay } from '../occupancy/visibility';
 import { planCreditSpend } from './allocation';
-import { lockUnallocatedVerifiedPayments } from './credit-balance';
+import { lockUnallocatedVerifiedPayments, refundInForce } from './credit-balance';
+import { notifyPaymentRejected } from './notification';
 import { UnitNotFoundError } from './queries';
+import {
+	PAYMENT_VERIFIED_ACTION,
+	PaymentNotFoundError,
+	type PaymentVerifiedAfter
+} from './verification';
 
 /**
  * The dues-correction module (koreksi iuran, spec #308 decision 4): the superuser's corrections of
- * the dues side, and the typed Audit Log record each one leaves. Today it holds four actions: the
- * first three landed by #30 and gathered here by #324, the fourth added by #329:
+ * the dues side, and the typed Audit Log record each one leaves. Today it holds five actions: the
+ * first three landed by #30 and gathered here by #324, the fourth added by #329, the fifth by #331:
  *
  * - **Pembatalan Tagihan** (`voidInvoice`): one Tagihan marked `void` with a reason, never deleted.
  * - **Pelepasan Alokasi** (`releaseAllocation`): one Alokasi deleted, its money Saldo Titipan again.
  * - **Pengembalian** (`refundCredit`): part of a Unit's Saldo Titipan paid back out of the kas.
  * - **Pembatalan Pengembalian** (`reverseRefund`, spec #308 decision 6): one Pengembalian's cash
  *   expense reversed by a Koreksi, its money Saldo Titipan again.
+ * - **Pembatalan verifikasi** (`unverifyPayment`, spec #308 decision 5): a verified Pembayaran
+ *   turned rejected, every Alokasi of it released, and its income line reversed by a Koreksi.
  *
- * Pembatalan verifikasi (#331) joins this same module. The corrections history in
+ * The corrections history in
  * `./corrections-history.ts` reads the records through the types declared here, and the old homes
  * of the first three actions (`./invoice-void.ts`, `./allocation-release.ts`, `./credit-refund.ts`)
  * only re-export from here, because `src/lib/server/route-action.ts` and
@@ -53,14 +64,17 @@ import { UnitNotFoundError } from './queries';
  *   statement of the transaction. An action does not call `recordAuditEntry` itself: it returns its
  *   record, so it can neither forget it nor write two.
  * - **The refusal for an empty reason stays each action's own** (`VOID_RULE.reasonMissing`,
- *   `RELEASE_RULE.reasonMissing`, `REFUND_RULE.reasonMissing`, `REVERSE_REFUND_RULE.reasonMissing`),
+ *   `RELEASE_RULE.reasonMissing`, `REFUND_RULE.reasonMissing`, `REVERSE_REFUND_RULE.reasonMissing`,
+ *   `UNVERIFY_RULE.reasonMissing`),
  *   handed to the run as a callback. The finance screen maps each rule set through an exhaustive
  *   `Record` to that action's sentence, so one shared class would change what the screen says.
  * - **The actor lookup** is `requireActorResidentId`, for an action that stores a `residents`
  *   reference to its actor. Today that is only Pembatalan Tagihan (`invoices.voidedBy`): a release
  *   and a refund attribute by account (`refunds.refundedBy` is a `user.id`) and never needed a
  *   `residents` row, so they do not look one up. Nor does a Pembatalan Pengembalian, whose Koreksi
- *   is attributed by account as well (`cash_transactions.recordedBy` is a `user.id`).
+ *   is attributed by account as well (`cash_transactions.recordedBy` is a `user.id`), nor a
+ *   Pembatalan verifikasi, which clears `payments.verifiedBy` rather than writing a resident into it
+ *   and attributes its Koreksi by account.
  *
  * ## The typed Audit Log record (the decision #324 makes)
  *
@@ -125,6 +139,9 @@ export const CREDIT_REFUNDED_ACTION = 'credit_refunded';
 
 /** The audit log's `action` for a Pengembalian a superuser reversed (Pembatalan Pengembalian). */
 export const REFUND_REVERSED_ACTION = 'refund_reversed';
+
+/** The audit log's `action` for a Pembayaran whose verification a superuser undid. */
+export const PAYMENT_UNVERIFIED_ACTION = 'payment_unverified';
 
 /** What the `after` of every dues-correction record carries, whichever action wrote it. */
 export interface DuesCorrectionAfter {
@@ -224,9 +241,51 @@ export interface RefundReversedRecord {
 	};
 }
 
+/** One Alokasi a Pembatalan verifikasi released, as the record keeps it: the deleted row's content. */
+export interface UnverifyReleasedAllocationRecord {
+	readonly allocationId: string;
+	readonly invoiceId: string;
+	readonly amount: Rupiah;
+	/** When the Alokasi was written, by the verification or by an issuance, as an ISO 8601 instant. */
+	readonly createdAt: string;
+}
+
+/** The record a Pembatalan verifikasi leaves: one per Pembayaran, filed against it. */
+export interface PaymentUnverifiedRecord {
+	readonly action: typeof PAYMENT_UNVERIFIED_ACTION;
+	/** The Pembayaran, whose row now reads `rejected`. */
+	readonly targetId: string;
+	/** The verification the action undid: the three columns its one `update` cleared or changed. */
+	readonly before: {
+		readonly status: typeof PAYMENT_STATUS.verified;
+		/** The verifying admin's `residents.id`. */
+		readonly verifiedBy: string;
+		/** When it was verified, as an ISO 8601 instant. */
+		readonly verifiedAt: string;
+	};
+	readonly after: DuesCorrectionAfter & {
+		/** Always `rejected`: spec #308 adds no status, and `reason` is now its `rejectionReason`. */
+		readonly status: typeof PAYMENT_STATUS.rejected;
+		/** The Pembayaran's amount: the money the kas no longer counts. */
+		readonly amount: Rupiah;
+		/** The day the money was said to change hands, which the income line and its Koreksi carry. */
+		readonly receivedOn: string;
+		/** The income line the verification wrote, found through its `payment_verified` record. */
+		readonly cashTransactionId: string;
+		/** The Koreksi this action wrote, an `expense` row in "Iuran warga". */
+		readonly correctionId: string;
+		/** Every Alokasi released, oldest first; empty when the whole payment was Saldo Titipan. */
+		readonly allocations: readonly UnverifyReleasedAllocationRecord[];
+	};
+}
+
 /** Every record this module writes: one type per action. */
 export type DuesCorrectionRecord =
-	InvoiceVoidedRecord | AllocationReleasedRecord | CreditRefundedRecord | RefundReversedRecord;
+	| InvoiceVoidedRecord
+	| AllocationReleasedRecord
+	| CreditRefundedRecord
+	| RefundReversedRecord
+	| PaymentUnverifiedRecord;
 
 /** The audit `action` of one dues correction. */
 export type DuesCorrectionAction = DuesCorrectionRecord['action'];
@@ -238,7 +297,7 @@ export type DuesCorrectionAction = DuesCorrectionRecord['action'];
 export interface DuesCorrectionSummary {
 	/**
 	 * The money the action was about: the voided Tagihan's, the released Alokasi's, the refund's, the
-	 * reversed refund's.
+	 * reversed refund's, the unverified Pembayaran's.
 	 */
 	readonly amount: Rupiah | null;
 	/** The Periode, for an action about one Tagihan; `null` for the others. */
@@ -380,6 +439,35 @@ const RECORD_KINDS: RecordKinds = {
 				correctionId: isString,
 				amount: isRupiah,
 				occurredOn: isString
+			})
+		}),
+		summary: (record) => ({ amount: record.after.amount, period: null })
+	},
+	[PAYMENT_UNVERIFIED_ACTION]: {
+		record: objectOf<PaymentUnverifiedRecord>({
+			action: isExactly(PAYMENT_UNVERIFIED_ACTION),
+			targetId: isString,
+			before: objectOf<PaymentUnverifiedRecord['before']>({
+				status: isExactly(PAYMENT_STATUS.verified),
+				verifiedBy: isString,
+				verifiedAt: isString
+			}),
+			after: objectOf<PaymentUnverifiedRecord['after']>({
+				unitId: isString,
+				reason: isString,
+				status: isExactly(PAYMENT_STATUS.rejected),
+				amount: isRupiah,
+				receivedOn: isString,
+				cashTransactionId: isString,
+				correctionId: isString,
+				allocations: arrayOf(
+					objectOf<UnverifyReleasedAllocationRecord>({
+						allocationId: isString,
+						invoiceId: isString,
+						amount: isRupiah,
+						createdAt: isString
+					})
+				)
 			})
 		}),
 		summary: (record) => ({ amount: record.after.amount, period: null })
@@ -1414,4 +1502,417 @@ export async function reverseRefund(
 			};
 		}
 	);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pembatalan verifikasi
+// ---------------------------------------------------------------------------------------------
+//
+// Undoing the verification of one Pembayaran whose money never arrived or whose proof was not
+// genuine: spec #308 decision 5, `unverify` in `CONTEXT.md` ("Seluruh Alokasinya dilepas dan
+// pemasukan kasnya dibalik dengan Koreksi. Tidak bisa dilakukan selama sebagian Pembayaran itu sudah
+// keluar lewat Pengembalian").
+//
+// ## What one Pembatalan verifikasi changes, in one transaction
+//
+// - **Every Alokasi of the Pembayaran is deleted**, the ones its verification wrote and the ones an
+//   issuance's credit application wrote out of its remainder alike. A Tagihan's status is computed
+//   from its Alokasi (`invoiceStandings` in `./invoice-standing.ts`), so each Tagihan it paid reads
+//   unpaid again in the same commit, with no second write.
+// - **Its income line is reversed by one Koreksi**, through the writer's `unverifyCorrection` kind,
+//   which reads amount, category and day off the line, gives the Koreksi the opposite direction
+//   (`expense`) and asks the Periode of that day. A locked month refuses the whole action
+//   (`PeriodLockedError`, naming the month): the Koreksi is never re-dated into an open one.
+// - **The line is found through the verification's Audit Log record**, the only link there is:
+//   `cash_transactions` deliberately has no column pointing at a Pembayaran. The `payment_verified`
+//   row's `after.cashTransactionId` (`PaymentVerifiedAfter` in `./verification.ts`, checked here
+//   against that type) names it. A Pembayaran with no such record, or a record that names no line,
+//   is refused (`UNVERIFY_RULE.verificationRecordMissing`): guessing the line from its keterangan or
+//   its amount could reverse another payment's money.
+// - **The Pembayaran turns `rejected`** in one `update` that clears `verifiedBy` and `verifiedAt` and
+//   writes the reason as its `rejectionReason`: the one combination `payments_verification_check`
+//   and `payments_rejection_reason_check` accept together. Spec #308 adds no status (decision Q18),
+//   and a rejected Pembayaran is never verified again (`lockPendingPayment` in `./verification.ts`).
+// - **One `PaymentUnverifiedRecord`**, with the verification it undid in `before`, and the rejected
+//   state, the cash line, its Koreksi and every Alokasi released in `after`.
+//
+// After the commit, and only then, the Pembayaran's recorder gets the `payment-rejected` email, the
+// same one an admin's rejection sends, through `announceAfterCommit`: a failure to queue it is logged
+// and never fails, or seems to fail, the committed correction (#309).
+//
+// ## Why the Saldo Titipan cannot go negative: the Pengembalian rule
+//
+// The Pembayaran's money is spent in two ways: its Alokasi, which this action releases, and the
+// Pengembalian in force that drew on its remainder, which it cannot undo. Taking the Pembayaran out of
+// the verified money while a Pengembalian of it is in force would leave money paid out of the kas that
+// no verified money stands behind. So the action is refused while one exists
+// (`UnverifyRefusedRefundedError`, naming each), and the superuser reverses those Pengembalian first
+// (`reverseRefund`). `reverseRefund` does not ask whether the Pembayaran is still verified, so this
+// refusal is the one guard; it is read with `refundInForce` from `./credit-balance.ts`, the same rule
+// both balance reads use, so "in force" here and in the balance cannot disagree.
+//
+// ## The locks, in the fixed order: the Pembayaran, its Tagihan, the cash line, the Periode
+//
+// - **The Pembayaran, `for update`, first, before its status is read.** Every writer that spends or
+//   gives back this payment's remainder holds the same lock while it reads and writes: issuance's
+//   credit application and the Pengembalian through `lockUnallocatedVerifiedPayments`, the release
+//   and the Pembatalan Pengembalian through `lockSpentPayment`. So under this lock the Pembayaran's
+//   Alokasi and its Pengembalian cannot change, and everything below is read in fresh statements
+//   that see whatever an earlier holder committed. Two Pembatalan verifikasi of one Pembayaran
+//   serialise here, and the second reads `rejected` and is refused (`notVerified`). A spender that
+//   waited behind this action re-evaluates its own `status = 'verified'` filter on the committed row
+//   once the lock is released, and no longer sees the Pembayaran at all.
+// - **The Pengembalian in force, read under that lock**, then refused by name if any exist. A
+//   Pengembalian that won the lock first has committed its `refunds` row, and this read sees it.
+// - **Its Tagihan, `for update`, second**, in the order `lockOpenInvoicesOfUnit` takes them (Periode,
+//   then id), the direction the release and verification take: a Pembayaran before a Tagihan. These
+//   are the locks `voidInvoice` counts Alokasi under, and the ones a verification of another
+//   Pembayaran of the Unit plans under, so neither reads an Alokasi sum this action is changing.
+// - **The cash line, `for update`, third**, inside the writer (`lockTransaction`), which also refuses
+//   a line that already has a Koreksi (`CashTransactionAlreadyCorrectedError`) or is not a dues income
+//   line (`CashCorrectionTargetError`, a defect from here).
+// - **The Periode, `for share`, last**, inside the writer (`requireOpenPeriodFor`).
+//
+// No writer takes these in the other order: issuance locks only the Tagihan its own transaction
+// inserted, invisible here, before the payments; the ordinary Koreksi locks a line and nothing
+// after it; verification and the Pengembalian lock their Pembayaran before they write cash rows.
+
+/**
+ * Every rule a Pembatalan verifikasi is refused for, other than permission, the locked Periode
+ * (`PeriodLockedError`) and the Pengembalian in force (`UnverifyRefusedRefundedError`, which carries
+ * data). Refusals of a request, never of the caller: `fail(400, …)` at the route, each mapped to its
+ * sentence through an exhaustive `Record`.
+ */
+export const UNVERIFY_RULE = {
+	/** A Pembatalan verifikasi records why, and the Warga reads it, so an empty reason is refused. */
+	reasonMissing: 'reasonMissing',
+	/**
+	 * The Pembayaran is not verified: still pending (an admin decides it on the queue), or already
+	 * rejected, which includes one whose verification was already undone.
+	 */
+	notVerified: 'notVerified',
+	/**
+	 * No `payment_verified` Audit Log record names the income line of this Pembayaran, or the line it
+	 * names does not exist, so there is no line to reverse that is known to be this payment's.
+	 */
+	verificationRecordMissing: 'verificationRecordMissing'
+} as const;
+
+/** One of the rules above. */
+export type UnverifyRule = (typeof UNVERIFY_RULE)[keyof typeof UNVERIFY_RULE];
+
+/** Thrown when a Pembatalan verifikasi is refused by one of the rules in `UNVERIFY_RULE`. */
+export class UnverifyRuleError extends RuleViolationError {
+	override readonly name = 'UnverifyRuleError';
+
+	/** Which rule refused the request. */
+	readonly rule: UnverifyRule;
+
+	constructor(rule: UnverifyRule, detail: string) {
+		super(`A verification undo was refused by the rule "${rule}": ${detail}`);
+		this.rule = rule;
+	}
+}
+
+/** One Pengembalian in force standing in the way of a Pembatalan verifikasi, as the refusal names it. */
+export interface BlockingRefund {
+	readonly refundId: string;
+	readonly amount: Rupiah;
+	/** The day the money was handed back, off its cash expense row, as `YYYY-MM-DD`. */
+	readonly occurredOn: string;
+}
+
+/**
+ * Thrown when part of the Pembayaran has left the kas through a Pengembalian still in force: the
+ * named refusal, carrying every such Pengembalian so the screen can say which to reverse first. A
+ * class of its own rather than an `UNVERIFY_RULE` member because it carries data no other rule has,
+ * the shape `VoidRefusedAllocatedError` has.
+ */
+export class UnverifyRefusedRefundedError extends RuleViolationError {
+	override readonly name = 'UnverifyRefusedRefundedError';
+
+	/** The Pembayaran that refused. */
+	readonly paymentId: string;
+	/** Every Pengembalian in force drawn on it, oldest first. */
+	readonly refunds: readonly BlockingRefund[];
+
+	constructor(paymentId: string, blocking: readonly BlockingRefund[]) {
+		super(
+			`Payment "${paymentId}" has ${blocking.length} refund(s) in force and its verification cannot be undone until each is reversed: ${blocking
+				.map((refund) => refund.refundId)
+				.join(', ')}.`
+		);
+		this.paymentId = paymentId;
+		this.refunds = blocking;
+	}
+}
+
+/** Who is undoing, which Pembayaran, and the reason the Warga, the Koreksi and the audit log keep. */
+export interface UnverifyPaymentRequest extends DuesCorrectionRequest {
+	readonly paymentId: string;
+}
+
+/** What one Pembatalan verifikasi came to, committed together. */
+export interface UnverifiedPayment {
+	readonly unitId: string;
+	/** The Pembayaran as it now stands: `rejected`, the reason as its `rejectionReason`. */
+	readonly payment: Payment;
+	/** The Koreksi of its income line: `expense`, same amount, same day, in "Iuran warga". */
+	readonly correction: CashTransaction;
+	/** Every Alokasi released, oldest first, as each stood when it was deleted. */
+	readonly releasedAllocations: readonly Allocation[];
+}
+
+/**
+ * Undoes the verification of one Pembayaran: the Pembayaran locked and refused unless verified and
+ * free of Pengembalian in force, every Alokasi of it released under its Tagihan's locks, its income
+ * line reversed by one Koreksi through the writer's `unverifyCorrection` kind on the line's own day,
+ * the row turned `rejected` with the reason, and one `PaymentUnverifiedRecord`. After the commit the
+ * recorder's `payment-rejected` email is queued, and a failure to queue it fails nothing.
+ *
+ * @throws {PermissionDeniedError} when `actorId` may not correct dues.
+ * @throws {PaymentNotFoundError} when `paymentId` names no Pembayaran.
+ * @throws {UnverifyRuleError} `reasonMissing`, `notVerified` or `verificationRecordMissing`.
+ * @throws {UnverifyRefusedRefundedError} when a Pengembalian drawn on it is in force, naming each.
+ * @throws {PeriodLockedError} when the income line's day falls inside a Periode that is locked.
+ *   Nothing is written; the month is reopened first.
+ * @throws {CashTransactionAlreadyCorrectedError} when the income line already carries a Koreksi,
+ *   which only an Admin's ordinary Koreksi from before #323 can have written.
+ */
+export async function unverifyPayment(
+	db: Database,
+	clock: Clock,
+	request: UnverifyPaymentRequest
+): Promise<UnverifiedPayment> {
+	const outcome = await runDuesCorrection(
+		db,
+		clock,
+		request,
+		() =>
+			new UnverifyRuleError(
+				UNVERIFY_RULE.reasonMissing,
+				'Undoing a verification tells the payer why and is kept on the Koreksi and in the audit log, so an empty reason is refused.'
+			),
+		async ({ transaction, actorId, reason }) => {
+			const payment = await lockVerifiedPayment(transaction, request.paymentId);
+			await refuseRefundsInForce(transaction, payment.id);
+
+			// Under the payment lock, in a fresh statement: every writer of this payment's Alokasi holds
+			// that lock, so the set read here is the set deleted below.
+			const held = await transaction
+				.select()
+				.from(allocations)
+				.where(eq(allocations.paymentId, payment.id))
+				.orderBy(asc(allocations.createdAt), asc(allocations.id));
+			await lockAllocatedInvoices(
+				transaction,
+				held.map((allocation) => allocation.invoiceId)
+			);
+			if (held.length > 0) {
+				await transaction.delete(allocations).where(
+					inArray(
+						allocations.id,
+						held.map((allocation) => allocation.id)
+					)
+				);
+			}
+
+			const cashTransactionId = await verifiedIncomeLineOf(transaction, payment.id);
+			const correction = await writeCashTransaction(transaction, clock, {
+				kind: CASH_WRITE_KIND.unverifyCorrection,
+				recordedBy: actorId,
+				transactionId: cashTransactionId,
+				reason
+			});
+			// The writer already refused a line that is not a dues income line. A dues income line of
+			// another amount or day is another payment's: a defect in the record, rolled back here.
+			if (correction.amount !== payment.amount || correction.occurredOn !== payment.receivedOn) {
+				throw new Error(
+					`The verification record of payment "${payment.id}" names cash transaction "${cashTransactionId}", whose amount or day is not the payment's.`
+				);
+			}
+
+			const [rejected] = await transaction
+				.update(payments)
+				// One statement: `payments_verification_check` refuses the verifier and the instant
+				// cleared apart from the status, and `payments_rejection_reason_check` a reason on a row
+				// that is not rejected.
+				.set({
+					status: PAYMENT_STATUS.rejected,
+					rejectionReason: reason,
+					verifiedBy: null,
+					verifiedAt: null
+				})
+				.where(eq(payments.id, payment.id))
+				.returning();
+
+			return {
+				outcome: {
+					unitId: payment.unitId,
+					payment: rejected,
+					correction,
+					releasedAllocations: held
+				},
+				record: {
+					action: PAYMENT_UNVERIFIED_ACTION,
+					targetId: payment.id,
+					before: {
+						status: PAYMENT_STATUS.verified,
+						verifiedBy: payment.verifiedBy,
+						verifiedAt: payment.verifiedAt.toISOString()
+					},
+					after: {
+						unitId: payment.unitId,
+						reason,
+						status: PAYMENT_STATUS.rejected,
+						amount: payment.amount,
+						receivedOn: payment.receivedOn,
+						cashTransactionId,
+						correctionId: correction.id,
+						allocations: held.map((allocation): UnverifyReleasedAllocationRecord => ({
+							allocationId: allocation.id,
+							invoiceId: allocation.invoiceId,
+							amount: allocation.amount,
+							createdAt: allocation.createdAt.toISOString()
+						}))
+					}
+				} satisfies PaymentUnverifiedRecord
+			};
+		}
+	);
+
+	// After the commit, never inside it: `runDuesCorrection` resolves once the transaction has
+	// committed, and the email names a decision that has to have happened.
+	await announceAfterCommit(
+		`the "${PAYMENT_REJECTED_KIND}" email for Pembayaran ${outcome.payment.id}`,
+		() => notifyPaymentRejected(db, clock, outcome.payment)
+	);
+	return outcome;
+}
+
+/** A verified Pembayaran row, its verifier and instant known present. */
+type VerifiedPayment = Payment & { readonly verifiedBy: string; readonly verifiedAt: Date };
+
+/**
+ * The Pembayaran named by `paymentId`, locked `for update` and still verified.
+ *
+ * @throws {PaymentNotFoundError} when the id names no row.
+ * @throws {UnverifyRuleError} `notVerified` when the row is pending or rejected.
+ */
+async function lockVerifiedPayment(
+	transaction: Transaction,
+	paymentId: string
+): Promise<VerifiedPayment> {
+	const [row] = await transaction
+		.select()
+		.from(payments)
+		.where(eq(payments.id, paymentId))
+		.limit(1)
+		.for('update');
+	if (!row) {
+		throw new PaymentNotFoundError(paymentId);
+	}
+	if (row.status !== PAYMENT_STATUS.verified) {
+		throw new UnverifyRuleError(
+			UNVERIFY_RULE.notVerified,
+			`Payment "${row.id}" is "${row.status}", and only a verified payment's verification can be undone.`
+		);
+	}
+	const { verifiedBy, verifiedAt } = row;
+	// Unreachable: `payments_verification_check` requires both on every verified row. Stated rather
+	// than asserted away, as `lockSpentPayment` does.
+	if (verifiedBy === null || verifiedAt === null) {
+		throw new Error(`Payment "${row.id}" is verified but carries no verifier or instant.`);
+	}
+	return { ...row, verifiedBy, verifiedAt };
+}
+
+/**
+ * Refuses the Pembatalan verifikasi while a Pengembalian drawn on `paymentId` is in force. Read in a
+ * fresh statement under the payment lock, with the one rule for "in force", `refundInForce`.
+ *
+ * @throws {UnverifyRefusedRefundedError} naming every such Pengembalian, oldest first.
+ */
+async function refuseRefundsInForce(transaction: Transaction, paymentId: string): Promise<void> {
+	const blocking = await transaction
+		.select({
+			refundId: refunds.id,
+			amount: refunds.amount,
+			occurredOn: cashTransactions.occurredOn
+		})
+		.from(refunds)
+		.innerJoin(cashTransactions, eq(cashTransactions.id, refunds.cashTransactionId))
+		.where(and(eq(refunds.paymentId, paymentId), refundInForce()))
+		.orderBy(asc(cashTransactions.occurredOn), asc(refunds.createdAt), asc(refunds.id));
+	if (blocking.length > 0) {
+		throw new UnverifyRefusedRefundedError(paymentId, blocking);
+	}
+}
+
+/**
+ * Takes `for update` on every Tagihan in `invoiceIds`, Periode first then id: the order
+ * `lockOpenInvoicesOfUnit` locks a Unit's Tagihan in, so this and a verification of another payment
+ * of the Unit wait on each other in one direction only.
+ */
+async function lockAllocatedInvoices(
+	transaction: Transaction,
+	invoiceIds: readonly string[]
+): Promise<void> {
+	const distinct = [...new Set(invoiceIds)];
+	if (distinct.length === 0) {
+		return;
+	}
+	const rows = await transaction
+		.select({ id: invoices.id })
+		.from(invoices)
+		.where(inArray(invoices.id, distinct))
+		.orderBy(asc(invoices.period), asc(invoices.id))
+		.for('update');
+	// Unreachable for the reason `lockAllocatedInvoice` gives: the foreign key has no cascade.
+	if (rows.length !== distinct.length) {
+		throw new Error(`An invoice is gone although an allocation still points at it.`);
+	}
+}
+
+/** The part of a `payment_verified` record this action reads, checked against the writer's type. */
+const isVerificationLink = objectOf<Pick<PaymentVerifiedAfter, 'cashTransactionId'>>({
+	cashTransactionId: isString
+});
+
+/**
+ * The income line the verification of `paymentId` wrote, read off its `payment_verified` Audit Log
+ * record. A Pembayaran leaves `pending` once, so it has at most one such record.
+ *
+ * @throws {UnverifyRuleError} `verificationRecordMissing` when there is no record, or it names no line.
+ */
+async function verifiedIncomeLineOf(transaction: Transaction, paymentId: string): Promise<string> {
+	const verifications = (await auditEntriesFor(transaction, paymentId)).filter(
+		(entry) => entry.action === PAYMENT_VERIFIED_ACTION
+	);
+	if (verifications.length > 1) {
+		throw new Error(
+			`Payment "${paymentId}" has ${verifications.length} verification records, and a payment is verified once.`
+		);
+	}
+	const after: unknown = verifications[0]?.after;
+	// `isUuid` too: the id is read back from `jsonb`, and any other shape would reach the `uuid`
+	// column below as a driver error rather than as this refusal.
+	if (!isVerificationLink(after) || !isUuid(after.cashTransactionId)) {
+		throw new UnverifyRuleError(
+			UNVERIFY_RULE.verificationRecordMissing,
+			`No verification record of payment "${paymentId}" names the cash transaction it wrote, so there is no line known to be this payment's to reverse.`
+		);
+	}
+	const [line] = await transaction
+		.select({ id: cashTransactions.id })
+		.from(cashTransactions)
+		.where(eq(cashTransactions.id, after.cashTransactionId))
+		.limit(1);
+	if (!line) {
+		throw new UnverifyRuleError(
+			UNVERIFY_RULE.verificationRecordMissing,
+			`The verification record of payment "${paymentId}" names cash transaction "${after.cashTransactionId}", which does not exist.`
+		);
+	}
+	return line.id;
 }

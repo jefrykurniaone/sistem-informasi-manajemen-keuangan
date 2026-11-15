@@ -12,7 +12,8 @@ import {
 	PAYMENT_STATUS,
 	payments,
 	type Payment,
-	type PaymentMethod
+	type PaymentMethod,
+	type PaymentStatus
 } from '../../db/schema/payment';
 import { residents } from '../../db/schema/resident';
 import { units } from '../../db/schema/unit';
@@ -126,8 +127,14 @@ import { UnitNotFoundError } from './queries';
  * ## What is deliberately absent
  *
  * - **No second audit row for the cash transaction.** One decision, one row, filed against the
- *   Pembayaran, with the cash row's id and the allocations in `after`. `recordDuesIncome` writes
- *   none for the same reason, and says so.
+ *   Pembayaran, with the cash row's id and the allocations in `after` (`PaymentVerifiedAfter`).
+ *   `recordDuesIncome` writes none for the same reason, and says so. That row is also the only link
+ *   from the Pembayaran to its income line, which the Pembatalan verifikasi (#331) follows.
+ * - **No way back out of `verified` from here.** A verified Pembayaran leaves that status only
+ *   through the Pembatalan verifikasi, `unverifyPayment` in `./dues-correction.ts`, a superuser's
+ *   correction that rejects it, releases its Alokasi and reverses its income line with a Koreksi.
+ *   A rejected Pembayaran is never verified again (spec #308): `lockPendingPayment` refuses it as
+ *   `alreadyDecided`.
  */
 
 /** The audit log's `action` for a Pembayaran an admin verified. */
@@ -135,6 +142,30 @@ export const PAYMENT_VERIFIED_ACTION = 'payment_verified';
 
 /** The audit log's `action` for a Pembayaran an admin turned down. */
 export const PAYMENT_REJECTED_ACTION = 'payment_rejected';
+
+/**
+ * The `after` of the one `payment_verified` audit row a verification writes, as `verifyHeldPayment`
+ * builds it (`satisfies`, so a field renamed here is a compile error there).
+ *
+ * `cashTransactionId` is load-bearing beyond the audit trail: `cash_transactions` deliberately has no
+ * column pointing at a payment, so this row is the only link from a Pembayaran to the income line its
+ * verification wrote. The Pembatalan verifikasi (`unverifyPayment` in `./dues-correction.ts`, #331)
+ * finds the line it reverses through it, and checks the field against this type.
+ */
+export interface PaymentVerifiedAfter {
+	/** The status the row was flipped to: always `verified`, read back off the updated row. */
+	readonly status: PaymentStatus;
+	readonly amount: Rupiah;
+	/** The day the money changed hands, as `YYYY-MM-DD`: the day the income line is dated on. */
+	readonly receivedOn: string;
+	readonly method: PaymentMethod;
+	/** The income line in "Iuran warga" this verification wrote. */
+	readonly cashTransactionId: string;
+	/** The Alokasi this verification planned and wrote. */
+	readonly allocations: readonly PlannedAllocation[];
+	/** What the payment added to the Unit's Saldo Titipan at that instant. */
+	readonly unallocatedRemainder: number;
+}
 
 /** The shape `receivedOn` has to arrive in: a calendar day, as PostgreSQL's `date` writes one. */
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -621,7 +652,7 @@ async function verifyHeldPayment(
 			// What this payment adds to the Unit's saldo titipan — recorded as the number it was at
 			// this instant, while the balance itself stays computed and never stored.
 			unallocatedRemainder: payment.amount - plannedTotal(plan)
-		}
+		} satisfies PaymentVerifiedAfter
 	});
 
 	return { payment: verified, cashTransaction, allocations: written };
