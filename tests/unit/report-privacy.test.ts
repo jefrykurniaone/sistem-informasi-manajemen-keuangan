@@ -78,9 +78,16 @@ const NEIGHBOUR_NAME = 'Siti Rahmawati Nurhaliza';
 /** A second one, for the house that has not paid. */
 const DEBTOR_NAME = 'Bambang Kusumawardana';
 
-/** Two houses whose block and number are unmistakable in a serialised payload. */
-const PAID_HOUSE = { block: 'QZ', number: '4071' };
-const UNPAID_HOUSE = { block: 'QX', number: '9182' };
+/**
+ * Two houses whose block and number are unmistakable in a serialised payload.
+ *
+ * Each number ends in a letter outside `[0-9a-f]` on purpose. A digits-only number such as `4071`
+ * can turn up inside a random lowercase UUID in the payload (a `categoryId` or an `id`), which
+ * failed the CI run of 2026-11-14 without any leak. A letter like `K` or `P` cannot be produced by
+ * a UUID, a rupiah amount, a date or an ISO timestamp, so a hit means the number really leaked.
+ */
+const PAID_HOUSE = { block: 'QZ', number: '4071K' };
+const UNPAID_HOUSE = { block: 'QX', number: '9182P' };
 
 /**
  * Every identifier this file plants in the database, minted here rather than read back after the
@@ -377,6 +384,23 @@ function privacyCases() {
 		forbiddenValues().map((forbidden) => ({ role, kind: forbidden.kind, value: forbidden.value }))
 	);
 }
+
+/** Characters a lowercase UUID, a rupiah amount, an ISO date or an ISO timestamp can contain. */
+const RANDOM_PAYLOAD_CHARACTERS = /^[0-9a-f\-TZ:.+]*$/;
+
+describe('the privacy markers', () => {
+	it('each non-UUID marker holds a character no random payload value can contain', () => {
+		const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+		const weak = forbiddenValues()
+			.filter((forbidden) => !uuid.test(forbidden.value))
+			.filter((forbidden) => RANDOM_PAYLOAD_CHARACTERS.test(forbidden.value))
+			.map((forbidden) => `${forbidden.kind} (${forbidden.value})`);
+
+		expect(weak, `markers that could appear in a random payload value: ${weak.join(', ')}`).toEqual(
+			[]
+		);
+	});
+});
 
 describe('the report payload a warga receives', () => {
 	it('publishes the iuran summary as three numbers, which is the whole tunggakan surface', async () => {
