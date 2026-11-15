@@ -24,7 +24,11 @@ import {
 	recordOpeningBalance
 } from '#lib/server/services/cash/opening-balance.ts';
 import { lockPeriod, PeriodLockedError, unlockPeriod } from '#lib/server/services/cash/period.ts';
-import { CashRuleError, recordCashTransaction } from '#lib/server/services/cash/transaction.ts';
+import {
+	CashRuleError,
+	recordCashTransaction,
+	recordDuesIncome
+} from '#lib/server/services/cash/transaction.ts';
 
 /**
  * The Koreksi: the reversing line that is the only way a mistake in the buku kas is put right, and
@@ -295,6 +299,34 @@ describe('recordCashCorrection', () => {
 		// The opening balance itself is untouched, and #33 still refuses to record a second one.
 		expect(await getOpeningBalance(testDb.db, superuserId)).toBeDefined();
 		await testDb.db.delete(cashTransactions);
+	});
+
+	it('still accepts a line in "Iuran warga", because #315 leaves which lines it may reverse alone', async () => {
+		// #315 moved the ordinary Koreksi into the cash book writer and left the rule about which
+		// lines it may point at exactly as it was: any line. Spec #308 decision 2 closes "Iuran warga"
+		// to it, and that is #323, which turns this test into the refusal.
+		const adminId = await insertAdmin('Pengurus Koreksi Baris Iuran');
+		const income = await testDb.db.transaction((transaction) =>
+			recordDuesIncome(transaction, new FakeClock(START), {
+				occurredOn: DAY,
+				amount: AMOUNT,
+				description: 'Iuran warga Blok Q No 1 (pembayaran uji koreksi)',
+				recordedBy: adminId
+			})
+		);
+
+		const correction = await recordCashCorrection(testDb.db, new FakeClock(START), {
+			actorId: adminId,
+			transactionId: income.id,
+			reason: 'Pembayaran tercatat dua kali.'
+		});
+
+		expect(correction).toMatchObject({
+			type: CASH_CATEGORY_TYPE.expense,
+			categoryId: income.categoryId,
+			amount: income.amount,
+			correctionOf: income.id
+		});
 	});
 
 	it('refuses an id no transaction carries', async () => {

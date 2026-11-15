@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, lt, lte, sql, type SQL } from 'drizzle-orm';
 import { rupiah, type Rupiah } from '#lib/money.ts';
-import { ACTION, requirePermission } from '../../authz';
+import { ACTION, requirePermission, type DatabaseWriter } from '../../authz';
 import type { Database } from '../../db';
 import { user } from '../../db/schema/auth';
 import {
@@ -13,8 +13,24 @@ import { cashTransactions } from '../../db/schema/cash-transaction';
 /**
  * Reading the buku kas back: the lines in date order, the running balance beside each one, and the
  * two filters user story 10 asks for. Nothing in this module writes, and that is half of what
- * "hanya bisa ditambah" means — see the doc comment on `./transaction.ts` for the other half and
- * for the argument that the absence is structural rather than observed.
+ * "hanya bisa ditambah" means — see the doc comment on `./writer.ts` for the other half and for the
+ * argument that the absence is structural rather than observed.
+ *
+ * ## The read module, and the two reads it lends out
+ *
+ * Since #315 this is the module other code reads the cash book through. Besides `cashBook`, which is
+ * an Admin's screen and guarded as one, it exports the two pieces of cash arithmetic another reader
+ * would otherwise copy: `cashBalanceBefore`, the signed total that is the balance carried into a
+ * day, and `monthDayRange`, the days one calendar month spans. The Laporan Bulanan
+ * (`../report/composition.ts`) is built on both. Until #315 it carried its own copies, because the
+ * export list of this module was pinned by the append-only test. That test now pins the writer's
+ * surface alone, which is where a write could appear; a read exported here changes nothing about
+ * what the book can be made to do.
+ *
+ * Neither lent read takes a caller or checks a permission, the shape `isDateInLockedPeriod` and
+ * `listActiveCashCategories` already have: they decide nothing, and the screen or service around
+ * them is guarded by whatever it needs. Both take a `DatabaseWriter`, so a publication can run them
+ * inside the transaction that holds its Periode's lock.
  *
  * ## Saldo is never stored, and this is the only place it is worked out
  *
@@ -76,7 +92,8 @@ import { cashTransactions } from '../../db/schema/cash-transaction';
 export const CASH_BOOK_MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 /**
- * The signed total of the rows a query selects, as text.
+ * The signed total of the rows a query selects, as text: income adds, everything else subtracts.
+ * The one place the cash book's sign convention is written in SQL.
  *
  * `::text` rather than a bare `sum`: PostgreSQL widens `sum(bigint)` to `numeric`, which
  * node-postgres hands back as a string anyway to avoid losing precision, and saying so makes the
@@ -165,10 +182,12 @@ export async function cashBook(
 ): Promise<CashBook> {
 	await requirePermission(db, actorId, ACTION.recordCashTransactions);
 
-	const range = filter.month === undefined ? undefined : monthRange(filter.month);
+	const range = filter.month === undefined ? undefined : monthDayRange(filter.month);
 	const rows = await selectEntries(db, range, filter.categoryId);
 	const [openingBalance, correctedBy, categories, months] = await Promise.all([
-		range === undefined ? Promise.resolve(rupiah(0)) : balanceBefore(db, range.from, filter),
+		range === undefined
+			? Promise.resolve(rupiah(0))
+			: cashBalanceBefore(db, range.from, filter.categoryId),
 		correctionIndex(
 			db,
 			rows.map((row) => row.id)
@@ -191,7 +210,7 @@ export async function cashBook(
 type SelectedRow = Awaited<ReturnType<typeof selectEntries>>[number];
 
 /** The filtered lines, joined to the names a screen shows, in the documented order. */
-async function selectEntries(db: Database, range: MonthRange | undefined, categoryId?: string) {
+async function selectEntries(db: Database, range: MonthDayRange | undefined, categoryId?: string) {
 	return db
 		.select({
 			id: cashTransactions.id,
@@ -218,7 +237,7 @@ async function selectEntries(db: Database, range: MonthRange | undefined, catego
 }
 
 /** The `where` both the listing and the carry-forward are built from, or `undefined` for all rows. */
-function entryFilter(range: MonthRange | undefined, categoryId?: string): SQL | undefined {
+function entryFilter(range: MonthDayRange | undefined, categoryId?: string): SQL | undefined {
 	const conditions: SQL[] = [];
 	if (range) {
 		conditions.push(
@@ -233,20 +252,29 @@ function entryFilter(range: MonthRange | undefined, categoryId?: string): SQL | 
 }
 
 /**
- * The balance this view carries into its first line: the signed total of every transaction matching
- * the same category filter that happened strictly before `day`.
+ * The balance carried into `day`: the signed total of every Transaksi Kas dated strictly before it,
+ * in one category when `categoryId` is given, in the whole book otherwise. Income adds and expense
+ * subtracts, so a Koreksi takes away exactly what the line it corrects added.
  *
- * The category filter is applied here as well as to the listing on purpose. A view of one category
- * whose carry-forward came from the whole book would open at a number none of its own rows explain,
- * and the column would stop being a running total of what is on the screen.
+ * Two readers, one answer. `cashBook` uses it as the carry-forward of a month's view, and the
+ * Laporan Bulanan as the opening balance it freezes. The category filter is applied here as well as
+ * to the cash book's listing on purpose: a view of one category whose carry-forward came from the
+ * whole book would open at a number none of its own rows explain.
+ *
+ * Takes no caller; see this module's doc comment. `day` is a `YYYY-MM-DD` the caller built, in
+ * practice the `from` of a `monthDayRange`.
  */
-async function balanceBefore(db: Database, day: string, filter: CashBookFilter): Promise<Rupiah> {
+export async function cashBalanceBefore(
+	writer: DatabaseWriter,
+	day: string,
+	categoryId?: string
+): Promise<Rupiah> {
 	const conditions: SQL[] = [lt(cashTransactions.occurredOn, day)];
-	if (filter.categoryId !== undefined) {
-		conditions.push(eq(cashTransactions.categoryId, filter.categoryId));
+	if (categoryId !== undefined) {
+		conditions.push(eq(cashTransactions.categoryId, categoryId));
 	}
 
-	const [row] = await db
+	const [row] = await writer
 		.select({ total: SIGNED_TOTAL })
 		.from(cashTransactions)
 		.where(and(...conditions));
@@ -331,21 +359,26 @@ function signedAmount(type: CashCategoryType, amount: Rupiah): number {
 	return type === CASH_CATEGORY_TYPE.income ? amount : -amount;
 }
 
-/** The first and last day of one calendar month, as `occurredOn` stores them. */
-interface MonthRange {
+/** The first and last day of one calendar month, as `occurredOn` stores them. Both included. */
+export interface MonthDayRange {
+	/** The first day of the month, as `YYYY-MM-DD`. */
 	readonly from: string;
+	/** The last day of the month, as `YYYY-MM-DD`. */
 	readonly to: string;
 }
 
 /**
- * `YYYY-MM` as the inclusive range of days it covers.
+ * `YYYY-MM` as the inclusive range of days it covers: the one definition of a month's days that the
+ * cash book and the Laporan Bulanan both read through.
  *
  * Day zero of the *next* month is the last day of this one, which is how February gets 28 or 29
- * without this function knowing anything about leap years.
+ * without this function knowing anything about leap years, and how December ends on the 31st
+ * without a rollover of its own. No instant is converted, so no time zone can be wrong: a month is
+ * a span of `date` values, and `occurredOn` is a `date`.
  *
  * @throws {TypeError} when `month` is not shaped `YYYY-MM` with a month between 01 and 12.
  */
-function monthRange(month: string): MonthRange {
+export function monthDayRange(month: string): MonthDayRange {
 	if (!CASH_BOOK_MONTH_PATTERN.test(month)) {
 		throw new TypeError(`"${month}" is not a calendar month written as YYYY-MM.`);
 	}
