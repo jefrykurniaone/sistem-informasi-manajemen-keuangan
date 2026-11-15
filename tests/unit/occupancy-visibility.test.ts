@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { and, eq } from 'drizzle-orm';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { user } from '#lib/server/db/schema/auth.ts';
 import { ROLE, userRoles } from '#lib/server/db/schema/authz.ts';
@@ -476,4 +480,254 @@ describe('a tenant turnover', () => {
 			.orderBy(occupancies.startedOn);
 		return rows.map((row) => row.startedOn);
 	}
+});
+
+describe('the personal screens', () => {
+	// #313: `unitVisibilityFor` answers the whole history to a superuser, which is an admin screen's
+	// answer. Every personal screen reads `src/lib/server/services/occupancy/resident-view.ts`
+	// instead, which reads no role. This holds the boundary at the source: no personal route, no dues
+	// or dashboard service, and not `resident-view.ts` itself reaches `unitVisibilityFor` or
+	// `VISIBLE_ALWAYS`, by any import, re-export or dynamic `import()` of the visibility module; and
+	// `resident-view.ts` takes nothing but types from the authorisation modules.
+	const root = fileURLToPath(new URL('../..', import.meta.url));
+	const visibilityModule = join(root, 'src/lib/server/services/occupancy/visibility.ts');
+	const residentViewModule = join(root, 'src/lib/server/services/occupancy/resident-view.ts');
+	const authorisationModules = [
+		join(root, 'src/lib/server/authz.ts'),
+		join(root, 'src/lib/server/db/schema/authz.ts')
+	];
+	const forbiddenNames = new Set(['unitVisibilityFor', 'VISIBLE_ALWAYS']);
+
+	/** One name an import or re-export takes from a module, and whether only its type is taken. */
+	interface TakenName {
+		readonly name: string;
+		readonly typeOnly: boolean;
+	}
+
+	/** One reference from a file to another module. */
+	interface ModuleReference {
+		readonly kind: 'import' | 'export' | 'dynamic';
+		/** The file it names, without extension, or `null` for a package or a non-literal `import()`. */
+		readonly target: string | null;
+		/** `'everything'` for a namespace import, `export *`, a dynamic import or a bare import. */
+		readonly names: readonly TakenName[] | 'everything';
+		/** Whether the whole declaration is `import type` or `export type`. */
+		readonly typeOnly: boolean;
+	}
+
+	/** `path` without a `.ts` or `.js` extension, so two spellings of one module compare equal. */
+	function withoutExtension(path: string): string {
+		return path.replace(/\.(ts|js)$/, '');
+	}
+
+	/** The file `specifier` names, seen from `importer`, or `null` when it names a package. */
+	function resolveSpecifier(importer: string, specifier: string): string | null {
+		if (specifier.startsWith('#lib/') || specifier.startsWith('$lib/')) {
+			return withoutExtension(join(root, 'src', 'lib', specifier.slice('#lib/'.length)));
+		}
+		if (specifier.startsWith('.')) {
+			return withoutExtension(resolve(dirname(importer), specifier));
+		}
+		return null;
+	}
+
+	/** The names an import or export clause takes, each with its own `type` modifier. */
+	function takenNames(
+		elements: ts.NodeArray<ts.ImportSpecifier> | ts.NodeArray<ts.ExportSpecifier>
+	): TakenName[] {
+		return elements.map((element) => ({
+			name: (element.propertyName ?? element.name).text,
+			typeOnly: element.isTypeOnly
+		}));
+	}
+
+	/** Every import, re-export and dynamic `import()` in `text`, read as the file at `path`. */
+	function referencesIn(path: string, text: string): ModuleReference[] {
+		const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+		const found: ModuleReference[] = [];
+		const visit = (node: ts.Node): void => {
+			if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+				const clause = node.importClause;
+				const bindings = clause?.namedBindings;
+				found.push({
+					kind: 'import',
+					target: resolveSpecifier(path, node.moduleSpecifier.text),
+					names:
+						clause === undefined ||
+						clause.name !== undefined ||
+						!bindings ||
+						ts.isNamespaceImport(bindings)
+							? 'everything'
+							: takenNames(bindings.elements),
+					typeOnly: clause?.isTypeOnly ?? false
+				});
+			} else if (
+				ts.isExportDeclaration(node) &&
+				node.moduleSpecifier &&
+				ts.isStringLiteral(node.moduleSpecifier)
+			) {
+				const clause = node.exportClause;
+				found.push({
+					kind: 'export',
+					target: resolveSpecifier(path, node.moduleSpecifier.text),
+					names: clause && ts.isNamedExports(clause) ? takenNames(clause.elements) : 'everything',
+					typeOnly: node.isTypeOnly
+				});
+			} else if (
+				ts.isCallExpression(node) &&
+				node.expression.kind === ts.SyntaxKind.ImportKeyword
+			) {
+				const [argument] = node.arguments;
+				found.push({
+					kind: 'dynamic',
+					target:
+						argument && ts.isStringLiteralLike(argument)
+							? resolveSpecifier(path, argument.text)
+							: null,
+					names: 'everything',
+					typeOnly: false
+				});
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(source);
+		return found;
+	}
+
+	/** Whether `text`, read as the file at `path`, reaches the visibility module's "all" answer. */
+	function reachesWholeHistory(path: string, text: string): boolean {
+		return referencesIn(path, text).some(
+			(reference) =>
+				(reference.kind === 'dynamic' && reference.target === null) ||
+				(reference.target === withoutExtension(visibilityModule) &&
+					(reference.names === 'everything' ||
+						reference.names.some((taken) => forbiddenNames.has(taken.name))))
+		);
+	}
+
+	/** Whether `text`, read as the file at `path`, takes any value from an authorisation module. */
+	function takesAuthorisationValue(path: string, text: string): boolean {
+		const modules = new Set(authorisationModules.map(withoutExtension));
+		return referencesIn(path, text).some(
+			(reference) =>
+				(reference.kind === 'dynamic' && reference.target === null) ||
+				(reference.target !== null &&
+					modules.has(reference.target) &&
+					!reference.typeOnly &&
+					(reference.names === 'everything' || reference.names.some((taken) => !taken.typeOnly)))
+		);
+	}
+
+	/** The `.ts` files directly inside `directory`. */
+	function tsFilesIn(directory: string): string[] {
+		return readdirSync(directory, { withFileTypes: true })
+			.filter((entry) => entry.isFile() && entry.name.endsWith('.ts'))
+			.map((entry) => join(directory, entry.name));
+	}
+
+	/** Every `.ts` file under `directory`, leaving out any directory in `skipped`. */
+	function tsFilesUnder(directory: string, skipped: ReadonlySet<string>): string[] {
+		const found: string[] = [];
+		for (const entry of readdirSync(directory, { withFileTypes: true })) {
+			const path = join(directory, entry.name);
+			if (entry.isDirectory()) {
+				if (!skipped.has(path)) {
+					found.push(...tsFilesUnder(path, skipped));
+				}
+			} else if (entry.name.endsWith('.ts')) {
+				found.push(path);
+			}
+		}
+		return found;
+	}
+
+	/** The files the boundary covers: dues and dashboard services, personal routes, the view. */
+	function personalScreenFiles(): string[] {
+		const appRoutes = join(root, 'src', 'routes', '(app)');
+		return [
+			...tsFilesIn(join(root, 'src/lib/server/services/dues')),
+			...tsFilesIn(join(root, 'src/lib/server/services/dashboard')),
+			...tsFilesUnder(appRoutes, new Set([join(appRoutes, 'admin')])),
+			residentViewModule
+		];
+	}
+
+	it('covers the services and routes that build a personal screen', () => {
+		const covered = personalScreenFiles().map((path) => relative(root, path));
+
+		expect(covered).toEqual(
+			expect.arrayContaining([
+				'src/lib/server/services/dues/queries.ts',
+				'src/lib/server/services/dues/payment.ts',
+				'src/lib/server/services/dashboard/index.ts',
+				'src/lib/server/services/occupancy/resident-view.ts',
+				'src/routes/(app)/+page.server.ts',
+				'src/routes/(app)/invoices/+page.server.ts',
+				'src/routes/(app)/payments/+page.server.ts',
+				'src/routes/(app)/payments/new/+page.server.ts'
+			])
+		);
+		expect(covered.some((path) => path.includes('/admin/'))).toBe(false);
+	});
+
+	it('never reach unitVisibilityFor or VISIBLE_ALWAYS', () => {
+		const offenders = personalScreenFiles()
+			.filter((path) => reachesWholeHistory(path, readFileSync(path, 'utf8')))
+			.map((path) => relative(root, path));
+
+		expect(offenders).toEqual([]);
+	});
+
+	it('leave resident-view.ts nothing but types from the authorisation modules', () => {
+		expect(
+			takesAuthorisationValue(residentViewModule, readFileSync(residentViewModule, 'utf8'))
+		).toBe(false);
+	});
+
+	describe('the check itself', () => {
+		// The two detectors above, run on planted sources, so a blind spot in them fails here rather
+		// than letting a real import through unnoticed.
+		it.each([
+			['a relative named import', `import { unitVisibilityFor } from './visibility';`],
+			['an aliased import', `import { unitVisibilityFor as all } from './visibility.ts';`],
+			['VISIBLE_ALWAYS', `import { VISIBLE_ALWAYS } from './visibility';`],
+			[
+				'a #lib import',
+				`import { unitVisibilityFor } from '#lib/server/services/occupancy/visibility.ts';`
+			],
+			[
+				'a $lib import',
+				`import { VISIBLE_ALWAYS } from '$lib/server/services/occupancy/visibility';`
+			],
+			['a namespace import', `import * as visibility from './visibility';`],
+			['a re-export', `export { unitVisibilityFor } from './visibility';`],
+			['a star re-export', `export * from './visibility';`],
+			['a dynamic import', `const visibility = await import('./visibility');`],
+			['a dynamic import of a computed path', `const anything = await import(path);`]
+		])('catches %s from resident-view.ts', (_form, text) => {
+			expect(reachesWholeHistory(residentViewModule, text)).toBe(true);
+		});
+
+		it('lets the rest of the visibility module through', () => {
+			const text = `import { currentDay, isVisibleOn, type DateRange } from './visibility';`;
+			expect(reachesWholeHistory(residentViewModule, text)).toBe(false);
+		});
+
+		it.each([
+			['a value import', `import { rolesOf } from '../../authz';`],
+			['a mixed import', `import { ACTION, type DatabaseWriter } from '../../authz';`],
+			['the roles table', `import { userRoles } from '../../db/schema/authz';`],
+			['a namespace import', `import * as authz from '#lib/server/authz.ts';`],
+			['a dynamic import', `const authz = await import('../../authz');`]
+		])('catches %s of authorisation', (_form, text) => {
+			expect(takesAuthorisationValue(residentViewModule, text)).toBe(true);
+		});
+
+		it.each([
+			[`import type { DatabaseWriter } from '../../authz';`],
+			[`import { type DatabaseWriter } from '../../authz';`]
+		])('lets a type-only import of authorisation through: %s', (text) => {
+			expect(takesAuthorisationValue(residentViewModule, text)).toBe(false);
+		});
+	});
 });

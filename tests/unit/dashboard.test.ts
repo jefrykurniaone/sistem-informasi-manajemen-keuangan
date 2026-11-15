@@ -431,6 +431,52 @@ describe('residentDashboard', () => {
 		expect(neighbour.complaints).toEqual([]);
 	});
 
+	it('counts for a superuser who lives in a house only the Tagihan of their own Masa Huni', async () => {
+		// The Warga card is a personal screen. A superuser who moved in on 1 June is not told they owe
+		// the three months the previous occupant left unpaid. None of these Tagihan is for `MONTH`, so
+		// the admin figures above are untouched whichever order the tests run in.
+		const unit = await insertUnit('BRD-PENGURUS');
+		const previous = await insertPerson('Penghuni Sebelumnya');
+		const superuser = await insertPerson('Rina Superuser Menghuni', [ROLE.superuser]);
+		for (const [person, startedOn, endedOn] of [
+			[previous, '2026-01-01', '2026-05-31'],
+			[superuser, '2026-06-01', null]
+		] as const) {
+			await testDb.db.insert(occupancies).values({
+				unitId: unit.id,
+				residentId: person.residentId,
+				role: OCCUPANCY_ROLE.owner,
+				startedOn,
+				endedOn,
+				createdAt: new Date(DURING_MONTH)
+			});
+		}
+		await testDb.db.insert(invoices).values(
+			['2026-01', '2026-02', '2026-03', '2026-06'].map((period) => ({
+				unitId: unit.id,
+				period,
+				amount: MONTHLY_RATE,
+				dueDate: `${period}-05`,
+				issuedAt: new Date(`${period}-01T00:00:00.000Z`)
+			}))
+		);
+
+		const summary = await residentDashboard(
+			testDb.db,
+			new FakeClock(DURING_MONTH),
+			superuser.residentId
+		);
+
+		expect(summary.units).toEqual([
+			{
+				unitId: unit.id,
+				label: `Blok ${unit.block} No ${unit.number}`,
+				openInvoices: { count: 1, amount: MONTHLY_RATE, overdueCount: 1 },
+				creditBalance: rupiah(0)
+			}
+		]);
+	});
+
 	it('does not carry a house whose Masa Huni starts tomorrow', async () => {
 		// Last in this file on purpose: it adds a house the admin figures above are not about. The
 		// house has no Tagihan, so nothing the earlier tests read changes either way.

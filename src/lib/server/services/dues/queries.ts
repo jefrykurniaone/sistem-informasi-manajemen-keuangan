@@ -3,13 +3,10 @@ import { rupiah, type Rupiah } from '#lib/money.ts';
 import { ACTION, requirePermission, type DatabaseWriter } from '../../authz';
 import { allocations } from '../../db/schema/allocation';
 import { invoices } from '../../db/schema/invoice';
-import { occupancies } from '../../db/schema/occupancy';
-import { residents } from '../../db/schema/resident';
 import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
 import { COMPLEX_TIME_ZONE } from './issuance';
-import { firstDayOfPeriod } from './invoice';
-import { isVisibleOn, unitVisibilityFor, type UnitVisibility } from '../occupancy/visibility';
+import { isInvoiceVisible, residentViewFor } from '../occupancy/resident-view';
 
 /**
  * Reading Tagihan back, from the two angles `docs/spec-iuran-v1.md` asks a screen for: "saya masih
@@ -154,16 +151,15 @@ export interface ResidentInvoicesView {
 
 /**
  * A warga's own Tagihan across every house they have ever been recorded living in, each one only if
- * it was issued during the stretch of days `../occupancy/visibility.ts` says that Masa Huni covers —
- * "Warga hanya melihat tagihan yang terbit dalam rentang masa huninya".
+ * it falls inside their own Masa Huni of that house — "Warga hanya melihat tagihan yang terbit dalam
+ * rentang masa huninya".
  *
- * `firstDayOfPeriod(invoice.period)` stands in for "the day this Tagihan was issued": issuance reads
- * the Tarif and the Pembebasan on exactly that day (see `./issuance.ts`), so it is the one day this
- * Tagihan's existence is actually decided on, and it is a value already carried by `period` rather
- * than a second date this module would have to invent. The filtering runs row by row through
- * `isVisibleOn` rather than pushing `visibilityDateFilter` into the query: a warga's own list is
- * already scoped to the handful of houses they have occupied, so there is no table scan this would
- * save, and `isVisibleOn` is the same published contract either way.
+ * Which houses those are, and which of a house's Tagihan this person may see, are both answered by
+ * `residentViewFor` and `isInvoiceVisible` in `../occupancy/resident-view.ts`, the one module every
+ * personal screen asks. That module reads no role, so a superuser or an admin who lives in a house
+ * sees here exactly what any other Warga of that house would: never the months a previous occupant
+ * left behind. The admin screens (`invoiceHistoryForUnit` below) are where a house's whole history
+ * is shown.
  *
  * Refuses nobody and checks no permission: the only key this function takes is the caller's own
  * account id, the same reasoning `occupiedUnitsForUser` in `../occupancy/index.ts` and
@@ -176,25 +172,14 @@ export async function invoicesForUser(
 	clock: Clock,
 	viewerUserId: string
 ): Promise<ResidentInvoicesView> {
-	const unitIds = await unitsEverOccupiedBy(db, viewerUserId);
+	const view = await residentViewFor(db, clock, viewerUserId);
+	const unitIds = view.units.map((unit) => unit.unitId);
 	if (unitIds.length === 0) {
 		return { invoices: [], totalOverdue: rupiah(0) };
 	}
 
-	const visibilityByUnit = new Map(
-		await Promise.all(
-			unitIds.map(async (unitId): Promise<readonly [string, UnitVisibility]> => [
-				unitId,
-				await unitVisibilityFor(db, { viewerUserId, unitId })
-			])
-		)
-	);
-
 	const rows = await invoiceRowsForUnits(db, unitIds, { includeVoid: false });
-	const visibleRows = rows.filter((row) => {
-		const visibility = visibilityByUnit.get(row.unitId);
-		return visibility !== undefined && isVisibleOn(visibility, firstDayOfPeriod(row.period));
-	});
+	const visibleRows = rows.filter((row) => isInvoiceVisible(view, row));
 
 	const allocatedByInvoice = await allocatedAmountsByInvoice(
 		db,
@@ -472,19 +457,6 @@ function byPeriodDescending(
 		return 0;
 	}
 	return left.period > right.period ? -1 : 1;
-}
-
-/** Every distinct house `viewerUserId` has ever had a Masa Huni of, in no particular order. */
-async function unitsEverOccupiedBy(
-	db: DatabaseWriter,
-	viewerUserId: string
-): Promise<readonly string[]> {
-	const rows = await db
-		.selectDistinct({ unitId: occupancies.unitId })
-		.from(occupancies)
-		.innerJoin(residents, eq(residents.id, occupancies.residentId))
-		.where(eq(residents.userId, viewerUserId));
-	return rows.map((row) => row.unitId);
 }
 
 /** Every Tagihan of the houses in `unitIds`, with the house's own block and number attached. */

@@ -7,12 +7,10 @@ import { allocations } from '../../db/schema/allocation';
 import { CASH_CATEGORY_TYPE } from '../../db/schema/cash-category';
 import { COMPLAINT_STATUS, complaints, type ComplaintStatus } from '../../db/schema/complaint';
 import { invoices } from '../../db/schema/invoice';
-import { occupancies } from '../../db/schema/occupancy';
 import { PAYMENT_STATUS, payments } from '../../db/schema/payment';
 import { POST_STATUS, posts, type PostType } from '../../db/schema/post';
 import { residents } from '../../db/schema/resident';
 import type { JobRunStatus } from '../../db/schema/scheduler';
-import { units } from '../../db/schema/unit';
 import type { Clock } from '../../ports/clock';
 import { applicationJobs, listJobsWithLastRun } from '../../scheduler';
 import { cashBook, type CashBook } from '../cash/balance';
@@ -23,7 +21,7 @@ import {
 	invoicesForUser,
 	type ResidentInvoiceRow
 } from '../dues/queries';
-import { stillRunningOn } from '../occupancy/visibility';
+import { residentViewFor, unitsOccupiedToday } from '../occupancy/resident-view';
 
 /**
  * The Beranda's two answers: "what should a pengurus do today?" and "what should this Warga do
@@ -42,7 +40,7 @@ import { stillRunningOn } from '../occupancy/visibility';
  * | saldo kas and its sign convention | `cashBook` in `../cash/balance.ts` |
  * | Saldo Titipan | `creditBalanceOfUnit` in `../dues/credit-balance.ts` |
  * | a Warga's own Tagihan | `invoicesForUser` in `../dues/queries.ts` |
- * | "masih tinggal di sini" | `stillRunningOn` in `../occupancy/visibility.ts` |
+ * | "masih tinggal di sini" | `unitsOccupiedToday` in `../occupancy/resident-view.ts` |
  * | the jobs and their last run | `listJobsWithLastRun` in `../../scheduler/index.ts` |
  *
  * Nothing here writes. The two functions are reads and only reads.
@@ -247,7 +245,7 @@ export interface ResidentDashboard {
  * Checks no permission and takes no caller other than the Warga it is about: `residentId` is a
  * `residents.id`, the key `complaints.reporterId` and `occupancies.residentId` are already written
  * in. A `residentId` naming no row is an empty Beranda with `hasUnit: false`, the same expected
- * state `occupiedUnitsForUser` gives an account with no `residents` row — not an error.
+ * state `residentViewFor` gives an account with no `residents` row — not an error.
  */
 export async function residentDashboard(
 	db: Database,
@@ -260,9 +258,7 @@ export async function residentDashboard(
 		.where(eq(residents.id, residentId))
 		.limit(1);
 
-	const unitSummaries = resident
-		? await residentUnitSummaries(db, clock, residentId, resident.userId)
-		: [];
+	const unitSummaries = resident ? await residentUnitSummaries(db, clock, resident.userId) : [];
 
 	return {
 		units: unitSummaries,
@@ -498,24 +494,23 @@ async function jobStatuses(
 /**
  * Every house this Warga is living in today, with what it owes and what it has on deposit.
  *
- * "Living in today" is `stillRunningOn`, the one definition of it, so a Masa Huni given an end date
+ * Both halves come from `../occupancy/resident-view.ts`, the module every personal screen asks and
+ * which reads no role. "Living in today" is `unitsOccupiedToday`, so a Masa Huni given an end date
  * that has not arrived yet still counts and one whose start date is still ahead does not. The
- * Tagihan come from `invoicesForUser` — one call for every house, already filtered to what this
- * Warga may see and already carrying each status — and are then split by house here rather than
- * queried per house.
+ * Tagihan come from `invoicesForUser`, which filters them through the same module's
+ * `isInvoiceVisible`, so a superuser or an admin who lives in a house is not told they owe the
+ * months a previous occupant left behind. They are then split by house here rather than queried per
+ * house.
+ *
+ * Saldo Titipan stays the Unit's whole balance, #306 decision 4: it belongs to the Unit, not to a
+ * Masa Huni.
  */
 async function residentUnitSummaries(
 	db: Database,
 	clock: Clock,
-	residentId: string,
 	userId: string
 ): Promise<readonly ResidentUnitSummary[]> {
-	const today = civilDayOf(clock.now());
-	const occupied = await db
-		.selectDistinct({ unitId: units.id, block: units.block, number: units.number })
-		.from(occupancies)
-		.innerJoin(units, eq(units.id, occupancies.unitId))
-		.where(and(eq(occupancies.residentId, residentId), stillRunningOn(occupancies, today)));
+	const occupied = unitsOccupiedToday(await residentViewFor(db, clock, userId));
 	if (occupied.length === 0) {
 		return [];
 	}
