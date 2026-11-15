@@ -346,7 +346,43 @@ describe('invoicesForUser', () => {
 
 	// Which Periode of a house a Warga sees across a turnover, a move-out or a return is the rule of
 	// `src/lib/server/services/occupancy/resident-view.ts`, tested in `tests/unit/resident-view.test.ts`.
-	// This block only proves that "Tagihan saya" reads that module and nothing wider.
+	// The two tests below only prove that "Tagihan saya" reads that module, over every house the Warga
+	// ever lived in and nothing wider.
+	it('still lists and totals the months of a Warga who has moved out, and not the next occupant’s', async () => {
+		// User story 7 of #306: moving out does not take away a Warga's own history. "Tagihan saya"
+		// reads every house in the view, not only the houses lived in today.
+		const unit = await insertUnitRow();
+		const leaving = await insertResident('Warga Sudah Pindah');
+		const arriving = await insertResident('Warga Penghuni Berikutnya');
+		await insertOccupancyRow(unit.id, leaving.residentId, '2026-01-01', '2026-03-31');
+		await insertOccupancyRow(unit.id, arriving.residentId, '2026-04-01', null);
+		const february = await insertInvoiceRow(unit.id, {
+			period: '2026-02',
+			dueDate: '2026-02-05',
+			issuedAt: new Date('2026-02-01T00:00:00.000Z')
+		});
+		const march = await insertInvoiceRow(unit.id, {
+			period: '2026-03',
+			dueDate: '2026-03-05',
+			issuedAt: new Date('2026-03-01T00:00:00.000Z')
+		});
+		const nextOccupants = await insertInvoiceRow(unit.id, {
+			period: '2026-05',
+			dueDate: '2026-05-05',
+			issuedAt: new Date('2026-05-01T00:00:00.000Z')
+		});
+
+		const view = await invoicesForUser(
+			testDb.db,
+			new FakeClock('2026-06-01T03:00:00.000Z'),
+			leaving.userId
+		);
+
+		expect(view.invoices.map((row) => row.invoiceId)).toEqual([march, february]);
+		expect(view.invoices.map((row) => row.invoiceId)).not.toContain(nextOccupants);
+		expect(view.totalOverdue).toBe(rupiah(150_000 + 150_000));
+	});
+
 	describe('a pengurus who also lives in a house', () => {
 		// #306's own example: Rina is a superuser and has lived in her house since 1 June 2026. The
 		// previous occupant left January to March unpaid. "Tagihan saya" is a personal screen, so it
