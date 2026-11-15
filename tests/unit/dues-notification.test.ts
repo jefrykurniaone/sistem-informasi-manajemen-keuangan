@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { rupiah, type Rupiah } from '#lib/money.ts';
+import { formatRupiah, rupiah, type Rupiah } from '#lib/money.ts';
 import type { Allocation } from '#lib/server/db/schema/allocation.ts';
 import { user } from '#lib/server/db/schema/auth.ts';
 import { emailQueue } from '#lib/server/db/schema/email.ts';
@@ -20,7 +20,10 @@ import { testDatabase } from '#lib/server/db/test-helpers.ts';
 import { AnnounceError } from '#lib/server/email/announce.ts';
 import { INVOICE_ISSUED_KIND } from '#lib/server/email/templates/invoice-issued.ts';
 import { PAYMENT_REJECTED_KIND } from '#lib/server/email/templates/payment-rejected.ts';
-import { PAYMENT_VERIFIED_KIND } from '#lib/server/email/templates/payment-verified.ts';
+import {
+	PAYMENT_VERIFIED_KIND,
+	paymentVerifiedTemplate
+} from '#lib/server/email/templates/payment-verified.ts';
 import type { Clock } from '#lib/server/ports/clock.ts';
 import { FakeClock } from '#lib/server/ports/fakes.ts';
 import {
@@ -365,6 +368,11 @@ describe('notifyPaymentVerified', () => {
 	it('queues to the recorder, with one settlement line per allocation, oldest given first', async () => {
 		const unit = await insertUnit();
 		const recorder = await insertResident('Warga Pencatat Verifikasi');
+		await insertOccupancy(unit, recorder.residentId, {
+			isPrimaryOccupant: true,
+			startedOn: '2026-01-01',
+			endedOn: null
+		});
 		const payment = await insertPayment(unit, recorder.residentId, { amount: rupiah(150_000) });
 		const january = await insertInvoiceRow(unit, '2026-01', rupiah(100_000));
 		const february = await insertInvoiceRow(unit, '2026-02', rupiah(50_000));
@@ -382,6 +390,7 @@ describe('notifyPaymentVerified', () => {
 				{ period: '2026-01', amount: 100_000 },
 				{ period: '2026-02', amount: 50_000 }
 			],
+			outsideTenureAmount: 0,
 			locale: 'id'
 		});
 	});
@@ -395,7 +404,114 @@ describe('notifyPaymentVerified', () => {
 
 		const rows = await emailsTo(recorder.email, PAYMENT_VERIFIED_KIND);
 		expect(rows).toHaveLength(1);
-		expect(rows[0].payload).toMatchObject({ amount: 200_000, settlements: [] });
+		expect(rows[0].payload).toMatchObject({
+			amount: 200_000,
+			settlements: [],
+			outsideTenureAmount: 0
+		});
+		expect(paymentVerifiedTemplate(rows[0].payload).text).toContain('belum melunasi tagihan');
+	});
+
+	describe('a Tagihan from before the recorder lived in the Unit (#335)', () => {
+		/** Rina moves into the Unit in June; the previous occupant left January unpaid. */
+		async function rinaPays(allocateJune: boolean) {
+			const unit = await insertUnit();
+			const previous = await insertResident('Penghuni Sebelumnya Rina');
+			await insertOccupancy(unit, previous.residentId, {
+				isPrimaryOccupant: true,
+				startedOn: '2025-01-01',
+				endedOn: '2026-05-31'
+			});
+			const rina = await insertResident('Rina Pencatat Juni');
+			await insertOccupancy(unit, rina.residentId, {
+				isPrimaryOccupant: true,
+				startedOn: '2026-06-01',
+				endedOn: null
+			});
+			const january = await insertInvoiceRow(unit, '2026-01', rupiah(100_000));
+			const june = await insertInvoiceRow(unit, '2026-06', rupiah(50_000));
+			const payment = await insertPayment(unit, rina.residentId, {
+				amount: rupiah(allocateJune ? 150_000 : 100_000)
+			});
+			const allocations = [allocationOf(payment.id, january, rupiah(100_000))];
+			if (allocateJune) {
+				allocations.push(allocationOf(payment.id, june, rupiah(50_000)));
+			}
+			await notifyPaymentVerified(testDb.db, new FakeClock(START), payment, allocations);
+			const rows = await emailsTo(rina.email, PAYMENT_VERIFIED_KIND);
+			expect(rows).toHaveLength(1);
+			return rows[0].payload;
+		}
+
+		const outsideLine = (amount: number) =>
+			`- Tagihan Unit di luar Masa Huni Anda: ${formatRupiah(rupiah(amount))}`;
+
+		it('keeps the previous occupant January out of the payload and sums it as one figure', async () => {
+			const payload = await rinaPays(true);
+
+			expect(payload).toMatchObject({
+				amount: 150_000,
+				settlements: [{ period: '2026-06', amount: 50_000 }],
+				outsideTenureAmount: 100_000,
+				locale: 'id'
+			});
+			expect(JSON.stringify(payload)).not.toContain('2026-01');
+
+			const { text } = paymentVerifiedTemplate(payload);
+			expect(text).toContain('Periode 2026-06');
+			expect(text).not.toContain('2026-01');
+			expect(text).toContain(outsideLine(100_000));
+			expect(text.indexOf(outsideLine(100_000))).toBeGreaterThan(text.indexOf('Periode 2026-06'));
+		});
+
+		it('writes the heading and the outside line, never the no-settlement line, when every settled Tagihan is outside', async () => {
+			const payload = await rinaPays(false);
+
+			expect(payload).toMatchObject({
+				amount: 100_000,
+				settlements: [],
+				outsideTenureAmount: 100_000
+			});
+
+			const { text } = paymentVerifiedTemplate(payload);
+			expect(text).toContain('Pembayaran ini melunasi tagihan berikut:');
+			expect(text).toContain(outsideLine(100_000));
+			expect(text).not.toContain('belum melunasi tagihan');
+			expect(text).not.toContain('Periode');
+		});
+	});
+
+	it('counts a Tagihan of a Unit the recorder never lived in as outside their Masa Huni', async () => {
+		const ownUnit = await insertUnit();
+		const otherUnit = await insertUnit();
+		const recorder = await insertResident('Warga Pencatat Unit Lain');
+		await insertOccupancy(ownUnit, recorder.residentId, {
+			isPrimaryOccupant: true,
+			startedOn: '2026-01-01',
+			endedOn: null
+		});
+		const payment = await insertPayment(ownUnit, recorder.residentId);
+		const foreign = await insertInvoiceRow(otherUnit, '2026-03', rupiah(70_000));
+
+		await notifyPaymentVerified(testDb.db, new FakeClock(START), payment, [
+			allocationOf(payment.id, foreign, rupiah(70_000))
+		]);
+
+		const rows = await emailsTo(recorder.email, PAYMENT_VERIFIED_KIND);
+		expect(rows[0].payload).toMatchObject({ settlements: [], outsideTenureAmount: 70_000 });
+	});
+
+	it('still renders a row queued before this change, which has no outsideTenureAmount, as zero', () => {
+		const queuedBeforeDeploy = {
+			amount: 150_000,
+			settlements: [{ period: '2026-01', amount: 150_000 }],
+			locale: 'id'
+		};
+
+		const { text } = paymentVerifiedTemplate(queuedBeforeDeploy);
+
+		expect(text).toContain('Periode 2026-01');
+		expect(text).not.toContain('di luar Masa Huni');
 	});
 });
 

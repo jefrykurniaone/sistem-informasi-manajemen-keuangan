@@ -942,6 +942,7 @@
 	"emailPaymentVerified_intro": "Pembayaran Anda sebesar {amount} sudah diverifikasi pengurus.",
 	"emailPaymentVerified_settlementsHeading": "Pembayaran ini melunasi tagihan berikut:",
 	"emailPaymentVerified_settlementLine": "- Periode {period}: {amount}",
+	"emailPaymentVerified_outsideTenureLine": "- Tagihan Unit di luar Masa Huni Anda: {amount}",
 	"emailPaymentVerified_noSettlements": "Pembayaran ini belum melunasi tagihan apa pun dan tersimpan sebagai saldo titipan rumah Anda.",
 	"emailPaymentVerified_closing": "Terima kasih atas pembayaran Anda.",
 	"emailPaymentRejected_subject": "Pembayaran Anda sebesar {amount} ditolak",

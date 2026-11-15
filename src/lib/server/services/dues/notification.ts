@@ -1,9 +1,10 @@
-import { inArray } from 'drizzle-orm';
-import type { Rupiah } from '#lib/money.ts';
+import { eq, inArray } from 'drizzle-orm';
+import { rupiah, type Rupiah } from '#lib/money.ts';
 import type { Database } from '../../db';
 import type { Allocation } from '../../db/schema/allocation';
 import { invoices } from '../../db/schema/invoice';
 import type { Payment } from '../../db/schema/payment';
+import { residents } from '../../db/schema/resident';
 import { announce, type AnnounceOutcome } from '../../email/announce';
 import { INVOICE_ISSUED_KIND, invoiceIssuedPayload } from '../../email/templates/invoice-issued';
 import {
@@ -17,6 +18,7 @@ import {
 } from '../../email/templates/payment-verified';
 import type { Clock } from '../../ports/clock';
 import { primaryOccupantsOn } from '../occupancy';
+import { isInvoiceVisible, residentViewFor, type ResidentView } from '../occupancy/resident-view';
 import { currentDay } from '../occupancy/visibility';
 
 /**
@@ -99,9 +101,16 @@ export async function notifyInvoiceIssued(
 }
 
 /**
- * Queues the `payment-verified` email to `payment.recordedBy`, naming the total amount and every
- * Tagihan `allocations` settled — `VerificationOutcome.allocations`, exactly as `./verification.ts`
- * already has it in hand once its transaction returns.
+ * Queues the `payment-verified` email to `payment.recordedBy`, naming the total amount and the
+ * Tagihan `allocations` settled that fall inside the recorder's own Masa Huni —
+ * `VerificationOutcome.allocations`, exactly as `./verification.ts` already has it in hand once its
+ * transaction returns.
+ *
+ * The Alokasi runs from the oldest Tagihan of the whole Unit (`./allocation.ts`), so a payment can
+ * settle a Tagihan from before the recorder lived there. They must not read it in their email (#335,
+ * the rule `isInvoiceVisible` states for every personal screen): the part that went to such Tagihan
+ * is summed into `outsideTenureAmount`, one figure with no Periode, and the payment's total stays as
+ * it is.
  *
  * @throws whatever `announce` throws; the callers wrap this in `announceAfterCommit`.
  */
@@ -111,11 +120,17 @@ export async function notifyPaymentVerified(
 	payment: Payment,
 	allocations: readonly Allocation[]
 ): Promise<void> {
-	const settlements = await settlementsOf(db, allocations);
+	const { settlements, outsideTenureAmount } = await settlementsOf(
+		db,
+		clock,
+		payment.recordedBy,
+		allocations
+	);
 	await announce(db, clock, {
 		kind: PAYMENT_VERIFIED_KIND,
 		recipients: [payment.recordedBy],
-		payload: ({ locale }) => paymentVerifiedPayload({ amount: payment.amount, settlements, locale })
+		payload: ({ locale }) =>
+			paymentVerifiedPayload({ amount: payment.amount, settlements, outsideTenureAmount, locale })
 	});
 }
 
@@ -142,16 +157,26 @@ export async function notifyPaymentRejected(
 	});
 }
 
-/** `allocations`, with each one's Tagihan period attached — one query, not one per allocation. */
+/**
+ * `allocations` split by what the recorder may read: each one inside their Masa Huni with its
+ * Tagihan period attached, and the rest summed — one query for the Tagihan, one for the recorder's
+ * `ResidentView`, not one per allocation.
+ *
+ * `residentViewFor` takes an account id and `recordedBy` is a `residents.id`, so the account is
+ * looked up first. A recorder with no row, or no Masa Huni, has an empty view, and every Tagihan is
+ * then outside it.
+ */
 async function settlementsOf(
 	db: Database,
+	clock: Clock,
+	recordedBy: string,
 	allocations: readonly Allocation[]
-): Promise<readonly PaymentVerifiedSettlement[]> {
+): Promise<{ settlements: readonly PaymentVerifiedSettlement[]; outsideTenureAmount: number }> {
 	if (allocations.length === 0) {
-		return [];
+		return { settlements: [], outsideTenureAmount: 0 };
 	}
 	const rows = await db
-		.select({ id: invoices.id, period: invoices.period })
+		.select({ id: invoices.id, unitId: invoices.unitId, period: invoices.period })
 		.from(invoices)
 		.where(
 			inArray(
@@ -159,11 +184,34 @@ async function settlementsOf(
 				allocations.map((allocation) => allocation.invoiceId)
 			)
 		);
-	const periodById = new Map(rows.map((row) => [row.id, row.period]));
-	return allocations.map((allocation) => ({
-		// Falls back to the id itself only if the invoice row is somehow gone — allocations.invoiceId
-		// has no `onDelete`, so this is unreachable in practice, not a case worth its own error type.
-		period: periodById.get(allocation.invoiceId) ?? allocation.invoiceId,
-		amount: allocation.amount
-	}));
+	const invoiceById = new Map(rows.map((row) => [row.id, row]));
+	const view = await viewOfRecorder(db, clock, recordedBy);
+
+	const settlements: PaymentVerifiedSettlement[] = [];
+	let outsideTenureAmount = 0;
+	for (const allocation of allocations) {
+		const invoice = invoiceById.get(allocation.invoiceId);
+		// `allocations.invoiceId` has no `onDelete`, so a missing invoice row is unreachable in
+		// practice, not a case worth its own error type. Without the row there is no Unit to test
+		// against, so what it settled is counted as outside rather than shown.
+		if (invoice && isInvoiceVisible(view, invoice)) {
+			settlements.push({ period: invoice.period, amount: allocation.amount });
+		} else {
+			outsideTenureAmount = rupiah(outsideTenureAmount + allocation.amount);
+		}
+	}
+	return { settlements, outsideTenureAmount };
+}
+
+/** The `ResidentView` of the account behind `residents.id` `recordedBy`; empty when it has none. */
+async function viewOfRecorder(
+	db: Database,
+	clock: Clock,
+	recordedBy: string
+): Promise<ResidentView> {
+	const [recorder] = await db
+		.select({ userId: residents.userId })
+		.from(residents)
+		.where(eq(residents.id, recordedBy));
+	return recorder ? residentViewFor(db, clock, recorder.userId) : { units: [] };
 }
