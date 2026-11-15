@@ -79,6 +79,17 @@ Pengeluaran kas yang mengembalikan Saldo Titipan sebuah Unit kepada Warganya, se
 seluruhnya. Milik Unit, bukan milik orang.
 _Hindari_: refund, restitusi, penarikan
 
+**Pembatalan verifikasi**:
+Tindakan yang mengembalikan Pembayaran terverifikasi menjadi ditolak karena uangnya ternyata tidak
+pernah masuk atau buktinya tidak sah. Seluruh Alokasinya dilepas dan pemasukan kasnya dibalik dengan
+Koreksi. Tidak bisa dilakukan selama sebagian Pembayaran itu sudah keluar lewat Pengembalian.
+_Hindari_: refund, batal bayar, hapus pembayaran
+
+**Pembatalan Pengembalian**:
+Tindakan yang membatalkan Pengembalian yang salah catat. Pengeluaran kasnya dibalik dengan Koreksi
+dan Saldo Titipan Unit kembali seperti sebelum Pengembalian itu.
+_Hindari_: refund balik, pengembalian ulang
+
 **Pembebasan**:
 Periode ketika sebuah Unit tidak diterbitkan Tagihan.
 _Hindari_: bebas iuran, exempt
@@ -96,7 +107,8 @@ _Hindari_: jurnal, entri, mutasi
 
 **Kategori Kas**:
 Penggolongan sebuah Transaksi Kas, bertipe masuk atau keluar. "Iuran warga" adalah Kategori Kas
-sistem yang hanya bisa diisi lewat verifikasi Pembayaran.
+sistem yang hanya diisi lewat verifikasi Pembayaran dan Pengembalian, dan barisnya hanya dikoreksi
+lewat Pembatalan verifikasi atau Pembatalan Pengembalian.
 _Hindari_: akun, pos, COA
 
 **Koreksi**:
@@ -231,6 +243,8 @@ Kata yang bukan benda dan tidak punya tabel:
 | status Pembayaran menunggu, terverifikasi, dan ditolak | `pending`, `verified`, `rejected` |
 | cara bayar transfer dan tunai | `transfer`, `cash` |
 | pembatalan Tagihan | `void` |
+| Pembatalan verifikasi (sebuah Pembayaran) | `unverify` |
+| Pembatalan Pengembalian | `reverse` (pada `Refund`) |
 | komplek | `complex` |
 | peran Warga, Admin, Superuser | `resident`, `admin`, `superuser` |
 | tipe Post kegiatan dan pengumuman | `event`, `announcement` |
