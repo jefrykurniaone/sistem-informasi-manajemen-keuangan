@@ -66,7 +66,7 @@ import { requireOpenPeriodFor } from './period';
  * - **Every Koreksi opposes the row it corrects**, not its category. The two agree for a Koreksi of
  *   an ordinary row. They differ for a Koreksi of a Pengembalian, which has to be `income` to put the
  *   money back, and for a Koreksi of a Koreksi, which returns the line to its original direction.
- *   The glossary's "berlawanan dengan tipe Kategori Kas-nya" is the first case only.
+ *   The glossary states the same rule: "berlawanan dengan arah transaksi yang dikoreksinya".
  *
  * ## Append-only is the shape of this module, not a convention it observes
  *
