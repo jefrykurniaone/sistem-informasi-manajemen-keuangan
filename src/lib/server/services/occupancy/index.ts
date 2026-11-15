@@ -44,6 +44,18 @@ import { currentDay, isStillRunningOn, stillRunningOn, type OccupancyDays } from
  * writes one `PRIMARY_OCCUPANT_MARKED_ACTION` entry naming the previous holder and the new one — and
  * a flag left on a stay whose last day has passed is not history: nothing reads it.
  *
+ * ## One read answers "who is the Penanggung Jawab today"
+ *
+ * `primaryOccupantsOn` is the only place the flag is read as a question about a day: the flagged stay
+ * that is running on that day, one per unit. The invoice email's recipient, the Unit summary, the
+ * Penghuni screen, "Rumah saya" and the previous holder an audit entry names all ask it, so they
+ * cannot name different people. The service keeps at most one flagged row among the stays that have
+ * not passed, but rows written under the old date-clash model can hold two running at once, and the
+ * read then picks by one order: the latest start day, then the latest recorded, then the greatest id.
+ * The raw `isPrimaryOccupant` column never reaches a view model; `OccupancyRecord`, `OwnOccupancy` and
+ * `FellowOccupant` carry `isPrimaryOccupant` as what the read answered, `true` for the one stay it
+ * picked and `false` for every other row, whatever the column holds.
+ *
  * The flag only lands on a stay that is running today, `isStillRunningOn` in `./visibility.ts`. A
  * stay that has not begun would leave the house with nobody to send its invoices to until that day
  * came, so it is refused with `PrimaryOccupantNotStartedError`, and a stay that is over with
@@ -312,6 +324,10 @@ export interface OccupancyRecord {
 	 * reachable. A stay whose start date is still ahead has not begun, and is not running yet.
 	 */
 	readonly isRunning: boolean;
+	/**
+	 * Whether this stay is the one `primaryOccupantsOn` picked for the house today. Not the stored
+	 * column: a second flagged running stay left over from the old model reads `false` here.
+	 */
 	readonly isPrimaryOccupant: boolean;
 }
 
@@ -717,8 +733,13 @@ export async function listUnitOccupancies(
 		.innerJoin(user, eq(user.id, residents.userId))
 		.where(eq(occupancies.unitId, unitId))
 		.orderBy(desc(occupancies.startedOn), desc(occupancies.createdAt));
+	const primary = (await primaryOccupantsOn(db, today, [unitId])).get(unitId);
 
-	return rows.map((row) => ({ ...row, isRunning: isStillRunningOn(row, today) }));
+	return rows.map((row) => ({
+		...row,
+		isRunning: isStillRunningOn(row, today),
+		isPrimaryOccupant: row.occupancyId === primary?.occupancyId
+	}));
 }
 
 /**
@@ -768,6 +789,7 @@ export interface FellowOccupant {
 	readonly residentId: string;
 	readonly name: string;
 	readonly role: OccupancyRole;
+	/** Whether this stay is the one `primaryOccupantsOn` picked for the house today. */
 	readonly isPrimaryOccupant: boolean;
 }
 
@@ -787,6 +809,7 @@ export interface OwnOccupancy {
 	 * were standing in the house. A start date still ahead leaves it `false`: they have not moved in.
 	 */
 	readonly isRunning: boolean;
+	/** Whether this stay is the one `primaryOccupantsOn` picked for the house today. */
 	readonly isPrimaryOccupant: boolean;
 	/**
 	 * Everyone recorded as living in that house today, this resident included — empty once their own
@@ -824,8 +847,7 @@ export async function occupiedUnitsForUser(
 			number: units.number,
 			role: occupancies.role,
 			startedOn: occupancies.startedOn,
-			endedOn: occupancies.endedOn,
-			isPrimaryOccupant: occupancies.isPrimaryOccupant
+			endedOn: occupancies.endedOn
 		})
 		.from(occupancies)
 		.innerJoin(residents, eq(residents.id, occupancies.residentId))
@@ -834,17 +856,18 @@ export async function occupiedUnitsForUser(
 		.orderBy(desc(occupancies.startedOn), desc(occupancies.createdAt));
 
 	const running = stays.filter((stay) => isStillRunningOn(stay, today));
-	const occupantsByUnit = await currentOccupantsOf(
-		db,
-		today,
-		running.map((stay) => stay.unitId)
-	);
+	const runningUnitIds = running.map((stay) => stay.unitId);
+	const [occupantsByUnit, primaryByUnit] = await Promise.all([
+		currentOccupantsOf(db, today, runningUnitIds),
+		primaryOccupantsOn(db, today, runningUnitIds)
+	]);
 
 	return stays.map((stay) => {
 		const isRunning = isStillRunningOn(stay, today);
 		return {
 			...stay,
 			isRunning,
+			isPrimaryOccupant: primaryByUnit.get(stay.unitId)?.occupancyId === stay.occupancyId,
 			occupants: isRunning ? (occupantsByUnit.get(stay.unitId) ?? []) : []
 		};
 	});
@@ -868,7 +891,80 @@ export async function occupiedUnitsForUserGrouped(
 	return groupByPeriod(stays, currentDay(clock));
 }
 
-/** Everyone living in each unit in `unitIds` on `today`, in one query. */
+/** The Penanggung Jawab of one unit on one day, as `primaryOccupantsOn` answers it. */
+export interface PrimaryOccupant {
+	readonly unitId: string;
+	/** The flagged stay that was picked. */
+	readonly occupancyId: string;
+	readonly residentId: string;
+	/** Read off `user` — `residents` deliberately does not copy it. */
+	readonly name: string;
+	/** Where the unit's invoice email goes. */
+	readonly email: string;
+	readonly startedOn: string;
+	/** `null` while no last day is written; otherwise `day` or later. */
+	readonly endedOn: string | null;
+}
+
+/**
+ * The Penanggung Jawab of each unit in `unitIds` on `day`, given as `YYYY-MM-DD` in WIB
+ * (`currentDay(clock)` for "today"): the stay flagged `isPrimaryOccupant` that is running on `day`,
+ * `stillRunningOn` in `./visibility.ts`, both ends included. A unit with none is absent from the
+ * result.
+ *
+ * **The pick order is the module's one answer**, for the rows a unit can still hold two of from before
+ * ADR 0001: the latest start day, then the latest recorded, then the greatest id. Every reader of
+ * "the Penanggung Jawab today" goes through here, and the invoice email's recipient, the Unit
+ * summary, both occupancy screens and the audit entry's previous holder therefore name one person.
+ *
+ * Reads only, and takes no lock: a caller that decides something from the answer reads it inside its
+ * own transaction behind `lockUnit`, as `movePrimaryOccupantMarker` does. Checks no permission; the
+ * caller has decided who may see the name and the address.
+ */
+export async function primaryOccupantsOn(
+	db: DatabaseWriter,
+	day: string,
+	unitIds: readonly string[]
+): Promise<ReadonlyMap<string, PrimaryOccupant>> {
+	if (unitIds.length === 0) {
+		return new Map();
+	}
+
+	const rows = await db
+		.selectDistinctOn([occupancies.unitId], {
+			unitId: occupancies.unitId,
+			occupancyId: occupancies.id,
+			residentId: residents.id,
+			name: user.name,
+			email: user.email,
+			startedOn: occupancies.startedOn,
+			endedOn: occupancies.endedOn
+		})
+		.from(occupancies)
+		.innerJoin(residents, eq(residents.id, occupancies.residentId))
+		.innerJoin(user, eq(user.id, residents.userId))
+		.where(
+			and(
+				inArray(occupancies.unitId, unitIds),
+				eq(occupancies.isPrimaryOccupant, true),
+				stillRunningOn(occupancies, day)
+			)
+		)
+		.orderBy(
+			occupancies.unitId,
+			desc(occupancies.startedOn),
+			desc(occupancies.createdAt),
+			desc(occupancies.id)
+		);
+
+	return new Map(rows.map((row) => [row.unitId, row]));
+}
+
+/**
+ * Everyone living in each unit in `unitIds` on `today`, the Penanggung Jawab `primaryOccupantsOn`
+ * picked marked as such. One entry per running stay, as it always was; the mark goes on the picked
+ * stay alone, so a person holding two running stays is badged once.
+ */
 async function currentOccupantsOf(
 	db: DatabaseWriter,
 	today: string,
@@ -879,21 +975,28 @@ async function currentOccupantsOf(
 		return byUnit;
 	}
 
-	const rows = await db
-		.select({
-			unitId: occupancies.unitId,
-			residentId: residents.id,
-			name: user.name,
-			role: occupancies.role,
-			isPrimaryOccupant: occupancies.isPrimaryOccupant
-		})
-		.from(occupancies)
-		.innerJoin(residents, eq(residents.id, occupancies.residentId))
-		.innerJoin(user, eq(user.id, residents.userId))
-		.where(and(inArray(occupancies.unitId, unitIds), stillRunningOn(occupancies, today)))
-		.orderBy(asc(user.name));
+	const [rows, primaryByUnit] = await Promise.all([
+		db
+			.select({
+				occupancyId: occupancies.id,
+				unitId: occupancies.unitId,
+				residentId: residents.id,
+				name: user.name,
+				role: occupancies.role
+			})
+			.from(occupancies)
+			.innerJoin(residents, eq(residents.id, occupancies.residentId))
+			.innerJoin(user, eq(user.id, residents.userId))
+			.where(and(inArray(occupancies.unitId, unitIds), stillRunningOn(occupancies, today)))
+			.orderBy(asc(user.name)),
+		primaryOccupantsOn(db, today, unitIds)
+	]);
 
-	for (const { unitId, ...occupant } of rows) {
+	for (const { occupancyId, unitId, ...row } of rows) {
+		const occupant: FellowOccupant = {
+			...row,
+			isPrimaryOccupant: primaryByUnit.get(unitId)?.occupancyId === occupancyId
+		};
 		const existing = byUnit.get(unitId);
 		if (existing) {
 			existing.push(occupant);
@@ -904,7 +1007,11 @@ async function currentOccupantsOf(
 	return byUnit;
 }
 
-/** The columns every occupancy-history read selects, written once so two reads cannot drift. */
+/**
+ * The columns every occupancy-history read selects, written once so two reads cannot drift. The
+ * stored `isPrimaryOccupant` is left out on purpose: the view model's flag comes from
+ * `primaryOccupantsOn`.
+ */
 const OCCUPANCY_RECORD_COLUMNS = {
 	occupancyId: occupancies.id,
 	unitId: occupancies.unitId,
@@ -912,8 +1019,7 @@ const OCCUPANCY_RECORD_COLUMNS = {
 	residentName: user.name,
 	role: occupancies.role,
 	startedOn: occupancies.startedOn,
-	endedOn: occupancies.endedOn,
-	isPrimaryOccupant: occupancies.isPrimaryOccupant
+	endedOn: occupancies.endedOn
 };
 
 /**
@@ -996,8 +1102,10 @@ function assertMayHoldPrimaryOccupant(stay: OccupancyDays, today: string): void 
 /**
  * Moves the Penanggung Jawab flag onto `target`: takes it off every row of the unit whose last day
  * has not passed on `today` or has not been written, puts it on `target`, and writes one
- * `PRIMARY_OCCUPANT_MARKED_ACTION` entry naming the previous holder and the new one. A `target` that
- * already carries the flag is returned as it is, with no write and no audit entry.
+ * `PRIMARY_OCCUPANT_MARKED_ACTION` entry naming the previous holder and the new one. The previous
+ * holder is whoever `primaryOccupantsOn` answers for the unit today, read before the flag moves, so
+ * the entry names the person the invoices were going to; a unit with nobody running flagged has none.
+ * A `target` that already carries the flag is returned as it is, with no write and no audit entry.
  *
  * Only correct while the unit's row lock is held and `target` was read behind it — this module's doc
  * comment is the argument. The caller has already checked that `target` is running on `today`.
@@ -1016,7 +1124,12 @@ async function movePrimaryOccupantMarker(
 		return target;
 	}
 
-	const cleared = await transaction
+	// Read before the flag is taken off anything, behind the unit lock the caller holds.
+	const previous = (await primaryOccupantsOn(transaction, today, [target.unitId])).get(
+		target.unitId
+	);
+
+	await transaction
 		.update(occupancies)
 		.set({ isPrimaryOccupant: false })
 		.where(
@@ -1025,8 +1138,7 @@ async function movePrimaryOccupantMarker(
 				eq(occupancies.isPrimaryOccupant, true),
 				notPassedOn(today)
 			)
-		)
-		.returning();
+		);
 
 	const [row] = await transaction
 		.update(occupancies)
@@ -1034,35 +1146,17 @@ async function movePrimaryOccupantMarker(
 		.where(eq(occupancies.id, target.id))
 		.returning();
 
-	const previous = previousHolder(cleared, today);
 	await recordAuditEntry(transaction, clock, {
 		actorId,
 		action: PRIMARY_OCCUPANT_MARKED_ACTION,
 		targetId: row.id,
-		before: previous ? { occupancyId: previous.id, residentId: previous.residentId } : undefined,
+		before: previous
+			? { occupancyId: previous.occupancyId, residentId: previous.residentId }
+			: undefined,
 		after: { occupancyId: row.id, residentId: row.residentId, unitId: row.unitId }
 	});
 
 	return row;
-}
-
-/**
- * Which of the rows a move took the flag off is the holder its audit entry names.
- *
- * While the invariant holds there is at most one. Rows written under the date-clash model can leave
- * two in one unit — a holder whose last day has been written and, after it, a stay flagged ahead of
- * time — and every one of them loses the flag; the entry then names the one the invoices were going
- * to, picked the way `notifyInvoiceIssued` picks its recipient: running today, then the latest start
- * day, then the latest recorded.
- */
-function previousHolder(cleared: readonly Occupancy[], today: string): Occupancy | undefined {
-	return [...cleared].sort(
-		(left, right) =>
-			Number(isStillRunningOn(right, today)) - Number(isStillRunningOn(left, today)) ||
-			compareDescending(left.startedOn, right.startedOn) ||
-			right.createdAt.getTime() - left.createdAt.getTime() ||
-			compareDescending(left.id, right.id)
-	)[0];
 }
 
 /** `1`, `0` or `-1`, so that sorting by it puts the larger of two strings first. */
