@@ -116,6 +116,32 @@ async function insertHousehold(name: string, block: string, number: string): Pro
 	return { userId, residentId, unitId };
 }
 
+/** A verified Pembayaran of `amount` for the house, with one Alokasi of all of it to `invoiceId`. */
+async function allocateTo(
+	unitId: string,
+	residentId: string,
+	invoiceId: string,
+	amount: Rupiah
+): Promise<void> {
+	const [payment] = await testDb.db
+		.insert(payments)
+		.values({
+			unitId,
+			recordedBy: residentId,
+			amount,
+			receivedOn: RECEIVED_ON,
+			method: PAYMENT_METHOD.transfer,
+			status: PAYMENT_STATUS.verified,
+			verifiedBy: residentId,
+			verifiedAt: new Date(START),
+			createdAt: new Date(START)
+		})
+		.returning();
+	await testDb.db
+		.insert(allocations)
+		.values({ paymentId: payment.id, invoiceId, amount, createdAt: new Date(START) });
+}
+
 /** Records a payment with this file's defaults, overridden by whatever the test cares about. */
 async function record(
 	overrides: Partial<RecordPaymentRequest> & {
@@ -383,12 +409,19 @@ describe('payableUnitsForUser', () => {
 			january.id
 		]);
 		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).not.toContain(cancelled.id);
-		// No lunas, sebagian or menunggak figure anywhere on it: that arithmetic belongs to #27.
+		// What each Tagihan still owes is the one thing the picker adds to the Tagihan's own facts; the
+		// status vocabulary and the allocated sum stay inside `invoice-standing.ts`.
 		expect(Object.keys(offered[0].invoices[0]).sort()).toEqual([
 			'amount',
 			'dueDate',
 			'invoiceId',
-			'period'
+			'period',
+			'remainingAmount'
+		]);
+		// Nothing allocated yet, so the whole amount is still owed.
+		expect(offered[0].invoices.map((invoice) => invoice.remainingAmount)).toEqual([
+			rupiah(150_000),
+			rupiah(150_000)
 		]);
 	});
 
@@ -450,6 +483,61 @@ describe('payableUnitsForUser', () => {
 
 		expect(offered).toHaveLength(1);
 		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).toEqual([june?.id]);
+	});
+
+	it('does not offer a Tagihan that is already paid in full, and carries the remainder of a part-paid one', async () => {
+		const household = await insertHousehold('Warga Pilih Sisa', 'I', '8');
+		const [paid, partial, untouched] = await testDb.db
+			.insert(invoices)
+			.values(
+				['2025-10', '2025-11', '2025-12'].map((period) => ({
+					unitId: household.unitId,
+					period,
+					amount: rupiah(150_000),
+					dueDate: `${period}-05`,
+					issuedAt: new Date(START)
+				}))
+			)
+			.returning();
+		await allocateTo(household.unitId, household.residentId, paid.id, rupiah(150_000));
+		await allocateTo(household.unitId, household.residentId, partial.id, rupiah(50_000));
+
+		const offered = await payableUnitsForUser(testDb.db, new FakeClock(START), household.userId);
+
+		expect(offered).toHaveLength(1);
+		expect(offered[0].invoices.map((invoice) => invoice.invoiceId)).toEqual([
+			partial.id,
+			untouched.id
+		]);
+		// The amount stays what was issued; the remainder is what ticking the Tagihan adds.
+		expect(offered[0].invoices.map((invoice) => [invoice.amount, invoice.remainingAmount])).toEqual(
+			[
+				[rupiah(150_000), rupiah(100_000)],
+				[rupiah(150_000), rupiah(150_000)]
+			]
+		);
+	});
+
+	it('offers a house nothing to tick when every Tagihan of it is paid, and still offers the house', async () => {
+		const household = await insertHousehold('Warga Semua Lunas', 'I', '9');
+		const [only] = await testDb.db
+			.insert(invoices)
+			.values({
+				unitId: household.unitId,
+				period: '2025-12',
+				amount: rupiah(150_000),
+				dueDate: '2025-12-05',
+				issuedAt: new Date(START)
+			})
+			.returning();
+		// Exactly its amount, which is what makes it paid.
+		await allocateTo(household.unitId, household.residentId, only.id, rupiah(150_000));
+
+		const offered = await payableUnitsForUser(testDb.db, new FakeClock(START), household.userId);
+
+		expect(offered).toHaveLength(1);
+		expect(offered[0].unitId).toBe(household.unitId);
+		expect(offered[0].invoices).toEqual([]);
 	});
 
 	it('orders two houses by their most recent running stay, so a stay starting later moves neither', async () => {

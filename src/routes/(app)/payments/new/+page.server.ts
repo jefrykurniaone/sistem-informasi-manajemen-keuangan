@@ -31,6 +31,8 @@ import type { Actions, PageServerLoad } from './$types';
  * `recordPayment` with the same rule — which is what `tests/unit/payment-service.test.ts` proves.
  * Both read `src/lib/server/services/occupancy/resident-view.ts`, which reads no role: a superuser
  * or an admin who lives in a house is offered that house's Tagihan from their own Masa Huni only.
+ * The Tagihan offered are only the ones not paid in full, each with what it still owes, from
+ * `src/lib/server/services/dues/invoice-standing.ts`; the page adds that remainder when one is ticked.
  *
  * **A successful save redirects to the list rather than staying here.** Recording a transfer is a
  * thing a resident does once and then wants to see the state of; the cash book's "stay and clear the
