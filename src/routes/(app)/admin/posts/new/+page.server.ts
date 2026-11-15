@@ -1,11 +1,16 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail, redirect } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
 import { POST_TYPES, type PostType } from '#lib/server/db/schema/post.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
-import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	requireUser,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import {
 	assertAcceptableCoverImage,
 	assertMayManagePosts,
@@ -28,26 +33,40 @@ import type { Actions, PageServerLoad } from './$types';
  *
  * Since #140 the Sampul is chosen on this form too, so the `create` action reads a file as well as
  * the typed fields. It checks that file *before* it writes anything: see
- * `assertAcceptableCoverImage` in `#lib/server/services/post/index.ts` for the whole argument, and
- * `coverImageRefusal` below for the one line of it that lives here.
+ * `assertAcceptableCoverImage` in `#lib/server/services/post/index.ts` for the whole argument.
  *
- * Follows the shape `(app)/admin/units/+page.server.ts` settled: nobody who is not signed in reaches
- * the service layer, `PermissionDeniedError` becomes `error(403, …)` here and never in the service,
- * and a named rule refusal becomes `fail(400, …)`.
+ * Follows the shape `src/lib/server/route-action.ts` settled (#318): nobody who is not signed in
+ * reaches the service layer, `PermissionDeniedError` becomes `error(403, …)` here and never in the
+ * service, and a rule refusal becomes `fail(400, …)` with every typed value handed back.
  */
 
+/** The 403 for anyone who may not manage Posts. A Post being written has no 404 yet. */
+const PAGE = { forbidden: m.adminPosts_forbidden } satisfies PageMessages;
+
+/**
+ * `create`: a named rule refusal reads its own sentence, and a `TypeError` from the service's own
+ * validation reads the invalid-form sentence, as it did before #318.
+ */
+const CREATE_FORM = {
+	...PAGE,
+	fallback: m.adminPosts_invalidForm,
+	refusals: [
+		refusal(PostRuleError, ({ error }) => ruleMessage(error.rule)),
+		refusal(TypeError, m.adminPosts_invalidForm)
+	]
+} satisfies FormMessages;
+
 export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+	const user = requireUser(locals);
 
 	// There is no data to fetch — this screen is a blank form — so the permission check is made on
 	// its own rather than riding along on a query. Without it a resident would be shown a form and
 	// only refused once they had filled it in.
+	const { db } = productionDependencies();
 	try {
-		await assertMayManagePosts(database(), locals.user.id);
+		await assertMayManagePosts(db, user.id);
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 
 	return {
@@ -59,9 +78,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 export const actions: Actions = {
 	create: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
 		const values = readPostFormValues(form);
@@ -86,15 +103,19 @@ export const actions: Actions = {
 		// transaction around both. Every typed value comes back with the refusal, so the only field the
 		// admin has to fill in again is the file, which no browser lets a server repopulate anyway.
 		const coverImage = await readCoverImage(form);
-		const coverRefusal = coverImage && coverImageRefusal(coverImage);
-		if (coverRefusal) {
-			return fail(400, { message: coverRefusal, values });
+		if (coverImage) {
+			try {
+				assertAcceptableCoverImage(coverImage);
+			} catch (caught) {
+				return failOrThrow(caught, CREATE_FORM, { values });
+			}
 		}
 
+		const dependencies = productionDependencies();
 		let createdId: string;
 		try {
-			const created = await createPost(database(), systemClock, {
-				actorId: locals.user.id,
+			const created = await createPost(dependencies.db, dependencies.clock, {
+				actorId: user.id,
 				type: parseType(values.type),
 				title: values.title,
 				summary: values.summary,
@@ -106,21 +127,16 @@ export const actions: Actions = {
 			});
 			createdId = created.id;
 			if (coverImage) {
-				await setPostCoverImage(
-					database(),
-					systemClock,
-					localFileStoreFromEnvironment(systemClock),
-					{ actorId: locals.user.id, postId: created.id, ...coverImage }
-				);
+				// The file store is read only here, when there is a Sampul to keep, so a missing
+				// `FILE_STORE_SECRET` never refuses a Post written without one.
+				await setPostCoverImage(dependencies.db, dependencies.clock, dependencies.fileStore, {
+					actorId: user.id,
+					postId: created.id,
+					...coverImage
+				});
 			}
 		} catch (caught) {
-			if (caught instanceof PostRuleError) {
-				return fail(400, { message: ruleMessage(caught.rule), values });
-			}
-			if (caught instanceof TypeError) {
-				return fail(400, { message: m.adminPosts_invalidForm(), values });
-			}
-			throwAsRouteError(caught);
+			return failOrThrow(caught, CREATE_FORM, { values });
 		}
 
 		redirect(303, `/admin/posts/${createdId}`);
@@ -128,24 +144,24 @@ export const actions: Actions = {
 };
 
 /**
- * What the write form carries, trimmed, as strings.
+ * What the write form carries, as strings: the typed text trimmed, the type, the category and the
+ * date and time boxes exactly as posted.
  *
- * `(app)/admin/posts/[id]/+page.server.ts` carries its own copy, the same way the three unit and
- * role screens each carry their own `throwAsRouteError`: a helper that reads one route's form
+ * `(app)/admin/posts/[id]/+page.server.ts` carries its own copy: a helper that reads one route's form
  * belongs next to that route, and the two are free to drift apart when the two screens do.
  */
 function readPostFormValues(form: FormData) {
 	return {
 		type: String(form.get('type') ?? ''),
-		title: String(form.get('title') ?? '').trim(),
-		summary: String(form.get('summary') ?? '').trim(),
-		bodyHtml: String(form.get('bodyHtml') ?? '').trim(),
+		title: readText(form, 'title'),
+		summary: readText(form, 'summary'),
+		bodyHtml: readText(form, 'bodyHtml'),
 		category: String(form.get('category') ?? ''),
 		startsAtDate: String(form.get('startsAtDate') ?? ''),
 		startsAtTime: String(form.get('startsAtTime') ?? ''),
 		endsAtDate: String(form.get('endsAtDate') ?? ''),
 		endsAtTime: String(form.get('endsAtTime') ?? ''),
-		location: String(form.get('location') ?? '').trim()
+		location: readText(form, 'location')
 	};
 }
 
@@ -162,19 +178,6 @@ async function readCoverImage(form: FormData): Promise<CoverImageUpload | undefi
 		return undefined;
 	}
 	return { contentType: file.type, content: new Uint8Array(await file.arrayBuffer()) };
-}
-
-/** The sentence for a Sampul the service refuses, or `undefined` when it accepts it. */
-function coverImageRefusal(image: CoverImageUpload): string | undefined {
-	try {
-		assertAcceptableCoverImage(image);
-		return undefined;
-	} catch (caught) {
-		if (caught instanceof PostRuleError) {
-			return ruleMessage(caught.rule);
-		}
-		throw caught;
-	}
 }
 
 /** The submitted type, defaulted to the first one the schema knows when nothing recognisable came. */
@@ -194,16 +197,4 @@ function ruleMessage(rule: PostRule): string {
 		[POST_RULE.coverImageTooLarge]: m.adminPosts_rule_coverImageTooLarge
 	};
 	return messages[rule]();
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- * Always throws — the return type is `never` for the same reason the unit screens' copies of this
- * helper are.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminPosts_forbidden());
-	}
-	throw caught;
 }

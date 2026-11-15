@@ -1,11 +1,14 @@
-import { error, fail, redirect } from '@sveltejs/kit';
-import { PermissionDeniedError } from '#lib/errors.ts';
+import { fail } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
 import { getLocale } from '#lib/paraglide/runtime.js';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
 import { JOB_RUN_STATUS, type JobRunStatus } from '#lib/server/db/schema/scheduler.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import {
+	productionDependencies,
+	readText,
+	requireUser,
+	throwRouteError,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import {
 	applicationJobs,
 	JOB_OUTCOME,
@@ -23,10 +26,10 @@ import type { Actions, PageServerLoad } from './$types';
  * The superuser screen for the scheduled jobs: what is registered, what each one is for, what
  * happened to it last time, and a button that runs one now.
  *
- * It follows the shape `src/routes/(app)/admin/roles/+page.server.ts` settled. Nobody who is not
- * signed in reaches the service layer: `locals.user` is checked before anything is called, because
- * there would be no caller to name. A `PermissionDeniedError` becomes `error(403, …)` here rather
- * than in the service, which is the route's job.
+ * It follows the shape `src/lib/server/route-action.ts` settled (#318). Nobody who is not signed in
+ * reaches the service layer: `requireUser` runs before anything is called, because there would be
+ * no caller to name. A `PermissionDeniedError` becomes `error(403, …)` here rather than in the
+ * service, which is the route's job; anything else a run of the scheduler throws is rethrown.
  *
  * **Pressing the button takes the same lock a scheduled run takes.** A job that has already run for
  * the period it is in now answers `skipped`, and this page says so instead of running it a second
@@ -47,48 +50,51 @@ import type { Actions, PageServerLoad } from './$types';
  * keeps words by job name, reads a period marker's shape, or matches an error's name.
  */
 
-export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+/** The 403 for anyone who is not a superuser. The screen has no 404 of its own. */
+const PAGE = { forbidden: m.adminJobs_forbidden } satisfies PageMessages;
 
+export const load: PageServerLoad = async ({ locals }) => {
+	const user = requireUser(locals);
+
+	const { db, clock } = productionDependencies();
 	try {
 		const jobs = await listJobsWithLastRun({
-			db: database(),
-			clock: systemClock,
+			db,
+			clock,
 			registry: applicationJobs,
-			actorId: locals.user.id
+			actorId: user.id
 		});
 		const locale = getLocale();
 		return { jobs: jobs.map((job) => jobView(job, locale)) };
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	trigger: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
-		const jobName = String(form.get('jobName') ?? '').trim();
+		const jobName = readText(form, 'jobName');
 		if (jobName === '') {
 			return fail(400, { message: m.adminJobs_invalidRequest() });
 		}
 
+		// A job that ran and threw is an outcome `triggerJob` returns, never a rejected form, so this
+		// `catch` only ever throws: the 403, or the error itself.
+		const { db, clock } = productionDependencies();
 		let outcome: JobOutcome | undefined;
 		try {
 			outcome = await triggerJob({
-				db: database(),
-				clock: systemClock,
+				db,
+				clock,
 				registry: applicationJobs,
-				actorId: locals.user.id,
+				actorId: user.id,
 				jobName
 			});
 		} catch (caught) {
-			throwAsRouteError(caught);
+			throwRouteError(caught, PAGE);
 		}
 
 		// `triggerJob` answers only for a registered name, so the definition is there whenever an
@@ -235,18 +241,4 @@ function describeOutcome(job: JobDefinition, outcome: JobOutcome, locale: Interf
 	}
 	const reason = _describeRunError(job, outcome.error, outcome.period, locale) ?? '';
 	return m.adminJobs_outcome_failed({ ...subject, error: reason }, { locale }).trim();
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- *
- * Always throws. The return type is `never` so that this can sit in a `catch` block without
- * widening the type SvelteKit infers for what an action or a load function returns, exactly as the
- * roles screen's copy of this helper explains.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminJobs_forbidden());
-	}
-	throw caught;
 }

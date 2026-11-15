@@ -1,15 +1,17 @@
-import { error, redirect } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
 import { formatDateTime } from '#lib/time.ts';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
 import {
 	POST_STATUSES,
 	POST_TYPES,
 	type PostStatus,
 	type PostType
 } from '#lib/server/db/schema/post.ts';
+import {
+	productionDependencies,
+	requireUser,
+	throwRouteError,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import {
 	DEFAULT_POST_PAGE_SIZE,
 	isPostCategory,
@@ -20,27 +22,29 @@ import type { PageServerLoad } from './$types';
 
 /**
  * The admin screen for the announcement board: every Post there is, drafts included, with filters
- * for status, type and category. Follows the shape
- * `src/routes/(app)/admin/units/+page.server.ts` settled — nobody who is not signed in reaches the
- * service layer, and `PermissionDeniedError` becomes `error(403, …)` here, never in the service.
+ * for status, type and category. Follows the shape `src/lib/server/route-action.ts` settled (#318):
+ * nobody who is not signed in reaches the service layer, and `PermissionDeniedError` becomes
+ * `error(403, …)` here, never in the service.
  *
  * Writing, editing, previewing, publishing and archiving all live on the two screens below this
  * one; this route has no actions at all.
  */
 
+/** The 403 for anyone who may not manage Posts. The list has no 404 of its own. */
+const PAGE = { forbidden: m.adminPosts_forbidden } satisfies PageMessages;
+
 export const load: PageServerLoad = async ({ locals, url }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+	const user = requireUser(locals);
 
 	const page = parsePositivePage(url.searchParams.get('page'));
 	const status = parseStatus(url.searchParams.get('status'));
 	const type = parseType(url.searchParams.get('type'));
 	const category = parseCategory(url.searchParams.get('category'));
 
+	const { db } = productionDependencies();
 	try {
-		const result = await listPosts(database(), {
-			actorId: locals.user.id,
+		const result = await listPosts(db, {
+			actorId: user.id,
 			page,
 			pageSize: DEFAULT_POST_PAGE_SIZE,
 			status,
@@ -71,7 +75,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 			types: POST_TYPES
 		};
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
@@ -79,8 +83,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
  * An instant as a sentence, labelled with the WIB zone, or `null` when there is no instant —
  * `formatDateTime` from `#lib/time.ts`, which is what carries `WIB` onto the label rather than the
  * `GMT+7` an `en-US` browser locale would otherwise print. `(app)/admin/posts/[id]/+page.server.ts`
- * carries the same helper for the same reason the three admin screens each carry their own
- * `throwAsRouteError`: a route helper belongs next to the route that uses it.
+ * carries the same helper: a route helper belongs next to the route that uses it.
  */
 function formatInstant(instant: Date | null): string | null {
 	return instant && formatDateTime(instant);
@@ -114,18 +117,4 @@ function parseType(value: string | null): PostType | undefined {
 /** A category from the query string, or `undefined` for "every category". */
 function parseCategory(value: string | null): string | undefined {
 	return value && isPostCategory(value) ? value : undefined;
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- *
- * Always throws — the return type is `never` so that this can sit in a `catch` block without
- * widening the type SvelteKit infers for what a load function returns, exactly as the unit and
- * roles screens' copies of this helper explain.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.adminPosts_forbidden());
-	}
-	throw caught;
 }

@@ -1,10 +1,14 @@
-import { error, fail, redirect } from '@sveltejs/kit';
+import { fail, redirect } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
 import { COMPLAINT_VISIBILITY } from '#lib/server/db/schema/complaint.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	readText,
+	refusal,
+	requireUser,
+	type FormMessages
+} from '#lib/server/route-action.ts';
 import {
 	ATTACHMENT_CONTENT_TYPES,
 	COMPLAINT_ATTACHMENT_RULE,
@@ -19,15 +23,14 @@ import {
 	type ComplaintAttachmentUpload,
 	type ComplaintRule
 } from '#lib/server/services/complaint/index.ts';
-import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
  * The screen a Warga reports a Keluhan on — `docs/spec-keluhan-v1.md` user stories 1 through 3.
  *
- * Follows the shape `(app)/payments/new/+page.server.ts` settled: nobody who is not signed in
+ * Follows the shape `src/lib/server/route-action.ts` settled (#318): nobody who is not signed in
  * reaches the service layer, `PermissionDeniedError` becomes `error(403, …)` here and never in the
- * service, and a named rule refusal becomes `fail(400, …)` with the fields still filled in.
+ * service, and a rule refusal becomes `fail(400, …)` with the fields still filled in.
  *
  * **The visibility choice is one checkbox, not the two-value form the schema and the service
  * accept.** `docs/spec-keluhan-v1.md`'s "Keluhan bersifat pribadi secara bawaan" means an unticked
@@ -51,10 +54,21 @@ const MAKE_PUBLIC_FIELD = 'makePublic';
 /** The form field every attached photo is posted under, one entry per file. */
 const ATTACHMENTS_FIELD = 'attachments';
 
+/**
+ * `create`: the 403 for anyone who may not report a Keluhan, and a named Lampiran or Keluhan rule.
+ * A new Keluhan has no 404 of its own.
+ */
+const CREATE_FORM = {
+	forbidden: m.complaintsNew_forbidden,
+	fallback: m.complaintsNew_invalidForm,
+	refusals: [
+		refusal(ComplaintAttachmentRuleError, ({ error }) => attachmentRuleMessage(error.rule)),
+		refusal(ComplaintRuleError, ({ error }) => complaintRuleMessage(error.rule))
+	]
+} satisfies FormMessages;
+
 export const load: PageServerLoad = async ({ locals }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+	requireUser(locals);
 
 	return {
 		acceptedAttachmentTypes: ATTACHMENT_CONTENT_TYPES,
@@ -65,9 +79,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 export const actions: Actions = {
 	create: async ({ request, locals }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
+		const user = requireUser(locals);
 
 		const form = await request.formData();
 		const values = readFormValues(form);
@@ -80,29 +92,19 @@ export const actions: Actions = {
 			? COMPLAINT_VISIBILITY.public
 			: COMPLAINT_VISIBILITY.private;
 
+		const dependencies = productionDependencies();
 		let created;
 		try {
-			created = await createComplaint(
-				database(),
-				systemClock,
-				localFileStoreFromEnvironment(systemClock),
-				{
-					actorId: locals.user.id,
-					title: values.title,
-					category: values.category,
-					description: values.description,
-					visibility,
-					attachments
-				}
-			);
+			created = await createComplaint(dependencies.db, dependencies.clock, dependencies.fileStore, {
+				actorId: user.id,
+				title: values.title,
+				category: values.category,
+				description: values.description,
+				visibility,
+				attachments
+			});
 		} catch (caught) {
-			if (caught instanceof ComplaintAttachmentRuleError) {
-				return fail(400, { message: attachmentRuleMessage(caught.rule), values });
-			}
-			if (caught instanceof ComplaintRuleError) {
-				return fail(400, { message: complaintRuleMessage(caught.rule), values });
-			}
-			throwAsRouteError(caught);
+			return failOrThrow(caught, CREATE_FORM, { values });
 		}
 
 		redirect(303, `/complaints/${created.id}?created=1`);
@@ -112,9 +114,9 @@ export const actions: Actions = {
 /** What the report form carries, trimmed, as the values a re-rendered form is repopulated with. */
 function readFormValues(form: FormData) {
 	return {
-		title: String(form.get(TITLE_FIELD) ?? '').trim(),
-		category: String(form.get(CATEGORY_FIELD) ?? '').trim(),
-		description: String(form.get(DESCRIPTION_FIELD) ?? '').trim(),
+		title: readText(form, TITLE_FIELD),
+		category: readText(form, CATEGORY_FIELD),
+		description: readText(form, DESCRIPTION_FIELD),
 		makePublic: form.get(MAKE_PUBLIC_FIELD) !== null
 	};
 }
@@ -155,16 +157,4 @@ function attachmentRuleMessage(rule: ComplaintAttachmentRule): string {
 			m.complaintsNew_rule_attachmentTooLarge({ maximumSize: MAXIMUM_ATTACHMENT_MEBIBYTES })
 	};
 	return messages[rule]();
-}
-
-/**
- * Turns a caught permission refusal into a 403 and throws it, or rethrows whatever else it was.
- * Always throws — the return type is `never` for the same reason the payments and posts screens'
- * copies of this helper are.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.complaintsNew_forbidden());
-	}
-	throw caught;
 }

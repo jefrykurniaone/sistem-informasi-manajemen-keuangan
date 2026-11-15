@@ -1,17 +1,20 @@
-import { error, fail, redirect } from '@sveltejs/kit';
 import * as m from '#lib/paraglide/messages.js';
-import { PermissionDeniedError } from '#lib/errors.ts';
-import { AUTH_PATHS } from '#lib/server/auth.ts';
-import { database } from '#lib/server/db/index.ts';
 import { COMPLAINT_STATUS } from '#lib/server/db/schema/complaint.ts';
-import { systemClock } from '#lib/server/ports/clock.ts';
 import type { FileStore } from '#lib/server/ports/file-store.ts';
-import { assertUuidParam } from '#lib/server/services/identifier.ts';
+import {
+	failOrThrow,
+	productionDependencies,
+	refusal,
+	requireUser,
+	requireUuidParam,
+	throwRouteError,
+	type FormMessages,
+	type PageMessages
+} from '#lib/server/route-action.ts';
 import { formatDateTime } from '#lib/time.ts';
 import {
 	addComplaintReply,
 	COMPLAINT_REPLY_RULE,
-	ComplaintNotFoundError,
 	ComplaintReplyRuleError,
 	getComplaint,
 	listComplaintAttachments,
@@ -23,7 +26,6 @@ import {
 import { complaintStatusHistory } from '#lib/server/services/complaint/history.ts';
 import { ComplaintTransitionError } from '#lib/server/services/complaint/state-machine.ts';
 import { reporterIdForUser } from '#lib/server/services/complaint/visibility.ts';
-import { localFileStoreFromEnvironment } from '#lib/server/storage/local-file-store.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -49,29 +51,51 @@ import type { Actions, PageServerLoad } from './$types';
  * entitled to the complaint the photograph belongs to. There is no second route serving attachments;
  * `src/routes/files/[...key]/+server.ts` is the only one, per the orchestrator's correction to this
  * ticket's `writes:`.
+ *
+ * ## Refusals
+ *
+ * Through `src/lib/server/route-action.ts` (#318): `PermissionDeniedError` is a 403,
+ * `ComplaintNotFoundError` a 404, and a rule refusal a rejected form, `fail(400, …)`.
  */
+
+/** The 403, and the 404 for an id that names no Keluhan this viewer may read. */
+const PAGE = {
+	forbidden: m.complaintDetail_forbidden,
+	notFound: m.complaintDetail_notFound
+} satisfies PageMessages;
+
+/** `reply`: a named Tanggapan rule. */
+const REPLY_FORM = {
+	...PAGE,
+	fallback: m.complaintDetail_invalidForm,
+	refusals: [refusal(ComplaintReplyRuleError, ({ error }) => replyRuleMessage(error.rule))]
+} satisfies FormMessages;
+
+/** `withdraw`: a move to `withdrawn` the state machine refuses, one sentence for every case. */
+const WITHDRAW_FORM = {
+	...PAGE,
+	fallback: m.complaintDetail_invalidForm,
+	refusals: [refusal(ComplaintTransitionError, m.complaintDetail_withdrawRefused)]
+} satisfies FormMessages;
 
 /** The query parameter the "lapor keluhan" screen redirects back with. */
 const CREATED_PARAMETER = 'created';
 
 export const load: PageServerLoad = async ({ locals, params, url }) => {
-	if (!locals.user) {
-		redirect(303, AUTH_PATHS.login);
-	}
+	const user = requireUser(locals);
 	// `complaints.id` is a `uuid` column; a non-uuid `params.id` must be refused here, before it
 	// reaches `getComplaint`'s comparison — see #111 and `#lib/server/services/identifier.ts`.
-	assertUuidParam(params.id, m.complaintDetail_notFound());
+	const complaintId = requireUuidParam(params.id, PAGE);
 
 	try {
-		const db = database();
-		const fileStore = localFileStoreFromEnvironment(systemClock);
+		const { db, clock, fileStore } = productionDependencies();
 
-		const complaint = await getComplaint(db, systemClock, locals.user.id, params.id);
+		const complaint = await getComplaint(db, clock, user.id, complaintId);
 		const [history, replies, attachments, ownResidentId] = await Promise.all([
-			complaintStatusHistory(db, locals.user.id, params.id),
-			listComplaintReplies(db, locals.user.id, params.id),
-			listComplaintAttachments(db, locals.user.id, params.id),
-			reporterIdForUser(db, locals.user.id)
+			complaintStatusHistory(db, user.id, complaintId),
+			listComplaintReplies(db, user.id, complaintId),
+			listComplaintAttachments(db, user.id, complaintId),
+			reporterIdForUser(db, user.id)
 		]);
 
 		const isOwner = ownResidentId !== undefined && complaint.reporterId === ownResidentId;
@@ -107,52 +131,45 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 			justCreated: url.searchParams.get(CREATED_PARAMETER) === '1'
 		};
 	} catch (caught) {
-		throwAsRouteError(caught);
+		throwRouteError(caught, PAGE);
 	}
 };
 
 export const actions: Actions = {
 	reply: async ({ request, locals, params }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
-		assertUuidParam(params.id, m.complaintDetail_notFound());
+		const user = requireUser(locals);
+		const complaintId = requireUuidParam(params.id, PAGE);
 
 		const form = await request.formData();
+		// Not trimmed here: what counts as an empty Tanggapan is `addComplaintReply`'s rule.
 		const content = String(form.get('content') ?? '');
 
+		const { db, clock } = productionDependencies();
 		try {
-			await addComplaintReply(database(), systemClock, {
-				actorId: locals.user.id,
-				complaintId: params.id,
+			await addComplaintReply(db, clock, {
+				actorId: user.id,
+				complaintId,
 				content
 			});
 		} catch (caught) {
-			if (caught instanceof ComplaintReplyRuleError) {
-				return fail(400, { message: replyRuleMessage(caught.rule) });
-			}
-			throwAsRouteError(caught);
+			return failOrThrow(caught, REPLY_FORM);
 		}
 
 		return { message: m.complaintDetail_replyAddedMessage() };
 	},
 
 	withdraw: async ({ locals, params }) => {
-		if (!locals.user) {
-			redirect(303, AUTH_PATHS.login);
-		}
-		assertUuidParam(params.id, m.complaintDetail_notFound());
+		const user = requireUser(locals);
+		const complaintId = requireUuidParam(params.id, PAGE);
 
+		const { db, clock } = productionDependencies();
 		try {
-			await withdrawComplaint(database(), systemClock, {
-				actorId: locals.user.id,
-				complaintId: params.id
+			await withdrawComplaint(db, clock, {
+				actorId: user.id,
+				complaintId
 			});
 		} catch (caught) {
-			if (caught instanceof ComplaintTransitionError) {
-				return fail(400, { message: m.complaintDetail_withdrawRefused() });
-			}
-			throwAsRouteError(caught);
+			return failOrThrow(caught, WITHDRAW_FORM);
 		}
 
 		return { message: m.complaintDetail_withdrawnMessage() };
@@ -176,19 +193,4 @@ function replyRuleMessage(rule: ComplaintReplyRule): string {
 		[COMPLAINT_REPLY_RULE.actorNotRegistered]: m.complaintDetail_rule_actorNotRegistered
 	};
 	return messages[rule]();
-}
-
-/**
- * Turns a caught permission refusal into a 403, or a caught missing complaint into a 404, and throws
- * it — or rethrows whatever else it was. Always throws, for the reason the admin detail screen's
- * copy of this helper is declared `never`.
- */
-function throwAsRouteError(caught: unknown): never {
-	if (caught instanceof PermissionDeniedError) {
-		throw error(403, m.complaintDetail_forbidden());
-	}
-	if (caught instanceof ComplaintNotFoundError) {
-		throw error(404, m.complaintDetail_notFound());
-	}
-	throw caught;
 }
