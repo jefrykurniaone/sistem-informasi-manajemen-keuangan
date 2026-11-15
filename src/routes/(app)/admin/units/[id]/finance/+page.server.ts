@@ -8,36 +8,34 @@ import { assertUuidParam } from '#lib/server/services/identifier.ts';
 import { systemClock } from '#lib/server/ports/clock.ts';
 import { PeriodLockedError } from '#lib/server/services/cash/period.ts';
 import {
-	AllocationNotFoundError,
-	RELEASE_RULE,
-	ReleaseRuleError,
-	releaseAllocation,
-	type ReleaseRule
-} from '#lib/server/services/dues/allocation-release.ts';
-import {
 	correctionsHistoryFor,
 	unitFinanceFor
 } from '#lib/server/services/dues/corrections-history.ts';
 import {
-	REFUND_RULE,
-	RefundRuleError,
-	refundCredit,
-	type RefundRule
-} from '#lib/server/services/dues/credit-refund.ts';
-import {
+	AllocationNotFoundError,
 	InvoiceNotFoundError,
+	REFUND_RULE,
+	RELEASE_RULE,
+	RefundRuleError,
+	ReleaseRuleError,
 	VOID_RULE,
 	VoidRefusedAllocatedError,
 	VoidRuleError,
+	refundCredit,
+	releaseAllocation,
 	voidInvoice,
+	type RefundRule,
+	type ReleaseRule,
 	type VoidRule
-} from '#lib/server/services/dues/invoice-void.ts';
+} from '#lib/server/services/dues/dues-correction.ts';
 import { UnitNotFoundError } from '#lib/server/services/dues/queries.ts';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
  * The unit finance screen — one Unit's saldo titipan, its Tagihan with their Alokasi, the history
- * of the three superuser corrections, and the three actions themselves (#30). Follows the shape
+ * of the three superuser corrections, and the three actions themselves (#30), which since #324 all
+ * come from the dues-correction module, `#lib/server/services/dues/dues-correction.ts`, with the
+ * screen's reads in `corrections-history.ts` beside it. Follows the shape
  * `(app)/admin/payments/+page.server.ts` settled: nobody who is not signed in reaches the service
  * layer, `PermissionDeniedError` becomes `error(403, …)` here and never in the service, and every
  * rule a service refuses comes back as a rejected form (`fail(400, …)`), `PeriodLockedError`

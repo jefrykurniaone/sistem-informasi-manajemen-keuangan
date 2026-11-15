@@ -30,13 +30,14 @@ import {
 	REFUND_RULE,
 	RefundRuleError,
 	refundCredit
-} from '#lib/server/services/dues/credit-refund.ts';
+} from '#lib/server/services/dues/dues-correction.ts';
 import { issueInvoicesForPeriod } from '#lib/server/services/dues/issuance.ts';
 import { UnitNotFoundError } from '#lib/server/services/dues/queries.ts';
 
 /**
- * Pengembalian — user story 23 of `docs/spec-iuran-v1.md`, and #30's third correction: part or
- * all of a Unit's saldo titipan returned as money out of the kas, attributed per Pembayaran so
+ * Pengembalian — user story 23 of `docs/spec-iuran-v1.md`, and #30's third correction, held since
+ * #324 by the dues-correction module (`dues-correction.ts`): part or all of a Unit's saldo titipan
+ * returned as money out of the kas, attributed per Pembayaran so
  * that nothing can spend the returned rupiah a second time. Against a real PostgreSQL with a fake
  * clock, because every rule here is about committed rows and dated money.
  *
@@ -284,20 +285,22 @@ describe('refundCredit', () => {
 		expect(entries[0]).toMatchObject({
 			actorId,
 			action: CREDIT_REFUNDED_ACTION,
-			targetId: unit.id,
-			after: {
-				unitId: unit.id,
-				amount: 150_000,
-				occurredOn: REFUND_DAY,
-				reason: REFUND_REASON,
-				refunds: [
-					{
-						paymentId,
-						cashTransactionId: outcome.portions[0].cashTransaction.id,
-						amount: 150_000
-					}
-				]
-			}
+			targetId: unit.id
+		});
+		// Exactly the JSON #30 stored, field for field: no `before`, and every portion in `after`.
+		expect(entries[0].before).toBeNull();
+		expect(entries[0].after).toEqual({
+			unitId: unit.id,
+			amount: 150_000,
+			occurredOn: REFUND_DAY,
+			reason: REFUND_REASON,
+			refunds: [
+				{
+					paymentId,
+					cashTransactionId: outcome.portions[0].cashTransaction.id,
+					amount: 150_000
+				}
+			]
 		});
 
 		// One decision, one row: the cash rows carry no audit entries of their own.
