@@ -4,7 +4,7 @@
 |---|---|
 | Item spesifikasi | [#308](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/308) |
 | Run | `perdalam-v1` |
-| Peta eksekusi | belum dibuat |
+| Peta eksekusi | [#334](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/334) |
 | Disalin pada | 2026-11-15, dari `main` @ `0cf7be0` |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang; item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
