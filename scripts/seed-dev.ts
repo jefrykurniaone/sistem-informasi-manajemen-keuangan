@@ -132,6 +132,16 @@ import {
  * transaction. Every seeded registration is therefore `approved`, and **none is left `pending`**,
  * which is what the spec asks for.
  *
+ * **Those two steps run on a clock frozen at the first of the seed month** (`registrationClock`),
+ * not on the real one. `approveRegistration` starts the Masa Huni on "today", and a Warga sees a
+ * Tagihan only when the first day of its Periode lies inside their own Masa Huni
+ * (`isInvoiceVisible`). The Data Contoh's Tagihan is this month's, dated the first, so a Masa Huni
+ * that began on the day the seeder happened to run would hide every Tagihan from every Warga
+ * whenever that day is after the first (#338). Writing the Masa Huni first with `recordOccupancy`
+ * is not possible instead: it needs a `residentId`, and the `residents` row only exists once the
+ * approval has created it. Nothing else the seeder writes uses this clock, and
+ * `approveRegistration` and the occupancy module are untouched.
+ *
  * ## Dates
  *
  * Everything is relative to `civilMonthOf(clock.now())` — the WIB month the clock is in. The tables
@@ -521,7 +531,28 @@ async function seedPeople(
 	await grantPengurusRoles(db, clock, superuserId, requireValue(userIds.get(ADMIN_EMAIL), 'admin'));
 	await createUnits(db, clock, superuserId);
 
-	return approveEveryone(db, clock, { accounts, origin, superuserId, userIds });
+	return approveEveryone(db, registrationClock(clock), { accounts, origin, superuserId, userIds });
+}
+
+/** `Asia/Jakarta` runs seven hours ahead of UTC all year; `registrationClock` checks it. */
+const WIB_OFFSET_MILLISECONDS = 7 * 60 * 60 * 1000;
+
+/**
+ * A clock frozen at the very start of the first day of `clock`'s WIB month, for the two
+ * registration steps only. See "Residents come from the registration flow" in this module's doc
+ * comment for why.
+ *
+ * Built from `Date.UTC` and the zone's fixed offset, then checked through `civilDayOf`, so a
+ * change of the complex's zone fails loudly here instead of moving every Masa Huni by a day.
+ */
+function registrationClock(clock: Clock): Clock {
+	const now = clock.now();
+	const [year, month] = civilMonthOf(now).split('-').map(Number);
+	const frozen = new Date(Date.UTC(year, month - 1, 1) - WIB_OFFSET_MILLISECONDS);
+	if (civilDayOf(frozen) !== `${civilMonthOf(now)}-01`) {
+		throw new RangeError(`The first of ${civilMonthOf(now)} is not ${civilDayOf(frozen)} in WIB.`);
+	}
+	return { now: () => new Date(frozen) };
 }
 
 /** Every `user` row's id, keyed by the address better-auth stored it under. */
