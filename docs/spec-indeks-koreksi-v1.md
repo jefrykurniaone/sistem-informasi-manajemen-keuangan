@@ -7,6 +7,7 @@
 | Peta eksekusi | [#345](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/345) |
 | Tiket | [#339](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/339) |
 | Disalin pada | 2026-11-16, dari `main` @ `79e7ce9` |
+| Lintasan penutup | 2026-11-16, sesudah Gelombang 2 (`feat/tambal-v1` @ `4b30173`): dibuat ulang dari item, yang kini memuat bagian "Catatan penyerahan" dengan klaim yang dibalik ditandai; tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang; item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
 
@@ -96,4 +97,43 @@ Basis data menolak Koreksi kedua untuk baris yang sama. Kalau penolakan itu samp
 
 - Asal: #339, ditemukan verifikasi kedua #329 (Fable). Teks pesan lama tercatat sebagai catatan terbuka di #323.
 - Diputuskan di grilling run `tambal-v1`, 2026-11-16 (Q6, Q7, Q8, Q10, Q11).
+
+
+
+## Catatan penyerahan (run tambal-v1, 2026-11-16)
+
+**1. Yang masuk.** Semuanya di `feat/tambal-v1`. Isinya masuk `main` lewat PR run yang dibuka di tail peta #345.
+
+- **#339**, merge `b14c846` (commit tiket `7788371`).
+  - Index unik parsial `cash_transactions_correction_of_unique` (`where correction_of is not null`), dibuat lewat migrasi `drizzle/0013_correction_of_unique.sql`.
+  - `insertCorrection` dan `violatesOneCorrectionPerLine` di `src/lib/server/services/cash/writer.ts`.
+  - Pesan `adminCash_correctionAlreadyCorrected` yang baru.
+  - Kalimat glossary di entri Koreksi.
+  - Komentar diperbarui di `writer.ts`, `credit-balance.ts`, dan `corrections-history.ts`.
+
+**2. Klaim spec yang dibalik atau digeser run ini.** Tidak ada yang dihapus dari badan spec di atas.
+
+- **Digeser.** Keputusan "Eksekutor memilih cara yang tetap bisa menyebut Koreksi yang sudah ada".
+  - Galat dibuat tanpa menyebutnya: `CashTransactionAlreadyCorrectedError.correctionId` kini bertipe `string | null`, dan bernilai null di jalur index.
+  - Alasannya: jalur itu hanya dicapai pemanggil yang snapshot-nya mendahului Koreksi pesaing, sehingga bacaan sesudah rollback ke savepoint pasti kosong.
+  - Savepoint di sekitar insert Koreksi tetap dipakai, supaya transaksi pemanggil masih bisa dipakai sesudah penolakan.
+- **Dipertajam.** Keputusan "Jalur normal tidak pernah mencapai index. Pelanggaran index hanya terjadi kalau ada penulis yang melewati kunci."
+  - Di READ COMMITTED, yaitu jalur normal, pernyataan itu benar. Pemeriksaan FK Koreksi pesaing mengambil `for key share`, yang berbenturan dengan `for update`.
+  - Namun index juga bisa dicapai lewat penulis itu sendiri, kalau pemanggil berjalan di `repeatable read` atau `serializable` dengan snapshot yang lebih tua. Tes `cash-correction.test.ts` memicunya secara deterministik dengan cara itu (Seam 2, lewat penulis yang sebenarnya).
+- **Ditambahkan.** Fixture `tests/unit/report-privacy.test.ts` menanam Koreksi kedua atas satu baris, keadaan yang kini ditolak index.
+  - Orchestrator melebarkan `writes:` #339 dengan berkas itu.
+  - Koreksi tanaman dipindah ke baris cat atap gazebo.
+- **Premis tiket yang keliru.** `bun run db:generate -- --name …` meneruskan `--name` ke `prettier`, bukan ke drizzle-kit. Migrasi dibuat dengan `bunx drizzle-kit generate --name correction_of_unique && bunx prettier --write drizzle`.
+
+**3. Cacat dan tindak lanjut yang diajukan.** Tidak ada.
+
+**4. Verifikasi.**
+
+- **Gerbang penuh** di `a2426d8`, mulai 09:52:36 WIB: `check` 0 galat, `lint`, `test` 2750/2750, `build`.
+- **Runtime dev-db:**
+  - `db:migrate` keluar dengan kode 0.
+  - `pg_indexes` memuat `CREATE UNIQUE INDEX cash_transactions_correction_of_unique ... WHERE (correction_of IS NOT NULL)`.
+  - 14 migrasi tercatat.
+  - Semai yang menulis satu Koreksi berjalan bersih.
+- **Produksi:** kriteria "sesudah deploy, index ada di produksi" diperiksa di tail peta #345, dan hasilnya diposting di item ini.
 
