@@ -1298,5 +1298,6 @@
 	"verify_backToLoginLink": "Kembali ke halaman masuk",
 	"verify_tooManyRequests": "Terlalu banyak permintaan email verifikasi. Tunggu beberapa menit, lalu coba lagi.",
 	"verify_emailRequired": "Isi dulu alamat email Anda.",
-	"verify_resendSent": "Kalau alamat itu terdaftar dan belum terverifikasi, email verifikasinya sudah kami kirim ulang. Periksa kotak masuk Anda."
+	"verify_resendSent": "Kalau alamat itu terdaftar dan belum terverifikasi, email verifikasinya sudah kami kirim ulang. Periksa kotak masuk Anda.",
+	"rupiahInput_invalid": "Nominal harus rupiah utuh, misalnya 150.000, tanpa koma, huruf, atau tanda minus. Hapus ,00 kalau ada."
 }

@@ -1298,5 +1298,6 @@
 	"verify_backToLoginLink": "Back to the sign-in page",
 	"verify_tooManyRequests": "Too many verification email requests. Wait a few minutes, then try again.",
 	"verify_emailRequired": "Fill in your email address first.",
-	"verify_resendSent": "If that address is registered and not verified yet, we have resent the verification email. Check your inbox."
+	"verify_resendSent": "If that address is registered and not verified yet, we have resent the verification email. Check your inbox.",
+	"rupiahInput_invalid": "The amount must be whole rupiah, for example 150.000, without a comma, letters or a minus sign. Remove ,00 if present."
 }
