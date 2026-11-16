@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { PermissionDeniedError } from '#lib/errors.ts';
 import { rupiah } from '#lib/money.ts';
@@ -39,7 +39,8 @@ import {
 /**
  * The Koreksi: the reversing line that is the only way a mistake in the buku kas is put right, and
  * the rule that one line is corrected once. Against a real PostgreSQL, because "once" is held by a
- * row lock and a lock is a rule about concurrent transactions.
+ * row lock and a lock is a rule about concurrent transactions, with the partial unique index
+ * `cash_transactions_correction_of_unique` behind it (#339).
  */
 
 const testDb = testDatabase();
@@ -593,6 +594,132 @@ describe('recordCashCorrection', () => {
 			).toHaveLength(1);
 		} finally {
 			await other.release();
+		}
+	});
+});
+
+/** What PostgreSQL said when it refused a statement, read off the `cause` chain Drizzle wraps it in. */
+function databaseRefusal(error: unknown): { code: unknown; constraint: unknown } | undefined {
+	let current: unknown = error;
+	while (current instanceof Error) {
+		if ('code' in current) {
+			return {
+				code: current.code,
+				constraint: 'constraint' in current ? current.constraint : undefined
+			};
+		}
+		current = current.cause;
+	}
+	return undefined;
+}
+
+describe('the index behind the lock', () => {
+	it('answers a Koreksi only the index catches with the same named refusal, and leaves the transaction usable', async () => {
+		// The one way a second Koreksi reaches `cash_transactions_correction_of_unique` through the
+		// writer. At READ COMMITTED it cannot: the competing Koreksi waits on the line lock (its
+		// foreign key check takes the line `for key share`), or has committed already and
+		// `findCorrectionOf` sees it. Under `repeatable read` a snapshot taken before the other
+		// Koreksi committed is granted the lock, cannot see that Koreksi, and inserts: PostgreSQL
+		// refuses with 23505 on the index. Nothing here depends on timing, so the test is
+		// deterministic: the snapshot is taken, then the other row commits, then the writer runs.
+		const adminId = await insertAdmin('Pengurus Koreksi Lewat Indeks');
+		const category = await addCategory('Perbaikan saluran air');
+		const original = await recordOne(adminId, category.id);
+
+		const other = await connectToSchema();
+		let refusal: unknown;
+		try {
+			await testDb.db.transaction(
+				async (transaction) => {
+					// The first statement fixes the snapshot, and it sees no Koreksi yet.
+					expect(
+						await transaction
+							.select()
+							.from(cashTransactions)
+							.where(eq(cashTransactions.correctionOf, original.id))
+					).toHaveLength(0);
+
+					await other.client.query(
+						`insert into cash_transactions
+							(occurred_on, type, category_id, amount, description, recorded_by, correction_of, created_at)
+						 values ($1, $2, $3, $4, $5, $6, $7, now())`,
+						[
+							original.occurredOn,
+							CASH_CATEGORY_TYPE.income,
+							original.categoryId,
+							original.amount,
+							'Koreksi yang ditulis lebih dulu, di luar penulis.',
+							adminId,
+							original.id
+						]
+					);
+
+					refusal = await writeCashTransaction(transaction, new FakeClock(START), {
+						kind: CASH_WRITE_KIND.correction,
+						recordedBy: adminId,
+						transactionId: original.id,
+						reason: 'Koreksi kedua yang hanya ditahan indeks.'
+					}).catch((error: unknown) => error);
+
+					// The savepoint rolled the insert back alone: without it the transaction would be
+					// aborted and this statement would fail. The snapshot still cannot see the other
+					// Koreksi, which is why the refusal names none.
+					expect(
+						await transaction
+							.select()
+							.from(cashTransactions)
+							.where(eq(cashTransactions.correctionOf, original.id))
+					).toHaveLength(0);
+				},
+				{ isolationLevel: 'repeatable read' }
+			);
+		} finally {
+			await other.release();
+		}
+
+		expect(refusal).toBeInstanceOf(CashTransactionAlreadyCorrectedError);
+		expect(refusal).toMatchObject({ transactionId: original.id, correctionId: null });
+		expect(databaseRefusal(refusal)).toBeUndefined();
+		const corrections = await testDb.db
+			.select()
+			.from(cashTransactions)
+			.where(eq(cashTransactions.correctionOf, original.id));
+		expect(corrections.map((row) => row.description)).toEqual([
+			'Koreksi yang ditulis lebih dulu, di luar penulis.'
+		]);
+	});
+
+	it('leaves any other unique violation on a Koreksi untranslated', async () => {
+		// The translation recognises the index by name, not by 23505 alone. A unique index this test
+		// adds to its own schema, on the keterangan, is the other violation: the original line and
+		// its Koreksi both carry the same text, so the Koreksi collides on it and on nothing else.
+		const OTHER_INDEX = 'cash_transactions_test_other_unique';
+		const SAME_TEXT = 'Teks yang dijaga indeks lain dalam tes ini.';
+		const adminId = await insertAdmin('Pengurus Koreksi Indeks Lain');
+		const category = await addCategory('Perbaikan papan nama');
+		await testDb.db.execute(
+			sql`create unique index ${sql.identifier(OTHER_INDEX)} on cash_transactions (description)
+			    where description = ${sql.raw(`'${SAME_TEXT}'`)}`
+		);
+		try {
+			const original = await recordOne(adminId, category.id, SAME_TEXT);
+
+			const refusal: unknown = await recordCashCorrection(testDb.db, new FakeClock(START), {
+				actorId: adminId,
+				transactionId: original.id,
+				reason: SAME_TEXT
+			}).catch((error: unknown) => error);
+
+			expect(refusal).not.toBeInstanceOf(CashTransactionAlreadyCorrectedError);
+			expect(databaseRefusal(refusal)).toEqual({ code: '23505', constraint: OTHER_INDEX });
+			expect(
+				await testDb.db
+					.select()
+					.from(cashTransactions)
+					.where(eq(cashTransactions.correctionOf, original.id))
+			).toHaveLength(0);
+		} finally {
+			await testDb.db.execute(sql`drop index ${sql.identifier(OTHER_INDEX)}`);
 		}
 	});
 });

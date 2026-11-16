@@ -173,18 +173,29 @@ export class CashTransactionNotFoundError extends Error {
  *
  * For a Pengembalian this is also what "already reversed" means: spec #308 decision 6 derives a
  * Pembatalan Pengembalian from the Koreksi on the refund's cash row, with no column of its own.
+ *
+ * Either of the two holds behind "a line is corrected once" throws it, and the caller's transaction
+ * is still usable after both (see `insertCorrection`). `correctionId` names the Koreksi already
+ * there when the writer found it under its row lock, which is every case a caller at READ COMMITTED
+ * meets. It is null when `cash_transactions_correction_of_unique` refused the insert instead: that
+ * happens only to a caller whose snapshot predates the other Koreksi, and so cannot read it to name
+ * it.
  */
 export class CashTransactionAlreadyCorrectedError extends Error {
 	override readonly name = 'CashTransactionAlreadyCorrectedError';
 
 	/** The transaction that has already been corrected. */
 	readonly transactionId: string;
-	/** The Koreksi that corrected it. */
-	readonly correctionId: string;
+	/** The Koreksi that corrected it, or null when the index refused one this snapshot cannot see. */
+	readonly correctionId: string | null;
 
-	constructor(transactionId: string, correctionId: string) {
+	constructor(transactionId: string, correctionId: string | null) {
+		const by =
+			correctionId === null
+				? `by a Koreksi this transaction's snapshot cannot see (the database refused a second one through "${ONE_CORRECTION_PER_LINE_INDEX}")`
+				: `by "${correctionId}"`;
 		super(
-			`Cash transaction "${transactionId}" has already been corrected by "${correctionId}". A transaction is corrected once. A wrong correction outside "Iuran warga" and the opening-balance category is put right by correcting the correction.`
+			`Cash transaction "${transactionId}" has already been corrected ${by}. A transaction is corrected once. A wrong correction outside "Iuran warga" and the opening-balance category is put right by correcting the correction.`
 		);
 		this.transactionId = transactionId;
 		this.correctionId = correctionId;
@@ -320,6 +331,16 @@ const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /** How many characters that shape has, which is also where an ISO instant's day part ends. */
 const DAY_LENGTH = 10;
+
+/** PostgreSQL's `unique_violation`. */
+const UNIQUE_VIOLATION = '23505';
+
+/**
+ * The partial unique index that makes "a line is corrected once" a database fact, by the name
+ * `src/lib/server/db/schema/cash-transaction.ts` gives it. A `23505` naming it is translated into
+ * `CashTransactionAlreadyCorrectedError`; a `23505` naming anything else is not.
+ */
+const ONE_CORRECTION_PER_LINE_INDEX = 'cash_transactions_correction_of_unique';
 
 /** A receipt photo on its way in, as a route reads it off a multipart form. */
 export interface CashReceiptUpload {
@@ -475,11 +496,82 @@ export async function writeCashTransaction(
 	// `periods` row mean, and why `for share` is the right strength.
 	await requireOpenPeriodFor(transaction, clock, row.occurredOn);
 
-	const [written] = await transaction
+	const createdAt = clock.now();
+	if (row.correctionOf === null) {
+		return insertRow(transaction, row, createdAt);
+	}
+	return insertCorrection(transaction, row, row.correctionOf, createdAt);
+}
+
+/** The one `insert` into `cash_transactions` in the codebase. */
+async function insertRow(
+	writer: Transaction,
+	row: CashRow,
+	createdAt: Date
+): Promise<CashTransaction> {
+	const [written] = await writer
 		.insert(cashTransactions)
-		.values({ ...row, createdAt: clock.now() })
+		.values({ ...row, createdAt })
 		.returning();
 	return written;
+}
+
+/**
+ * Inserts a Koreksi, and turns `cash_transactions_correction_of_unique` refusing it into the same
+ * named refusal the row lock gives.
+ *
+ * The index is the second hold, not the first: by the time a Koreksi reaches here `correctionRow`
+ * has locked its line `for update` and found no Koreksi on it. At READ COMMITTED, where every caller
+ * runs, nothing gets past that: a competing Koreksi waits for the lock, and even one written around
+ * this module waits, because its foreign key check takes the line `for key share`, which conflicts
+ * with `for update`. A competing Koreksi that has committed before the lock was taken is seen by
+ * `findCorrectionOf`. What reaches the index is a caller in a snapshot-isolation transaction
+ * (`repeatable read` or `serializable`) whose snapshot predates a Koreksi committed by someone else:
+ * the lock is granted, the check cannot see that Koreksi, and PostgreSQL refuses the insert with
+ * `23505` on this index (#339 measured both levels).
+ *
+ * **A savepoint around the insert keeps the caller's transaction usable.** A failed statement
+ * aborts the whole transaction, so without one this refusal would leave the caller unable to run
+ * anything more, where the same refusal from the lock leaves it free to. Only a Koreksi pays for the
+ * savepoint, because only a row with a `correctionOf` can collide on this index.
+ *
+ * **The Koreksi already there is not read back**, so `correctionId` is null on this path. The only
+ * caller this path reaches holds a snapshot that cannot see it: a read after the savepoint rolls
+ * back would come back empty.
+ *
+ * @throws {CashTransactionAlreadyCorrectedError} when the index refuses the row.
+ */
+async function insertCorrection(
+	transaction: Transaction,
+	row: CashRow,
+	correctionOf: string,
+	createdAt: Date
+): Promise<CashTransaction> {
+	try {
+		return await transaction.transaction((savepoint) => insertRow(savepoint, row, createdAt));
+	} catch (caught) {
+		if (violatesOneCorrectionPerLine(caught)) {
+			throw new CashTransactionAlreadyCorrectedError(correctionOf, null);
+		}
+		throw caught;
+	}
+}
+
+/**
+ * Whether `error` is, or wraps, PostgreSQL refusing a row through
+ * `cash_transactions_correction_of_unique`. Drizzle wraps driver errors inside its own, so the code
+ * and the index's name are on the `cause` chain. Recognised by the name and not by the code alone,
+ * so a unique violation of any other index is never mistaken for a second Koreksi.
+ */
+function violatesOneCorrectionPerLine(error: unknown): boolean {
+	let current: unknown = error;
+	while (current instanceof Error) {
+		if ('code' in current && current.code === UNIQUE_VIOLATION) {
+			return 'constraint' in current && current.constraint === ONE_CORRECTION_PER_LINE_INDEX;
+		}
+		current = current.cause;
+	}
+	return false;
 }
 
 /** Every column of a new row except `createdAt`, which is stamped at the insert. */
@@ -713,8 +805,8 @@ async function assertDuesLine(
 
 /**
  * The line being corrected, locked until the caller's transaction ends. This lock, not the
- * transaction around it, is what makes "tidak dapat dikoreksi dua kali" true for every kind of
- * Koreksi at once.
+ * transaction around it, is what makes "tidak dapat dikoreksi dua kali" a named refusal for every
+ * kind of Koreksi at once.
  *
  * `db.transaction` runs at PostgreSQL's default READ COMMITTED, where a plain `SELECT` never blocks
  * on another transaction's uncommitted row lock; it reads the latest *committed* row. Two concurrent
@@ -724,8 +816,11 @@ async function assertDuesLine(
  * second blocks here until the first commits, then re-reads and sees the Koreksi the first inserted.
  * An ordinary Koreksi and a Pembatalan of the same line contend on the same lock.
  *
- * A partial unique index on `cash_transactions.correction_of` would state the same rule as a
- * database fact. It needs a migration, which this run does not make.
+ * Since #339 the rule is also a database fact: the partial unique index
+ * `cash_transactions_correction_of_unique` refuses a second Koreksi of one line whoever writes it.
+ * The index is the last line of defence and this lock stays the rule, taken first: it is what makes
+ * a concurrent second Koreksi wait and then meet `findCorrectionOf`, so the index fires only for
+ * the case `insertCorrection` describes.
  *
  * @throws {CashTransactionNotFoundError} when no row carries `transactionId`.
  */

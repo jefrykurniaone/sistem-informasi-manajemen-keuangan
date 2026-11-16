@@ -415,6 +415,44 @@ describe('cash_transactions', () => {
 		});
 	});
 
+	it('refuses a second Koreksi of the same transaction', async () => {
+		// "Sebuah Transaksi Kas dikoreksi paling banyak satu kali", stated by the database (#339). The
+		// writer's row lock is the rule; this proves the index on its own, by going around the writer.
+		const category = await createCategory();
+		const recordedBy = await createUser();
+		const [original] = await testDb.db
+			.insert(cashTransactions)
+			.values(transaction(category.id, recordedBy))
+			.returning();
+		const koreksi = transaction(category.id, recordedBy, {
+			type: CASH_CATEGORY_TYPE.income,
+			correctionOf: original.id,
+			description: CORRECTION_DESCRIPTION,
+			attachmentKey: null
+		});
+		await testDb.db.insert(cashTransactions).values(koreksi);
+
+		const refusal = await refused(testDb.db.insert(cashTransactions).values(koreksi).execute());
+
+		expect(refusal).toEqual({
+			code: UNIQUE_VIOLATION,
+			constraint: 'cash_transactions_correction_of_unique'
+		});
+	});
+
+	it('accepts any number of ordinary transactions, whose correction_of is null', async () => {
+		// The index is partial: an ordinary row's null is never compared with another's.
+		const category = await createCategory();
+		const recordedBy = await createUser();
+
+		const rows = await testDb.db
+			.insert(cashTransactions)
+			.values([transaction(category.id, recordedBy), transaction(category.id, recordedBy)])
+			.returning();
+
+		expect(rows.map((row) => row.correctionOf)).toEqual([null, null]);
+	});
+
 	it('refuses a Transaksi Kas that claims to correct itself', async () => {
 		const category = await createCategory();
 		const recordedBy = await createUser();
@@ -763,6 +801,7 @@ describe('the migration', () => {
 		'cash_categories_system_key_unique',
 		'cash_transactions_occurred_on_idx',
 		'cash_transactions_category_id_idx',
+		'cash_transactions_correction_of_unique',
 		'periods_year_month_unique',
 		'monthly_reports_period_id_revision_unique'
 	])('creates the %s index', async (indexName) => {
@@ -772,6 +811,18 @@ describe('the migration', () => {
 		);
 
 		expect(result.rows[0]?.total).toBe('1');
+	});
+
+	it('made the correction_of index unique and partial', async () => {
+		const result = await testDb.db.execute<{ indexdef: string }>(
+			sql`select indexdef from pg_indexes
+			    where schemaname = ${testDb.schemaName}
+			      and indexname = 'cash_transactions_correction_of_unique'`
+		);
+
+		expect(result.rows[0]?.indexdef).toContain('CREATE UNIQUE INDEX');
+		expect(result.rows[0]?.indexdef).toContain('(correction_of)');
+		expect(result.rows[0]?.indexdef).toContain('WHERE (correction_of IS NOT NULL)');
 	});
 
 	it.each([
