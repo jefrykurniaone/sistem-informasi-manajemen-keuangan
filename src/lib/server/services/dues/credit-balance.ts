@@ -226,8 +226,10 @@ export async function refundedAmountsByPayment(
  * and a Koreksi an Admin wrote there before #323 reverses the money in the buku kas all the same, so
  * the refund it reversed must stop counting too (the spec's "Risiko" section accepts exactly this).
  *
- * At most one Koreksi exists per line (the line lock in `writeCashTransaction`), so `not exists` and
- * a count agree; `not exists` is used because it cannot multiply rows.
+ * At most one Koreksi exists per line, so `not exists` and a count agree; `not exists` is used
+ * because it cannot multiply rows. That is a database fact since #339: the partial unique index
+ * `cash_transactions_correction_of_unique` refuses a second Koreksi of one line, behind the line
+ * lock in `writeCashTransaction` that keeps it a named refusal. The same index serves this lookup.
  */
 export function refundInForce(): SQL {
 	return sql`not exists (
