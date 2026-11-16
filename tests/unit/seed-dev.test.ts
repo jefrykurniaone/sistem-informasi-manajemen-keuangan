@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNotNull, lt, ne, or, sql } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createAuth, type Auth } from '#lib/server/auth.ts';
@@ -22,6 +22,7 @@ import { cashBook } from '#lib/server/services/cash/balance.ts';
 import { openInvoicesOfUnit } from '#lib/server/services/dues/allocation.ts';
 import { creditBalanceOfUnit } from '#lib/server/services/dues/credit-balance.ts';
 import { INVOICE_ISSUANCE_JOB_NAME } from '#lib/server/services/dues/jobs.ts';
+import { invoicesForUser } from '#lib/server/services/dues/queries.ts';
 import {
 	PRESERVED_TABLES,
 	RESET_TABLES,
@@ -432,6 +433,58 @@ describe('the seeded accounts', () => {
 			.where(eq(user.email, ADMIN_EMAIL));
 
 		expect(new Set(held.map((row) => row.role))).toEqual(new Set([ROLE.resident, ROLE.admin]));
+	});
+});
+
+describe('the Masa Huni', () => {
+	/**
+	 * #338. The seeder runs on the twentieth here, and every Masa Huni must still begin on the first:
+	 * a Warga sees a Tagihan only when the first day of its Periode lies inside their own Masa Huni,
+	 * so a stay that began on the day the seeder ran would hide the whole month from every Warga.
+	 */
+	it('starts every Masa Huni on the first of the seed month', async () => {
+		const rows = await testDb.db.select({ startedOn: occupancies.startedOn }).from(occupancies);
+
+		expect(rows.length).toBeGreaterThan(0);
+		expect(new Set(rows.map((row) => row.startedOn))).toEqual(new Set([`${SEED_PERIOD}-01`]));
+	});
+
+	/** Through `invoicesForUser`, the read "Tagihan saya" calls, not a query on the date columns. */
+	it('lets warga01 see the Tagihan of this month for A-01', async () => {
+		const [account] = await testDb.db
+			.select({ id: user.id })
+			.from(user)
+			.where(eq(user.email, 'warga01@komplek.local'));
+
+		const view = await invoicesForUser(testDb.db, new FakeClock(SEED_INSTANT), account.id);
+
+		expect(view.invoices.map((row) => [row.block, row.number, row.period])).toEqual([
+			['A', '01', SEED_PERIOD]
+		]);
+	});
+
+	it('leaves the dates of the money and the cash book inside the month, not after today', async () => {
+		const payment = await testDb.db
+			.select({ id: payments.id })
+			.from(payments)
+			.where(
+				or(
+					lt(payments.receivedOn, `${SEED_PERIOD}-01`),
+					gt(payments.receivedOn, `${SEED_PERIOD}-20`)
+				)
+			);
+		const cash = await testDb.db
+			.select({ id: cashTransactions.id })
+			.from(cashTransactions)
+			.where(
+				or(
+					lt(cashTransactions.occurredOn, `${SEED_PERIOD}-01`),
+					gt(cashTransactions.occurredOn, `${SEED_PERIOD}-20`)
+				)
+			);
+
+		expect(payment).toEqual([]);
+		expect(cash).toEqual([]);
 	});
 });
 
