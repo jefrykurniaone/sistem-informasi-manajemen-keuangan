@@ -7,6 +7,7 @@
 | Peta eksekusi | [#345](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/345) |
 | Tiket | [#340](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/340) |
 | Disalin pada | 2026-11-16, dari `main` @ `79e7ce9` |
+| Lintasan penutup | 2026-11-16, sesudah Gelombang 2 (`feat/tambal-v1` @ `4b30173`): dibuat ulang dari item, yang kini memuat bagian "Catatan penyerahan" dengan klaim yang dibalik ditandai; tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang; item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
 
@@ -104,4 +105,41 @@ Kolom rupiah tidak pernah lagi mengubah masukan menjadi bilangan lain.
 ## Further notes
 
 - Asal: #340. Diputuskan di grilling run `tambal-v1`, 2026-11-16 (Q3, Q4, Q5, Q9).
+
+
+
+## Catatan penyerahan (run tambal-v1, 2026-11-16)
+
+**1. Yang masuk.** Semuanya di `feat/tambal-v1`. Isinya masuk `main` lewat PR run yang dibuka di tail peta #345.
+
+- **#340**, merge `4b30173` (commit tiket `c22ef67`).
+  - `src/lib/money.ts` mengekspor `matchRupiahText` dan `RupiahTextShape`.
+  - `src/lib/rupiah-field.ts` (baru) mengekspor `RupiahField`, `readRupiahField`, `editRupiahField`, `countDigits`, dan `caretAfterDigits`.
+  - `rupiah-input.svelte` memakai validasi bawaan formulir dan memasang pesan bersama `rupiahInput_invalid`.
+  - Tes baru: `tests/unit/rupiah-field.test.ts` dan `tests/e2e/rupiah-input.spec.ts`.
+
+**2. Klaim spec yang dibalik atau digeser run ini.** Tidak ada yang dihapus dari badan spec di atas.
+
+- **Digeser.** "`parseRupiah` sendiri tidak berubah" berlaku untuk perilakunya: `tests/unit/money.test.ts` hijau tanpa diubah. Badannya kini `matchRupiahText` ditambah `rupiah()`, supaya kolom dan server memakai satu penerapan tata bahasa yang sama.
+- **Ditambahkan, keputusan eksekutor.** Titik pengelompokan yang ditulis kolom sendiri tidak dibaca sebagai titik desimal (`editRupiahField`).
+  - Tanpa itu, mengetik `0` di ujung `1.500` menghasilkan `1.5000`, yang ditolak, sehingga kolom berkelompok tidak bisa diketiki lagi.
+  - Perlakuan ini hanya berlaku kalau tampilan sebelumnya persis keluaran `groupThousands` dan suntingannya hanya menyisipkan angka. `12.` lalu `5` tetap ditolak.
+- **Dipertajam.** "Pesan muncul paling lambat saat kolom ditinggalkan atau saat formulir dikirim": pesan muncul tepat saat `blur` atau event `invalid`, tidak lebih awal. Kirim tetap diblokir sejak teks menjadi tidak valid.
+- **Ditambahkan.** Angka di atas `Number.MAX_SAFE_INTEGER` dianggap tidak valid di kolom, sejalan dengan `rupiah()` yang menolaknya di server. Pesan bersama tidak menyebut batas itu.
+- **Bukti digeser.** Kriteria "Mengetik `1500000` ... nominalnya tercatat Rp 1.500.000".
+  - Walk mengukur tampilan `1.500.000` dan nilai tersembunyi `1500000` tanpa mengirim.
+  - Pencatatan lewat kolom dibuktikan e2e dengan `150.000`.
+
+**3. Cacat dan tindak lanjut yang diajukan.**
+
+- #347, di luar run: hint nominal di `/admin/payments/cash` tidak terhubung ke kolomnya lewat `aria-describedby`. Cacat ini sudah ada sebelum run, berada di luar surface #340, dan diserahkan ke pemilik.
+
+**4. Verifikasi.**
+
+- **Gerbang penuh** di `4b30173`, mulai 10:15:35 WIB: `check` 0 galat, `lint`, `test` 2798/2798, `build`. E2e 50/50.
+- **Walk** lewat Playwright MCP. Semua teks diketik per karakter, dan jumlah Pembayaran sebelum dan sesudah walk sama.
+  - `12,5`, `1.500.000,00`, `150rb`, dan `-150.000` di `/admin/payments/cash`: teks tetap terlihat, `aria-invalid="true"`, pesan bersama tampil, dan tidak ada POST.
+  - `1500000` menampilkan `1.500.000`.
+  - Kiriman `novalidate` `12,5` dijawab 400 dengan pesan rute, dan kolom terisi ulang `12,5`.
+  - `/payments/new` (`warga01`) dan `/admin/cash/new`: pesan sama, dan kirim diblokir.
 

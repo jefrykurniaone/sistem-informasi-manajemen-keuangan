@@ -7,6 +7,7 @@
 | Peta eksekusi | [#345](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/345) |
 | Tiket | [#338](https://github.com/jefrykurniaone/sistem-informasi-manajemen-keuangan/issues/338) |
 | Disalin pada | 2026-11-16, dari `main` @ `79e7ce9` |
+| Lintasan penutup | 2026-11-16, sesudah Gelombang 2 (`feat/tambal-v1` @ `4b30173`): dibuat ulang dari item, yang kini memuat bagian "Catatan penyerahan" dengan klaim yang dibalik ditandai; tidak ada yang dihapus |
 
 Salinan titik waktu dari item spesifikasi di atas. Isi di bawah garis adalah badan spesifikasi apa adanya. Run yang menjalankan spesifikasi ini akan membuat sebagian klaim di bawah menjadi usang; item di tracker adalah sumber kebenaran, dan salinan ini dibaca sebagai catatan sejarah.
 
@@ -85,4 +86,35 @@ Pada hari apa pun semai dijalankan, setiap Warga Data Contoh punya Masa Huni yan
 
 - Asal: #338. Diputuskan di grilling run `tambal-v1`, 2026-11-16 (Q1, Q2).
 - Perintah semai hanya dijalankan orchestrator. Executor tidak pernah menyemai basis data dev.
+
+
+
+## Catatan penyerahan (run tambal-v1, 2026-11-16)
+
+**1. Yang masuk.** Semuanya di `feat/tambal-v1`. Isinya masuk `main` lewat PR run yang dibuka di tail peta #345.
+
+- **#338**, merge `a2426d8` (commit tiket `e032516`). `scripts/seed-dev.ts` menjalankan kedua langkah Pendaftaran dengan `registrationClock(clock)`, yaitu clock yang dibekukan pada awal tanggal 1 bulan semai, WIB.
+  - Instan itu dibangun dari `Date.UTC` dikurangi offset WIB, lalu diperiksa lewat `civilDayOf`.
+  - Semua langkah lain tetap memakai clock nyata.
+  - `README.md` menyebut bahwa setiap Masa Huni mulai tanggal 1.
+  - Tes baru di `tests/unit/seed-dev.test.ts` memakai clock tanggal 20. Isinya: tanggal mulai, Tagihan `warga01` lewat `invoicesForUser`, dan tanggal uang di dalam bulan.
+
+**2. Klaim spec yang dibalik atau digeser run ini.** Tidak ada yang dihapus dari badan spec di atas.
+
+- **Dibalik.** Keputusan implementasi "Atau Masa Huni ditulis lebih dulu dengan tanggal mulai eksplisit", yang disebut sudah didukung kode, ternyata tidak bisa dipakai. `recordOccupancy` butuh `residentId`, sedangkan baris `residents` baru lahir di dalam `approveRegistration`. Yang dipakai adalah clock yang dibekukan (#338).
+- **Digeser.** Kriteria sukses "`warga01` ... dan form Pembayaran menawarkan Tagihan itu", juga cerita pengguna 2.
+  - Tagihan A-01 sudah Lunas di Data Contoh: tiga Pembayaran terverifikasi berjumlah Rp 200.000. Akibatnya, form `warga01` dengan benar menulis "Tidak ada tagihan yang belum lunas untuk rumah ini."
+  - Bagian form Pembayaran diukur dengan `warga11` (B-01, terbayar 90.000 dari 150.000). Form menawarkan "2026-11 · sisa Rp 60.000 dari Rp 150.000".
+  - Bagian "Tagihan saya" `warga01` tetap berlaku seperti tertulis. Tiket #338 dikoreksi dengan cara yang sama.
+- **Ditambahkan, bukan dibalik.** Konsekuensi "Pendaftaran dan baris Audit Log langkah itu bisa bertanggal 1" juga berlaku untuk baris `residents` dan antrean email Data Contoh. Akun `user` tetap bertanggal hari semai.
+
+**3. Cacat dan tindak lanjut yang diajukan.** Tidak ada. Tidak ada yang diserahkan ke pemilik untuk spec ini.
+
+**4. Verifikasi.**
+
+- **Gerbang penuh** di `a2426d8`, mulai 09:52:36 WIB: `check` 0 galat, `lint`, `test` 2750/2750, `build`. E2e 48/48.
+- **Walk** lewat Playwright MCP, sesudah semai 2026-11-16. Error konsol 0 di setiap halaman.
+  - `warga01`: `/invoices` menampilkan "Tagihan 2026-11 / Lunas / Rp 150.000".
+  - `warga11`: `/payments/new` menawarkan Tagihan 2026-11.
+  - Superuser: Penghuni A-01 menampilkan "Budi Santoso / Pemilik / Sejak 2026-11-01 / Penanggung jawab".
 
