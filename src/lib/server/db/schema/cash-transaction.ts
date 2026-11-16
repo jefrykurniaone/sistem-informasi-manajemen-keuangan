@@ -7,6 +7,7 @@ import {
 	pgTable,
 	text,
 	timestamp,
+	uniqueIndex,
 	uuid,
 	type AnyPgColumn
 } from 'drizzle-orm/pg-core';
@@ -46,8 +47,17 @@ import { CASH_CATEGORY_TYPES, cashCategories, type CashCategoryType } from './ca
  * - **`correctionOf` is a nullable self-referencing foreign key — the glossary's "Koreksi:
  *   penanda pada `cash_transactions`".** Null for an ordinary row. The one row-local fact the
  *   database can state is stated: `cash_transactions_correction_self_check` refuses a row that
- *   claims to correct itself. Whether the original was already corrected once, and what the
- *   correction's reason is, are #34's questions.
+ *   claims to correct itself. What the correction's reason is, is #34's question.
+ * - **`cash_transactions_correction_of_unique` makes "a line is corrected once" a database fact,
+ *   and is the last line of defence, not the rule.** It is a unique index on `correction_of`
+ *   restricted to the rows where it is not null, so any number of ordinary rows sit beside it and
+ *   a second Koreksi of one line is refused with `23505` whoever writes it (#339). The rule itself
+ *   stays with the cash book writer (`src/lib/server/services/cash/writer.ts`): it takes the
+ *   corrected line `for update` and looks for an existing Koreksi before it inserts, and that lock
+ *   is what turns a concurrent second Koreksi into a named refusal rather than a race. The index is
+ *   what still holds for a row written around the writer, and the writer translates the index's
+ *   `23505` back into its own named refusal. The same arrangement as
+ *   `occupancies_primary_occupant_unique`.
  * - **`occurredOn` is a `date`, and it is not `createdAt`.** It is the day money actually changed
  *   hands — the acceptance criteria's "tanggal terima uang", which the spec widens to "diterima
  *   atau dikeluarkan" — and is routinely earlier than the day an admin typed the row, exactly like
@@ -73,7 +83,10 @@ import { CASH_CATEGORY_TYPES, cashCategories, type CashCategoryType } from './ca
  *   balance (user story 9) and filtered by period, which is a range over `occurredOn` (user story
  *   10); drill-down and filtering by category (user stories 10 and 20) read `categoryId`. The same
  *   reasoning as `posts`' single-column indexes: PostgreSQL combines them with a bitmap AND when a
- *   query filters on both, without committing to one guessed composite order.
+ *   query filters on both, without committing to one guessed composite order. The lookup by
+ *   `correction_of` ("has this line a Koreksi?", which `refundInForce()` asks on every Saldo
+ *   Titipan read and the writer asks before every Koreksi) is served by
+ *   `cash_transactions_correction_of_unique` above and needs no index of its own.
  */
 
 /** The SQL list of types, built from the one shared object so the two cannot drift apart. */
@@ -118,7 +131,12 @@ export const cashTransactions = pgTable(
 		check(
 			'cash_transactions_correction_self_check',
 			sql`correction_of is null or correction_of <> id`
-		)
+		),
+		// A line is corrected at most once. The last line of defence behind the writer's row lock,
+		// not the rule: see the decisions above. Partial, so ordinary rows (null) are never compared.
+		uniqueIndex('cash_transactions_correction_of_unique')
+			.on(table.correctionOf)
+			.where(sql`correction_of is not null`)
 	]
 );
 

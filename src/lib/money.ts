@@ -105,14 +105,46 @@ export function formatRupiah(value: Rupiah): string {
  * @throws {RangeError} when the value is outside the safe `number` range.
  */
 export function parseRupiah(text: string): Rupiah {
-	const match = RUPIAH_PATTERN.exec(text.trim().replaceAll(DIGIT_SPACING_PATTERN, '$1'));
-	if (!match) {
+	const shape = matchRupiahText(text);
+	if (shape === undefined) {
 		throw new TypeError(
 			`"${text}" is not a valid rupiah value. Accepted shapes: "150000", "150.000", "${CURRENCY_PREFIX} 150.000", "-${CURRENCY_PREFIX} 150.000". Fractions are not accepted.`
 		);
 	}
-	const [, sign, digits] = match;
-	return rupiah(Number(`${sign}${digits.replaceAll(THOUSANDS_SEPARATOR, '')}`));
+	return rupiah(Number(`${shape.sign}${shape.digits}`));
+}
+
+/** The two parts of a text that has the shape `parseRupiah` accepts. */
+export interface RupiahTextShape {
+	/** `'-'` when the text carries a minus sign, `''` when it does not. */
+	readonly sign: '' | '-';
+	/**
+	 * The digits alone, with the `Rp` prefix, the thousands separators and the spacing between digits
+	 * gone. Leading zeros are kept: `'007'` stays `'007'`, which is still the number 7.
+	 */
+	readonly digits: string;
+}
+
+/**
+ * Reads `text` against the grammar `parseRupiah` accepts, without turning it into money: its sign
+ * and its digits when it has that shape, `undefined` when it has not.
+ *
+ * This is the one place that grammar is applied. `parseRupiah` is this plus `rupiah()`, and the
+ * nominal field (`src/lib/rupiah-field.ts`) is this plus its own refusal of the minus sign, so the
+ * field the browser checks and the parse the server runs can never accept two different languages.
+ * The range is not checked here: `'9007199254740993'` has the shape, and it is `rupiah()` that
+ * refuses it.
+ */
+export function matchRupiahText(text: string): RupiahTextShape | undefined {
+	const match = RUPIAH_PATTERN.exec(text.trim().replaceAll(DIGIT_SPACING_PATTERN, '$1'));
+	if (!match) {
+		return undefined;
+	}
+	const [, sign, grouped] = match;
+	return {
+		sign: sign === '-' ? '-' : '',
+		digits: grouped.replaceAll(THOUSANDS_SEPARATOR, '')
+	};
 }
 
 /**
@@ -121,7 +153,8 @@ export function parseRupiah(text: string): Rupiah {
  *
  * Exported because the grouping in a nominal field and the grouping in a table have to be the same
  * shape, and the only way to guarantee that is for both to call this. `formatRupiah` uses it for the
- * display side and `#lib/components/rupiah-input.svelte` for the typing side.
+ * display side and `#lib/rupiah-field.ts`, behind `#lib/components/rupiah-input.svelte`, for the
+ * typing side.
  *
  * The argument is digits, not a number: while somebody is typing, the value on screen is not yet a
  * number — it may be empty, and it keeps whatever leading zeros were typed until the server parses

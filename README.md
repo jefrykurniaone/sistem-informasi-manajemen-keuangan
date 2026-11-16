@@ -102,6 +102,9 @@ screen has something on it:
 bun run db:seed-dev -- --yes
 ```
 
+Every Occupancy (Masa Huni) starts on the first of the current month, whatever day the command
+runs, so every Resident sees this month's Invoice under "My invoices".
+
 > **This command deletes every row in the database `DATABASE_URL` points at, then empties the
 > `FILE_STORE_ROOT` directory.** Every Unit, Resident, Invoice, Payment, Cash Transaction, Post,
 > Complaint, and account there is will be gone, with no way back. Only run it against a

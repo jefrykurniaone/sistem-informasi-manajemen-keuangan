@@ -389,7 +389,8 @@ async function refundRowsOfUnit(
 			reason: refunds.reason,
 			inForce: sql<boolean>`${refundInForce()}`,
 			// A scalar subquery rather than a join, so a line can never be listed twice. At most one
-			// Koreksi exists per line (the writer's line lock), and `refundInForce` reads the same rows.
+			// Koreksi exists per line (`cash_transactions_correction_of_unique`, behind the writer's
+			// line lock), and `refundInForce` reads the same rows.
 			reversalReason: sql<string | null>`(
 				select ${reversal.description}
 				from ${cashTransactions} as ${sql.identifier(REVERSAL_ALIAS)}

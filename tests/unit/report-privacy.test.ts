@@ -60,9 +60,10 @@ import { reportForPeriod } from '#lib/server/services/report/resident-payload.ts
  * - **drain**: only a Koreksi in this month, of an expense dated the month before, so its own type
  *   has no line and the other one does.
  * - **garden**: one expense before publication and one after, so its opened direction has changed.
- * - **gazebo**: a line in each table like fence, plus a further Koreksi planted on the income line
- *   *after* publication — the case `otherDirection`'s `published` kind is tested against: its total
- *   must stay the frozen income line's figure and not follow the buku kas past it.
+ * - **gazebo**: a line in each table like fence, plus a further Koreksi on its income side planted
+ *   *after* publication, of the expense that had none yet (a line is corrected at most once) — the
+ *   case `otherDirection`'s `published` kind is tested against: its total must stay the frozen
+ *   income line's figure and not follow the buku kas past it.
  */
 
 const testDb = testDatabase();
@@ -293,11 +294,11 @@ beforeAll(async () => {
 		description: 'Pemangkasan pohon taman'
 	});
 
-	// A line in each table, like fence: two expenses and a Koreksi of the second. The Koreksi gets a
-	// further, later change after publication (below), which `otherDirection`'s `published` kind must
-	// not follow.
+	// A line in each table, like fence: two expenses and a Koreksi of the second. The income side
+	// gets a further Koreksi after publication (below), of the first expense, which
+	// `otherDirection`'s `published` kind must not follow.
 	await insertExpenseCategory(IDS.gazeboCategory, 'Perbaikan gazebo komplek');
-	await recordCashTransaction(testDb.db, clock, fileStore, {
+	const gazeboRoof = await recordCashTransaction(testDb.db, clock, fileStore, {
 		actorId: IDS.adminUser,
 		occurredOn: `${PERIOD}-09`,
 		categoryId: IDS.gazeboCategory,
@@ -322,7 +323,8 @@ beforeAll(async () => {
 	// After publication, the month is locked, so these are planted directly: what a superuser who
 	// reopened the month would have recorded into it. One Koreksi on the street light's other
 	// direction, one more expense on the garden's own, and a further Koreksi on the gazebo's income
-	// line, already published, moving past what this revision froze for it.
+	// side, already published, moving past what this revision froze for it. It reverses the roof
+	// paint line, because the door line already carries its one Koreksi.
 	await testDb.db.insert(cashTransactions).values({
 		occurredOn: streetLight.occurredOn,
 		type: CASH_CATEGORY_TYPE.income,
@@ -349,7 +351,7 @@ beforeAll(async () => {
 		amount: rupiah(40_000),
 		description: 'Sebagian cat gazebo dikembalikan',
 		recordedBy: IDS.adminUser,
-		correctionOf: gazeboDoor.id,
+		correctionOf: gazeboRoof.id,
 		createdAt: new Date(`${AFTER_PUBLICATION_DAY}T00:00:00.000Z`)
 	});
 });
@@ -627,7 +629,7 @@ describe('drilling into a category', () => {
 
 	it("keeps otherDirection's published total frozen even when the buku kas moves past it", async () => {
 		// The gazebo's income line published 150_000; a further Koreksi planted after publication
-		// (above) moved the live figure on, but the sentence built from `otherDirection` points at the
+		// (above, of the roof paint line) moved the live figure on, but the sentence built from `otherDirection` points at the
 		// row printed in the other table, which is the published one.
 		const view = await reportForPeriod(testDb.db, {
 			period: PERIOD,

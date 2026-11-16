@@ -549,7 +549,7 @@
 	"adminCash_correctionCancel": "Batal",
 	"adminCash_correctionSuccess": "Koreksi sebesar {amount} tercatat pada tanggal {date}.",
 	"adminCash_correctionNotFound": "Transaksi itu tidak ditemukan.",
-	"adminCash_correctionAlreadyCorrected": "Transaksi itu sudah pernah dikoreksi, dan satu transaksi hanya bisa dikoreksi satu kali. Kalau koreksinya yang keliru, koreksilah baris koreksi itu.",
+	"adminCash_correctionAlreadyCorrected": "Transaksi itu sudah pernah dikoreksi, dan satu transaksi hanya bisa dikoreksi satu kali.",
 	"adminCash_correctionInvalidForm": "Permintaan tidak valid: transaksi dan alasan koreksi harus diisi.",
 	"adminCash_correctionDuesLine": "Baris \"Iuran warga\" tidak dikoreksi dari buku kas. Baris itu dibalik lewat layar Keuangan Unit: batalkan verifikasi Pembayarannya atau batalkan Pengembaliannya, supaya Tagihan dan buku kas tetap sama.",
 	"adminCash_correctionReversedOpeningBalance": "Saldo awal yang sudah dibalik tidak dikoreksi lagi. Gantilah dengan mencatat saldo awal yang baru di /admin/opening-balance.",
@@ -1298,5 +1298,6 @@
 	"verify_backToLoginLink": "Kembali ke halaman masuk",
 	"verify_tooManyRequests": "Terlalu banyak permintaan email verifikasi. Tunggu beberapa menit, lalu coba lagi.",
 	"verify_emailRequired": "Isi dulu alamat email Anda.",
-	"verify_resendSent": "Kalau alamat itu terdaftar dan belum terverifikasi, email verifikasinya sudah kami kirim ulang. Periksa kotak masuk Anda."
+	"verify_resendSent": "Kalau alamat itu terdaftar dan belum terverifikasi, email verifikasinya sudah kami kirim ulang. Periksa kotak masuk Anda.",
+	"rupiahInput_invalid": "Nominal harus rupiah utuh, misalnya 150.000, tanpa koma, huruf, atau tanda minus. Hapus ,00 kalau ada."
 }

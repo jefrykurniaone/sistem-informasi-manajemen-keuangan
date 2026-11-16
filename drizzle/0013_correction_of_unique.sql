@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "cash_transactions_correction_of_unique" ON "cash_transactions" USING btree ("correction_of") WHERE correction_of is not null;

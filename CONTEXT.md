@@ -113,7 +113,8 @@ _Hindari_: akun, pos, COA
 
 **Koreksi**:
 Transaksi Kas pembalik yang menunjuk transaksi yang dikoreksinya. Satu-satunya cara memperbaiki
-kesalahan pencatatan. Arahnya selalu berlawanan dengan arah transaksi yang dikoreksinya.
+kesalahan pencatatan. Arahnya selalu berlawanan dengan arah transaksi yang dikoreksinya. Sebuah
+Transaksi Kas dikoreksi paling banyak satu kali.
 _Hindari_: edit, revisi transaksi, pembatalan
 
 **Periode**:
